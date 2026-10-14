@@ -1,0 +1,280 @@
+#pragma once
+// The running game, without platform code: data, world, process kernel and
+// usecode machine (what CRUSYS.C sets up before entering the main loop).
+//
+// The original main loop (KERNEL.C 31CF, called from the entry point at
+// 1048:0079 with a period of 0) runs kernel slices back to back; time comes
+// from the 60 Hz system timer and the timed processes, and the display is a
+// process too. Here the platform layer calls update() with the real elapsed
+// time, then render(), once per presented frame.
+
+#include "core/anim_dat.hpp"
+#include "core/game_config.hpp"
+#include "core/dtable.hpp"
+#include "core/font.hpp"
+#include "core/xform.hpp"
+#include "core/flex.hpp"
+#include "core/palette.hpp"
+#include "core/surface.hpp"
+#include "core/trig.hpp"
+#include "core/typeflags.hpp"
+#include "engine/audio/audio.hpp"
+#include "engine/input/keyboard.hpp"
+#include "engine/input/mouse_queue.hpp"
+#include "engine/kernel.hpp"
+#include "engine/ui/help_screen.hpp"
+#include "engine/ui/main_menu.hpp"
+#include "engine/ui/message_gump.hpp"
+#include "engine/ui/modal_gump.hpp"
+#include "engine/ui/movie_player.hpp"
+#include "engine/ui/mouse_cursor.hpp"
+#include "engine/ui/pickup_area.hpp"
+#include "engine/ui/status_bar.hpp"
+#include "engine/usecode/uc_machine.hpp"
+#include "engine/usecode/usecode_file.hpp"
+#include "engine/world/avatar_mover.hpp"
+#include "engine/world/combat_control.hpp"
+#include "core/weapon_overlay.hpp"
+#include "engine/world/render.hpp"
+#include "engine/world/world.hpp"
+#include "engine/world/world_mouse.hpp"
+
+#include <cstdint>
+#include <deque>
+#include <filesystem>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace crusader {
+
+class Game {
+public:
+    static constexpr int kScreenWidth = 640;
+    static constexpr int kScreenHeight = 480;
+    static constexpr int kQuickSave = 13;  // SAVEGAME.13, slot 12 (F4 / F5)
+
+    explicit Game(const std::filesystem::path& data);
+    Game(const Game&) = delete;
+    Game& operator=(const Game&) = delete;
+
+    // Loads SAVEGAME/SAVEGAME.<slot>, puts the camera on the player and shows
+    // the status bar (end of GAMEPAL_1028_0000).
+    void load_save(int slot);
+
+    // A new game (GAMEPAL_1028_0000, menu result 0): everything is cleared,
+    // the usecode globals come from USECODE/UNKDS.DAT (FLAG_1410_0051), the
+    // player is made again (NPC_10f0_000c / 385c: item 1, shape 1, 150 hit
+    // points; difficulty 3 unless 1..4), with the datalink (0x4D4, through
+    // MainActor::I_addItemCru) and a container (0x598) in his inventory.
+    // Then a teleport to egg 0x1E of map 1 (SHAPHAND_1098_011f) loads the
+    // first mission when the kernel runs.
+    void new_game(int difficulty);
+
+    // Advances the clock by `elapsed_us` and runs one kernel slice. While the
+    // menu is open, only the processes that run at any level do.
+    void update(std::uint32_t elapsed_us);
+
+    // Draws the view (the original's screen origin, see World::set_camera),
+    // then the status bar, or the menu; then the mouse cursor if shown.
+    void render(Surface8& screen, RenderStats* stats = nullptr);
+
+    // Moves the camera by (dx, dy) usecode units at its current height.
+    void move_camera(std::int32_t dx, std::int32_t dy);
+
+    // A key went down or up (PC set-1 scancode, E0 prefix, BIOS shift state),
+    // as the keyboard interrupt handler sees it.
+    void key(std::uint8_t scancode, bool extended, bool pressed, std::uint16_t flags, std::uint8_t ascii = 0);
+    const Keyboard& keyboard() const { return keyboard_; }
+
+    // Mouse driver events, in screen coordinates (MouseCtl_on_driver_event);
+    // button 1 is the left one, 2 the right one. In play they go through the
+    // mouse queue (mouse_queue.hpp) to the game view (world_mouse.hpp);
+    // the menus and screens take the left button at once.
+    void mouse_move(int x, int y);
+    void mouse_button(bool pressed, int x, int y) { mouse_button(1, pressed, x, y); }
+    void mouse_button(int button, bool pressed, int x, int y);
+    const MouseCursor& cursor() const { return cursor_; }
+    // In play (no menu, screen, message box or movie), the game view puts the
+    // mouse back at (320, 200) after each move: only relative motion counts.
+    bool mouse_in_play() const { return !modal() && !movie_; }
+    const WorldMouse& world_mouse() const { return *world_mouse_; }
+
+    // In-game menu (Escape, WORLD_13e8_10c3). Closing it with "quit" sets
+    // quit_requested(); with a slot chosen in "load", that game is loaded at
+    // the next update (CRUSYS_1058_02f1).
+    void open_menu();
+    const MainMenu* menu() const { return menu_.get(); }
+
+    // The engine's message box (message_gump.hpp, the WorldHooks::show_message
+    // of the world): the game freezes as for the menu until a key, or a click
+    // on "Ok", closes it. Nothing when one is already open.
+    void show_message(const std::string& text);
+    const MessageGump* message() const { return message_.get(); }
+
+    // A screen opened by a function key of the game view (World_on_key):
+    // help, options, load screen, the questions of F4 / F5 / Alt+X and the
+    // notice after a quick load; or the computer screen of
+    // ComputerGump::I_readComputer and the keypad of KeypadGump::I_showKeypad.
+    // The game is frozen while it is open.
+    const ModalGump* screen() const { return screen_.get(); }
+
+    // A cutscene (the movie intrinsics, see movie_player.hpp): FLICS/<name>,
+    // nothing when it does not exist. The kernel pass ends at once; until the
+    // movie is over, update() plays it instead of running the kernel, and
+    // render() shows it.
+    void play_movie(const std::string& name, MovieKind kind);
+    const MoviePlayer* movie() const { return movie_.get(); }
+
+    // ComputerGump::I_readComputer (computer_gump.hpp): the text on the
+    // computer screen, in the menu mode, until it is closed. The calling
+    // process goes on afterwards. Nothing when a screen is already open.
+    void read_computer(const std::string& text);
+    // KeypadGump::I_showKeypad (keypad_gump.hpp): the keypad for `code`, in
+    // the menu mode, until it is closed; then process `pid` gets its result
+    // (-1 cancelled, else the value entered) as the call's result. Nothing
+    // (result 0) when a screen is already open.
+    void show_keypad(std::int16_t code, Pid pid);
+    bool quit_requested() const { return quit_; }
+
+    World& world() { return *world_; }
+    Kernel& kernel() { return *kernel_; }
+    UCMachine& machine() { return *machine_; }
+    // Palette on screen (the DAC): GAMEPAL.PAL in play, MISC.PAL in the menu,
+    // changed by the palette fades.
+    const Palette& palette() const { return world_->state.screen_palette; }
+    const AnimDat& animations() const { return anims_; }
+    const FontSet& fonts() const { return fonts_; }
+    const StatusBar& status_bar() const { return status_bar_; }
+    const CombatControl& combat() const { return *combat_; }
+    // The sound system, null without SOUND.FLX.
+    Audio* audio() { return audio_.get(); }
+    // Without an audio device pulling the mixer (tests, runs without a
+    // window), update() mixes the time that passed itself, so that sounds
+    // end; with `capture`, the samples are kept.
+    void set_audio_device(bool attached) { audio_device_ = attached; }
+    void capture_sound(bool on) { capture_ = on; }
+    const std::vector<std::int16_t>& captured_sound() const { return captured_; }
+    // CRUSADER.CFG, read from the data directory at start-up. Closing the
+    // options screen writes it to `path` (config_save); nothing is written
+    // until a path is given.
+    const GameConfig& config() const { return config_; }
+    // Replaces it, the sound settings applied (tests).
+    void set_config(GameConfig config);
+    void set_config_file(std::filesystem::path path) { config_file_ = std::move(path); }
+    // Frames that fired a weapon (each calls Item::I_fireWeapon).
+    int shots_fired() const { return shots_fired_; }
+
+private:
+    void reset_world();
+    // The usecode globals (0x42 bytes in this version), the rest cleared.
+    void set_globals(std::span<const std::uint8_t> bytes);
+    void on_key(const GameKeyEvent& e);
+    void close_menu();
+    void close_message();
+    // World_on_key's function keys and Alt+X: true when `code` opened a screen.
+    bool function_key(std::uint16_t code);
+    // Runs `screen` as Gump_run_modal does; `closed` gets it once closed.
+    void open_screen(std::unique_ptr<ModalGump> screen, std::function<void(const ModalGump&)> closed);
+    void close_screen();
+    // A question of the game view (13F8:0000) with its sound; `yes` runs when
+    // it is answered 1, the menu mode being left otherwise.
+    void ask(std::uint16_t shape, int sfx, std::function<void()> yes);
+    // The notice (13F8:0383), the menu mode left when it closes.
+    void notify(std::uint16_t shape);
+    // World_enter_menu_mode / World_leave_menu_mode (13E8:0E7D / 0EF9).
+    void enter_menu_mode();
+    void leave_menu_mode();
+    // The menu, a message box or a screen holds the game.
+    bool modal() const { return menu_ || message_ || screen_; }
+    void dispatch_mouse();
+    // Palette and cursor of the menu's difficulty screen when it opens or closes.
+    void follow_menu_screen();
+    void apply_status_bar_mouse_range();
+    void run_credits(std::uint32_t ticks_before);
+    // Without an audio device, mixes the time that passed (see set_audio_device).
+    void mix_elapsed(std::uint32_t elapsed_us);
+    // The game view and the status bar, without the cursor.
+    void render_view(Surface8& screen, RenderStats* stats = nullptr);
+    void update_movie(std::uint32_t elapsed_us);
+    void end_movie();
+    void save_config();
+
+
+    // Data, kept open for the whole run.
+    FlexArchive shapes_flex_;
+    FlexArchive globs_;
+    FlexArchive fixed_;
+    std::vector<ShapeInfo> typeflags_;
+    TrigTables trig_;
+    std::vector<std::uint8_t> damage_;
+    AnimDat anims_;
+    WeaponOverlay weapon_overlay_;
+    Palette palette_;
+    UsecodeFile usecode_;
+    ShapeCache shapes_;
+    FlexArchive gumps_flex_;
+    ShapeCache gumps_;
+    FontSet fonts_;
+    XformTable xform_;
+    dtable::NpcTypes npc_types_;
+    StatusBar status_bar_;
+    PickupArea pickup_area_;
+    Palette menu_palette_;
+    Palette difficulty_palette_;
+    MouseCursor cursor_;
+    std::filesystem::path data_;
+    GameConfig config_;
+    std::filesystem::path config_file_;
+    std::unique_ptr<Audio> audio_;  // kept across loads, as the sound driver
+    bool audio_device_ = false;
+    bool credits_music_ = false;
+    bool capture_ = false;
+    std::vector<std::int16_t> captured_;
+    std::uint64_t mixed_us_ = 0, mixed_samples_ = 0;
+
+    // Rebuilt by each load, in this order (the machine refers to the kernel,
+    // the intrinsics to the world).
+    std::unique_ptr<Kernel> kernel_;
+    std::unique_ptr<UCMachine> machine_;
+    std::unique_ptr<World> world_;
+
+    Keyboard keyboard_;
+    std::unique_ptr<AvatarMover> mover_;
+    TimedProcess* key_daemon_ = nullptr;  // owned by the kernel
+    CombatControl* combat_ = nullptr;     // owned by the kernel
+    MouseQueue mouse_queue_;
+    std::uint16_t mouse_buttons_ = 0;     // driver state: bit 0 left, bit 1 right
+    std::unique_ptr<WorldMouse> world_mouse_;
+    int shots_fired_ = 0;
+
+    std::unique_ptr<MoviePlayer> movie_;
+    // Player field +0xC2: the movie resumes the colour cycling when it ends
+    // (DS:5FFE clear when it started).
+    bool movie_resumes_cycle_ = true;
+    // Sounds of the last movies: the mixer may still read the last one for a
+    // buffer after it is stopped.
+    std::deque<std::vector<std::int8_t>> movie_sounds_;
+
+    std::unique_ptr<MainMenu> menu_;
+    Process* menu_process_ = nullptr;  // modal placeholder, owned by the kernel
+    MainMenu::Shared menu_shared_;     // DS:5BE8, DS:0098
+    LoadScreen::Names save_names_;     // DS:7964
+    CreditsData credits_data_;
+    HelpScreen::Pictures help_pictures_;
+    int pending_load_ = 0;             // save to load at the next update (1-based)
+    int pending_new_game_ = 0;         // difficulty of a new game to start at the next update
+    std::unique_ptr<MessageGump> message_;
+    Process* message_process_ = nullptr;  // modal placeholder, owned by the kernel
+    std::unique_ptr<ModalGump> screen_;
+    std::function<void(const ModalGump&)> screen_closed_;
+    Process* screen_process_ = nullptr;   // modal placeholder, owned by the kernel
+    std::uint16_t pending_notice_ = 0;    // notice to show after the pending load
+    bool sprites_suspended_ = false;      // DS:2D8F: the screen sprites are not drawn
+    bool difficulty_shown_ = false;    // the menu shows the difficulty screen
+    bool quit_ = false;
+    bool status_bar_shown_ = false;    // last state seen, for the mouse range
+};
+
+}  // namespace crusader

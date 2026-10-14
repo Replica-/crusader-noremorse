@@ -1,0 +1,77 @@
+#include "platform/sdl_presenter.hpp"
+
+#include <SDL.h>
+
+#include <array>
+#include <stdexcept>
+
+namespace crusader {
+
+SdlPresenter::SdlPresenter(const std::string& title, int width, int height, int scale)
+    : width_(width), height_(height) {
+    if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+        throw std::runtime_error(std::string("SDL video: ") + SDL_GetError());
+    }
+    window_ = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                               width * scale, height * scale, SDL_WINDOW_RESIZABLE);
+    if (!window_) {
+        throw std::runtime_error(std::string("SDL window: ") + SDL_GetError());
+    }
+    renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_PRESENTVSYNC);
+    if (!renderer_) {
+        throw std::runtime_error(std::string("SDL renderer: ") + SDL_GetError());
+    }
+    SDL_RenderSetLogicalSize(renderer_, width, height);
+    SDL_RenderSetIntegerScale(renderer_, SDL_TRUE);
+    texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+                                 width, height);
+    if (!texture_) {
+        throw std::runtime_error(std::string("SDL texture: ") + SDL_GetError());
+    }
+}
+
+SdlPresenter::~SdlPresenter() {
+    if (texture_) SDL_DestroyTexture(texture_);
+    if (renderer_) SDL_DestroyRenderer(renderer_);
+    if (window_) SDL_DestroyWindow(window_);
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+}
+
+// @orig 1360:0FD6
+void SdlPresenter::warp_mouse(int x, int y) {
+    int wx = 0, wy = 0;
+    SDL_RenderLogicalToWindow(renderer_, static_cast<float>(x), static_cast<float>(y), &wx, &wy);
+    SDL_WarpMouseInWindow(window_, wx, wy);
+}
+
+void SdlPresenter::set_title(const std::string& title) {
+    SDL_SetWindowTitle(window_, title.c_str());
+}
+
+void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
+    std::array<Uint32, 256> lut;
+    for (std::size_t i = 0; i < lut.size(); ++i) {
+        const Rgb& c = palette.colors[i];
+        lut[i] = 0xFF000000u | Uint32{c.r} << 16 | Uint32{c.g} << 8 | c.b;
+    }
+
+    void* pixels = nullptr;
+    int pitch = 0;
+    if (SDL_LockTexture(texture_, nullptr, &pixels, &pitch) != 0) {
+        return;
+    }
+    for (int y = 0; y < height_ && y < frame.height; ++y) {
+        auto* dst = reinterpret_cast<Uint32*>(static_cast<Uint8*>(pixels) + y * pitch);
+        const std::uint8_t* src = frame.row(y);
+        for (int x = 0; x < width_ && x < frame.width; ++x) {
+            dst[x] = lut[src[x]];
+        }
+    }
+    SDL_UnlockTexture(texture_);
+
+    SDL_RenderClear(renderer_);
+    SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
+    SDL_RenderPresent(renderer_);
+}
+
+}  // namespace crusader

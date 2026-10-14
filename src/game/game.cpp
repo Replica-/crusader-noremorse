@@ -1,0 +1,1028 @@
+#include "game/game.hpp"
+
+#include "engine/usecode/audio_intrinsics.hpp"
+#include "engine/usecode/item_intrinsics.hpp"
+#include "engine/usecode/movie_intrinsics.hpp"
+#include "engine/usecode/world_intrinsics.hpp"
+#include "engine/usecode/npc_intrinsics.hpp"
+#include "engine/usecode/uc_process.hpp"
+#include "engine/world/actor_create.hpp"
+#include "engine/world/aim_mode.hpp"
+#include "engine/world/attack.hpp"
+#include "core/dtable.hpp"
+#include "engine/palette_fader.hpp"
+#include "engine/world/projectile.hpp"
+#include "engine/ui/computer_gump.hpp"
+#include "engine/ui/gump_keys.hpp"
+#include "engine/ui/keypad_gump.hpp"
+#include "engine/ui/shape_dialog.hpp"
+#include "engine/world/item_selection.hpp"
+#include "engine/world/player_commands.hpp"
+#include "engine/world/actor_anim.hpp"
+#include "engine/world/inventory.hpp"
+#include "engine/world/palette_cycle.hpp"
+#include "engine/world/pickup_list.hpp"
+#include "engine/world/teleport.hpp"
+
+#include <algorithm>
+#include <cstdio>
+#include <fstream>
+#include <iterator>
+#include <stdexcept>
+#include <string>
+
+namespace crusader {
+
+namespace {
+
+// KDAEMON.C: 45 Hz timed process, at every level, repeating held keys.
+class KeyDaemon : public TimedProcess {
+public:
+    explicit KeyDaemon(Keyboard& keyboard) : keyboard_(keyboard) {
+        set_rate(Keyboard::kDaemonRate);
+        set_runs_at_any_level(true);
+    }
+
+protected:
+    void tick() override { keyboard_.repeat(kernel().ticks()); }
+
+private:
+    Keyboard& keyboard_;
+};
+
+// MOUSECTL.C: the mouse handler is also a 60 Hz timed process, at every
+// level, that sends the held-back clicks (mouse_queue.hpp).
+class MouseDaemon : public TimedProcess {
+public:
+    explicit MouseDaemon(MouseQueue& queue) : queue_(queue) {
+        set_rate(Kernel::kTicksPerSecond);
+        set_runs_at_any_level(true);
+    }
+
+protected:
+    void tick() override { queue_.tick(); }
+
+private:
+    MouseQueue& queue_;
+};
+
+// Stands for the modal menu or message box in the kernel: raised one level,
+// it freezes the game's processes until it terminates (see Game::open_menu).
+class ModalProcess : public Process {
+protected:
+    void run() override {}
+};
+
+// Key daemon rate and repeat delay while the menu is open (IRGUMP_13d0_0000).
+constexpr std::uint32_t kMenuDaemonRate = 10;
+constexpr std::uint32_t kMenuRepeatDelay = 20;
+
+// The options screen and the load screen of the menu, opened by F2 / F8.
+class OptionsGump : public ModalGump {
+public:
+    OptionsGump(ShapeCache& gumps, GameConfig& config, Audio* audio, int& focus) : s_(gumps, config, audio, focus) {}
+    void draw(Surface8& screen) const override { s_.draw(screen); }
+    void key(std::uint16_t code) override { s_.key(code); }
+    void mouse_down(int x, int y) override { s_.mouse_down(x, y); }
+    void mouse_move(int x, int y) override { s_.mouse_move(x, y); }
+    void mouse_up(int x, int y) override { s_.mouse_up(x, y); }
+    void update(std::uint32_t ticks) override { s_.update(ticks); }
+    bool closed() const override { return s_.closed(); }
+
+private:
+    OptionsScreen s_;
+};
+
+class LoadGump : public ModalGump {
+public:
+    LoadGump(ShapeCache& gumps, const FontSet& fonts, const LoadScreen::Names& names, int& selected)
+        : s_(gumps, fonts, names, selected) {}
+    void draw(Surface8& screen) const override { s_.draw(screen); }
+    void key(std::uint16_t code) override { s_.key(code); }
+    void mouse_down(int x, int y) override { s_.mouse_down(x, y); }
+    bool closed() const override { return s_.result().has_value(); }
+    int result() const override { return s_.result().value_or(0); }
+    int slot() const { return s_.slot(); }
+
+private:
+    LoadScreen s_;
+};
+
+std::vector<std::uint8_t> load_damage_table(const std::filesystem::path& data) {
+    const auto flex = FlexArchive::open(data / "STATIC/DAMAGE.FLX");
+    const auto entry = flex.entry(0);
+    return {entry.begin(), entry.end()};
+}
+
+}  // namespace
+
+// @orig none: loads the data and builds the port's subsystems
+Game::Game(const std::filesystem::path& data)
+    : shapes_flex_(FlexArchive::open(data / "STATIC/SHAPES.FLX")),
+      globs_(FlexArchive::open(data / "STATIC/GLOB.FLX")),
+      fixed_(FlexArchive::open(data / "STATIC/FIXED.DAT")),
+      typeflags_(load_typeflags(data / "STATIC/TYPEFLAG.DAT")),
+      trig_(TrigTables::load(data / "STATIC/TRIG.DAT")),
+      damage_(load_damage_table(data)),
+      anims_(AnimDat::load(data / "STATIC/ANIM.DAT")),
+      weapon_overlay_(WeaponOverlay::load(data / "STATIC/WPNOVLAY.DAT")),
+      palette_(Palette::load(data / "STATIC/GAMEPAL.PAL")),
+      usecode_(UsecodeFile::from_flex(FlexArchive::open(data / "USECODE/EUSECODE.FLX"))),
+      shapes_(shapes_flex_, ShapeLayout::World),
+      gumps_flex_(FlexArchive::open(data / "STATIC/GUMPS.FLX")),
+      gumps_(gumps_flex_, ShapeLayout::Flat2D),
+      fonts_(FontSet::load(data / "STATIC/FONTS.FLX")),
+      xform_(XformTable::load(data / "STATIC/XFORMPAL.DAT")),
+      npc_types_(dtable::NpcTypes::load(data / "STATIC/DTABLE.FLX")),
+      status_bar_(gumps_, fonts_, xform_, npc_types_),
+      pickup_area_(gumps_, fonts_, xform_),
+      menu_palette_(Palette::load(data / "STATIC/MISC.PAL")),
+      difficulty_palette_(Palette::load(data / "STATIC/DIFF.PAL")),
+      cursor_(MouseCursor::load(data / "STATIC/MOUSE.SHP")),
+      save_names_(LoadScreen::read_names(data / "SAVEGAME")),
+      credits_data_(CreditsData::load(data / "STATIC")),
+      help_pictures_(HelpScreen::Pictures::load(data / "STATIC")),
+      data_(data),
+      config_(GameConfig::load(data / "CRUSADER.CFG")) {
+    // dsfx_init: without SOUND.FLX the game runs silent, as with "sound=off".
+    if (std::filesystem::exists(data / "SOUND/SOUND.FLX")) {
+        audio_ = std::make_unique<Audio>(SoundFlex::open(data / "SOUND/SOUND.FLX"), data / "SOUND");
+    }
+    set_config(config_);
+    reset_world();
+}
+
+// @orig 12E0:06BF
+void Game::set_config(GameConfig config) {
+    config_ = std::move(config);
+    // ass_init: the volumes and the filter of the configuration.
+    if (audio_) {
+        audio_->mixer.set_music_volume(config_.music_volume);
+        audio_->mixer.set_sound_volume(config_.sound_volume);
+        audio_->mixer.set_filter(config_.filter);
+    }
+}
+
+// @orig 1028:03F6
+void Game::reset_world() {
+    // The sounds of the previous world go with it.
+    if (audio_) {
+        audio_->stop_all();
+        audio_->sources.clear();
+    }
+    machine_.reset();
+    // DS:2889 is not part of a game.
+    const bool target_designation = world_ ? world_->state.target_designation : true;
+    world_.reset();
+    kernel_ = std::make_unique<Kernel>();
+    machine_ = std::make_unique<UCMachine>(*kernel_, usecode_);
+    world_ = std::make_unique<World>(typeflags_);
+    world_->state.target_designation = target_designation;
+    world_->set_damage_table(damage_);
+    world_->state.game_palette = palette_;
+    world_->state.screen_palette = palette_;
+    world_->set_globs(&globs_);
+    world_->set_fixed(&fixed_);
+    world_->set_trig(&trig_);
+    world_->set_audio(audio_.get());
+    world_->set_frame_lookup([this](std::uint16_t shape, std::uint16_t frame) -> std::optional<FrameBox> {
+        const Shape* s = shapes_.get(shape);
+        if (!s || frame >= s->frames().size()) return std::nullopt;
+        const ShapeFrame& f = s->frames()[frame];
+        return FrameBox{f.width, f.height, f.xoff, f.yoff};
+    });
+    register_item_intrinsics(*machine_, *world_);
+    register_world_intrinsics(*machine_, *world_);
+    register_audio_intrinsics(*machine_, *world_);
+    register_npc_intrinsics(*machine_, *world_, anims_, &npc_types_);
+    register_movie_intrinsics(*machine_, [this](const std::string& name, MovieKind kind) { play_movie(name, kind); });
+    // 13E8:00A8 (unnamed in ScummVM): the keyboard queue and the mouse clicks
+    // kept by the mouse handler (DS:8A80..8A84) are forgotten.
+    machine_->set_intrinsic(0x0D3, [this](UCMachine&, UCProcess&, std::span<const std::uint8_t>) -> std::uint32_t {
+        keyboard_.reset();
+        return 0;
+    });
+    // ComputerGump::I_readComputer(text).
+    machine_->set_intrinsic(0x0FE, [this](UCMachine& machine, UCProcess&, std::span<const std::uint8_t> a) -> std::uint32_t {
+        if (a.size() < 4 || (a[2] | a[3] << 8) != UCMachine::kSegString) return 0;
+        if (const std::string* text = machine.heap().string(static_cast<std::uint16_t>(a[0] | a[1] << 8))) {
+            read_computer(*text);
+        }
+        return 0;
+    });
+    // KeypadGump::I_showKeypad(code): the result is set once the keypad closes.
+    machine_->set_intrinsic(0x0C5, [this](UCMachine&, UCProcess& p, std::span<const std::uint8_t> a) -> std::uint32_t {
+        if (a.size() < 2) return 0;
+        show_keypad(static_cast<std::int16_t>(a[0] | a[1] << 8), p.pid());
+        return 0;
+    });
+    // Ultima8Engine::I_moveKeyDownRecently (10A8:4340): DS:322A, the number
+    // of keys held, any key.
+    machine_->set_intrinsic(0x096, [this](UCMachine&, UCProcess&, std::span<const std::uint8_t>) -> std::uint32_t {
+        return keyboard_.held();
+    });
+    // 11D8:342C: the colour cycling, once the game palette is on screen.
+    kernel_->spawn<PaletteCycleProcess>(world_->state);
+    kernel_->spawn<PickupListProcess>(world_->state);
+
+    // Keyboard: events go to the avatar mover; the KeyDaemon repeats held keys.
+    mover_ = std::make_unique<AvatarMover>(*kernel_, *world_, anims_, keyboard_);
+    keyboard_.set_handler([this](const GameKeyEvent& e) { on_key(e); });
+    key_daemon_ = &kernel_->spawn<KeyDaemon>(keyboard_);
+    combat_ = &kernel_->spawn<CombatControl>(*world_, anims_, keyboard_, *mover_);
+    // The mouse in play sends its keys to the Controller too (DS:284E +0x28).
+    world_mouse_ = std::make_unique<WorldMouse>(*kernel_, *world_, anims_, keyboard_,
+                                                [this](const GameKeyEvent& e) { combat_->handle_key(e); });
+    mouse_queue_.clear();
+    kernel_->spawn<MouseDaemon>(mouse_queue_);
+    kernel_->spawn<DumbTimer>(*world_, anims_);
+    WorldHooks hooks = world_->hooks();
+    // WPNCACHE_1160_005f: the firing frame calls Item::I_fireWeapon with the
+    // weapon's fire type, the muzzle offset (x, y * 16, z * 8) and aiming.
+    hooks.fire_weapon = [this](ObjId actor, int a, int b, int z, int dir) {
+        ++shots_fired_;
+        const Item* weapon = world_->get(world_->active_weapon(actor));
+        if (!weapon) return;
+        fire_weapon(*kernel_, *world_, anims_, actor, a * 16, b * 16, z * 8, dir,
+                    dtable::weapon(weapon->shape).fire_type(), true);
+        // Then the weapon's sound (DTABLE +2), restarted on the actor's voice.
+        const std::uint16_t sound = dtable::weapon(weapon->shape).sound();
+        if (sound != 0 && audio_) audio_->sources.retrigger(*world_, sound, actor);
+    };
+    // NPCs entering the fast area start their activity again. The controlled
+    // NPC is left alone: the port rebuilds the fast area when loading a game
+    // where the original restores the saved state, and the reset would undo
+    // the player's saved stance.
+    hooks.monster_egg = [this](ObjId egg) { spawn_from_egg(*kernel_, *world_, anims_, npc_types_, egg); };
+    hooks.egg_hatcher = [this](ObjId egg) { start_egg_hatcher(*kernel_, *world_, egg); };
+    // 1040:04BC: stumble (0x3B, replacing the current animations), stand
+    // up (4 in combat, else 0), and a grunt on the NPC's voice.
+    hooks.hard_landing = [this](ObjId npc) {
+        do_anim(*kernel_, *world_, anims_, npc, 0x3B, kDirCurrent, 10000, true);
+        do_anim(*kernel_, *world_, anims_, npc, in_combat(*world_, npc) ? 4 : 0, kDirCurrent, 1, false);
+        if (audio_) audio_->sources.retrigger(*world_, 0x8F, npc);
+    };
+    hooks.npc_entered_fast_area = [this](ObjId npc) {
+        if (npc != world_->state.controlled_npc) restart_activity(*kernel_, *world_, anims_, npc);
+    };
+    hooks.show_message = [this](const std::string& text) { show_message(text); };
+    hooks.designated_target_moved = [this](ObjId item, std::int32_t x, std::int32_t y, std::int32_t z) {
+        designated_target_moved(*kernel_, *world_, anims_, item, x, y, z);
+    };
+    hooks.designated_target_forgotten = [this](ObjId) { redesignate(*kernel_, *world_, anims_); };
+    hooks.reset_fire = [this] { combat_->reset_fire(); };
+    world_->set_hooks(hooks);
+    menu_.reset();
+    menu_process_ = nullptr;
+    message_.reset();
+    message_process_ = nullptr;
+    screen_.reset();
+    screen_closed_ = nullptr;
+    screen_process_ = nullptr;
+    sprites_suspended_ = false;
+}
+
+void Game::key(std::uint8_t scancode, bool extended, bool pressed, std::uint16_t flags, std::uint8_t ascii) {
+    keyboard_.key(scancode, extended, pressed, flags, ascii, kernel_->ticks());
+}
+
+// @orig 1058:02F1 1028:0000
+void Game::load_save(int slot) {
+    reset_world();
+    const auto save = FlexArchive::open(data_ / "SAVEGAME" / ("SAVEGAME." + std::to_string(slot)));
+    world_->load_saved_items(save);
+    const Item* player = world_->get(1);
+    if (!player) throw std::runtime_error("saved game without the player (item 1)");
+    // Entry 60 (FLAG_1410_02e7): the usecode globals, as in UNKDS.DAT.
+    set_globals(save.entry(60));
+    // The kernel's processes (entries 100+) are not loaded yet, so the
+    // scripts running at save time cannot resume. Instead the fast area is
+    // rebuilt as on arrival: its items enter it again and start their events.
+    // Glob items are recreated identically (checked against SAVEGAME.2).
+    world_->clear_fast_area();
+    world_->set_camera(player->x, player->y, player->z);
+    // 1200:02BF: the music of the saved game, from its start.
+    if (audio_) {
+        const auto track = save.entry(70);
+        const auto flags = save.entry(71);
+        if (track.size() >= 2 && flags.size() >= 2) {
+            audio_->music.restore(track[0] | track[1] << 8, flags[0] | flags[1] << 8);
+        }
+    }
+    world_->state.status_bar_visible = true;
+    apply_status_bar_mouse_range();
+    // Game_start (1028:0000), a game loaded: the game palette, the colour
+    // cycling resumed.
+    world_->state.cycle_paused = false;
+}
+
+void Game::set_globals(std::span<const std::uint8_t> bytes) {
+    auto& globals = machine_->globals();
+    std::fill(globals.begin(), globals.end(), std::uint8_t{0});
+    std::copy_n(bytes.begin(), std::min(bytes.size(), globals.size()), globals.begin());
+}
+
+// @orig 1028:0000
+void Game::new_game(int difficulty) {
+    reset_world();
+    // FLAG_1410_0051(0): the globals' initial values.
+    {
+        std::ifstream in(data_ / "USECODE/UNKDS.DAT", std::ios::binary);
+        const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+        set_globals(bytes);
+    }
+    // MusicProcess::I_stopMusic: the mission's scripts start its music.
+    if (audio_) audio_->music.stop();
+    GameState& s = world_->state;
+    s.difficulty = static_cast<std::uint16_t>(difficulty >= 1 && difficulty <= 4 ? difficulty : 3);
+    // Game_start: the colour cycling stays paused until the mission's
+    // scripts fade the game palette in.
+    s.cycle_paused = true;
+
+    // NPC_10f0_000c: item 1, shape 1, frame 0, NPC number 1, not on any map
+    // yet; NPC_10f0_385c: 150 hit points, no keycard, no battery.
+    Item player;
+    player.id = 1;
+    player.shape = 1;
+    player.npc_number = 1;
+    player.off_map = true;
+    world_->add_with_id(std::move(player));
+    world_->set_npc_word(1, 0x00, 150);
+    s.keycards = 0;
+    s.battery = 0;
+    s.avatar_in_stasis = false;
+
+    // The datalink, dropped at the player's feet then picked up, and a
+    // container put in him.
+    if (world_->create(0x4D4, 0)) {
+        const Item& p = *world_->get(1);
+        add_item_cru(*world_, world_->pop_to_coords(p.x, p.y, p.z), false);
+    }
+    if (world_->create(0x598, 0)) world_->pop_to_container(1);
+
+    // CameraProcess::I_setCenterOn(1), then the first mission.
+    s.camera_target = 1;
+    start_teleport_to_egg(*kernel_, *world_, 1, kTeleportStartEgg, true);
+    s.status_bar_visible = true;
+    apply_status_bar_mouse_range();
+}
+
+// @orig 11D8:31CF
+void Game::update(std::uint32_t elapsed_us) {
+    // Outside the kernel slice: a key repeat can choose a save from within it.
+    if (pending_load_) {
+        const int slot = pending_load_;
+        pending_load_ = 0;
+        if (std::filesystem::exists(data_ / "SAVEGAME" / ("SAVEGAME." + std::to_string(slot)))) load_save(slot);
+        if (pending_notice_) {
+            // F4: the notice once the game is loaded, in the menu mode again.
+            const std::uint16_t shape = pending_notice_;
+            pending_notice_ = 0;
+            enter_menu_mode();
+            notify(shape);
+        }
+    }
+    if (pending_new_game_) {
+        const int difficulty = pending_new_game_;
+        pending_new_game_ = 0;
+        new_game(difficulty);
+    }
+    if (movie_) {
+        // The game is frozen while the movie plays (the original plays it
+        // inside the intrinsic).
+        update_movie(elapsed_us);
+        mix_elapsed(elapsed_us);
+        return;
+    }
+    dispatch_mouse();
+    const std::uint32_t before = kernel_->ticks();
+    kernel_->advance_time(elapsed_us);
+    kernel_->run_slice();
+    if (!modal()) selection_tick(*world_);
+    mix_elapsed(elapsed_us);
+    if (menu_) {
+        menu_->update(kernel_->ticks());
+        run_credits(before);
+    }
+    if (screen_) {
+        screen_->update(kernel_->ticks());
+        if (const Palette* p = screen_->palette()) world_->state.screen_palette = *p;
+    }
+    apply_status_bar_mouse_range();
+}
+
+// @orig none: audio clock of the port
+void Game::mix_elapsed(std::uint32_t elapsed_us) {
+    if (!audio_ || audio_device_) return;
+    mixed_us_ += elapsed_us;
+    const std::uint64_t due = mixed_us_ * AsylumMixer::kMixRate / 1'000'000;
+    const std::size_t count = static_cast<std::size_t>(due - mixed_samples_);
+    mixed_samples_ = due;
+    std::vector<std::int16_t> scratch;
+    std::vector<std::int16_t>& out = capture_ ? captured_ : scratch;
+    const std::size_t from = out.size();
+    out.resize(from + count);
+    audio_->mixer.mix(out.data() + from, count);
+}
+
+// @orig 1468:3F77 1468:4060 1468:4169
+void Game::play_movie(const std::string& name, MovieKind kind) {
+    if (movie_) return;
+    const std::filesystem::path base = data_ / "FLICS" / movie_base_name(name);
+    std::filesystem::path avi = base;
+    avi += ".AVI";
+    std::optional<AviMovie> movie;
+    try {
+        movie = AviMovie::load(avi);
+    } catch (const std::exception&) {
+        return;  // 1468:2F7C: no such movie, nothing happens
+    }
+    std::vector<MovieSubtitle> subtitles;
+    if (config_.subtitles && kind != MovieKind::kOverlay) {
+        std::filesystem::path txt = base;
+        txt += ".TXT";
+        subtitles = load_movie_subtitles(txt, fonts_, MoviePlayer::kSubtitleFont);
+    }
+    Surface8 screen(kScreenWidth, kScreenHeight);
+    render_view(screen);
+    movie_ = std::make_unique<MoviePlayer>(std::move(*movie), kind, std::move(subtitles), config_.big_video,
+                                           std::move(screen), world_->state.screen_palette, gumps_, fonts_);
+    // 1468:3ABC: the colour cycling pauses.
+    world_->state.cycle_paused = true;
+    movie_resumes_cycle_ = !world_->state.movie_keeps_cycle_paused;
+    kernel_->interrupt_slice();
+}
+
+// @orig 1468:03E3 1468:2869
+void Game::update_movie(std::uint32_t elapsed_us) {
+    movie_->advance(elapsed_us, [this](std::uint8_t scancode) { return keyboard_.down(scancode, false) != 0; });
+    if (movie_->take_playback_start() && audio_) {
+        // 1468:03E3: dsfx_stop_all, music_pause (not for an overlay).
+        audio_->stop_all();
+        if (movie_->kind() != MovieKind::kOverlay) audio_->music.pause();
+    }
+    if (movie_->take_sound_start() && audio_) {
+        movie_sounds_.push_back(movie_->sound());
+        if (movie_sounds_.size() > 2) movie_sounds_.pop_front();
+        const std::vector<std::int8_t>& pcm = movie_sounds_.back();
+        audio_->mixer.play(0, SoundSample{pcm, 0, 0, AviMovie::kAudioRate}, AsylumMixer::kMaxVolume + 1, 0, false);
+    }
+    world_->state.screen_palette = movie_->palette();
+    if (movie_->finished()) end_movie();
+}
+
+// @orig 1468:3D7A 1468:3C23
+void Game::end_movie() {
+    // 1468:3D7A / 3C23.
+    if (audio_) {
+        audio_->mixer.stop(0);
+        if (movie_->kind() != MovieKind::kOverlay) audio_->music.resume();
+    }
+    keyboard_.reset();
+    if (movie_->kind() != MovieKind::kOverlay) world_->state.screen_palette = movie_->kept_palette();
+    if (movie_resumes_cycle_) world_->state.cycle_paused = false;
+    movie_.reset();
+}
+
+// @orig 1020:0C7F
+void Game::save_config() {
+    if (config_file_.empty()) return;
+    try {
+        config_.save(config_file_);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "%s\n", e.what());
+    }
+}
+
+// @orig 13F0:03F4 13F0:0290
+void Game::run_credits(std::uint32_t ticks_before) {
+    Credits* c = menu_->credits();
+    if (!c) {
+        // Stopped by a key: Credits_done all the same.
+        if (credits_music_ && audio_) audio_->music.pop();
+        credits_music_ = false;
+        return;
+    }
+    // One pass of the credits loop per retrace, i.e. per 60 Hz tick. The
+    // cursor is hidden and the mouse driver off meanwhile (IRGUMP case 4).
+    cursor_.hide();
+    for (std::uint32_t t = ticks_before; t < kernel_->ticks() && !c->finished(); ++t) c->frame(t + 1);
+    // Credits_init / Credits_done: the credits' own music over the menu's.
+    if (!credits_music_ && audio_) {
+        credits_music_ = true;
+        audio_->music.push(Music::kCredits);
+    }
+    world_->state.screen_palette = c->palette();
+    if (c->finished()) {
+        menu_->end_credits();
+        if (credits_music_ && audio_) audio_->music.pop();
+        credits_music_ = false;
+        world_->state.screen_palette = menu_palette_;
+        keyboard_.reset();
+        cursor_.show();
+    }
+}
+
+// @orig 1138:0896 13E8:14B4
+void Game::on_key(const GameKeyEvent& e) {
+    // A movie only looks at the keys held (1468:2869).
+    if (movie_) return;
+    const std::uint16_t code = gump_key_code(e);
+    if (message_) {
+        message_->key(code);
+        if (message_->closed()) close_message();
+        return;
+    }
+    if (menu_) {
+        if (code) menu_->key(code);
+        follow_menu_screen();
+        if (menu_->result()) close_menu();
+        return;
+    }
+    if (screen_) {
+        if (code) screen_->key(code);
+        if (screen_->closed()) close_screen();
+        else if (const Palette* p = screen_->palette()) world_->state.screen_palette = *p;
+        return;
+    }
+    // CRUSADER_1138_0896: '=' and '-' (scancodes 0x0D, 0x0C) step the music
+    // volume, up to 0x30.
+    if (e.pressed && audio_ && (e.scancode == 0x0D || e.scancode == 0x0C)) {
+        if (e.scancode == 0x0D && config_.music_volume < 0x30) ++config_.music_volume;
+        if (e.scancode == 0x0C && config_.music_volume != 0) --config_.music_volume;
+        audio_->mixer.set_music_volume(config_.music_volume);
+    }
+    // CRUSADER_1138_0896: Escape (scancode 1) without both Ctrl and Alt gives
+    // the control back to the player when another NPC is controlled (a robot
+    // taken from a camera monitor, or none once it died), instead of the menu.
+    if (e.pressed && e.scancode == 0x01 && (e.flags & (kCtrl | kAlt)) != (kCtrl | kAlt) &&
+        world_->state.controlled_npc != 1) {
+        set_controlled_npc(*kernel_, *world_, anims_, 1);
+        return;
+    }
+    // CRUSADER_1138_0896: Z (scancode 0x2C) puts the camera on the controlled
+    // NPC, living and not the player in stasis; the item selection ends.
+    if (e.pressed && e.scancode == 0x2C) {
+        const ObjId npc = world_->state.controlled_npc;
+        const Item* item = world_->get(npc);
+        if (item && !world_->is_dead(npc) && !(npc == 1 && world_->state.avatar_in_stasis)) {
+            if (world_->state.selection.active) cancel_selection(*world_);
+            world_->move_camera_to(item->x, item->y, item->z, 0);
+            return;
+        }
+    }
+    combat_->handle_key(e);  // the Controller: movement, then fire keys
+    // WORLD_13e8_14b4 (World_on_key): Alt+X first, whatever the view is
+    // doing (the item selection too). Escape opens the menu, except in
+    // "stasis" (DS:5FFB, GameState::cru_stasis) and when DS:5FFC is not 1
+    // (not decoded yet: assumed 1 during normal play); in the item selection
+    // mode it ends it instead. Then, out of that mode, the function keys,
+    // and the inventory keys.
+    if (code == gump_key::kAltX) {
+        function_key(code);
+        return;
+    }
+    if (code == gump_key::kEscape && !world_->state.cru_stasis) {
+        if (world_->state.selection.active) cancel_selection(*world_);
+        else open_menu();
+    }
+    if (code && !world_->state.selection.active && function_key(code)) return;
+    if (code) player_command(*kernel_, *world_, anims_, code);
+}
+
+// @orig 13E8:10C3 13E8:0E7D
+void Game::open_menu() {
+    if (menu_) return;
+    // WORLD_13e8_0e7d and 10c3: the status bar goes, the cursor shows.
+    world_->state.status_bar_visible = false;
+    world_->state.cycle_paused = true;
+    apply_status_bar_mouse_range();
+    // IRGUMP_13d0_0000: running fades are stopped (Kernel_fail_processes,
+    // type 0x206), the menu palette is written.
+    kernel_->fail_processes(0, PaletteFaderProcess::kType, kernel_->level());
+    world_->state.screen_palette = menu_palette_;
+    key_daemon_->set_rate(kMenuDaemonRate);
+    keyboard_.set_repeat_delay(kMenuRepeatDelay);
+    keyboard_.reset();
+    cursor_.reset(MouseCursor::kMenuArrow);
+    cursor_.show();
+    menu_ = std::make_unique<MainMenu>(
+        MainMenu::Resources{&gumps_, &fonts_, &save_names_, &credits_data_, &config_, audio_.get(),
+                            [this] { save_config(); }},
+        menu_shared_, false);
+    auto p = std::make_unique<ModalProcess>();
+    menu_process_ = p.get();
+    kernel_->add(std::move(p));
+    kernel_->raise_level(*menu_process_);
+    if (audio_) audio_->music.push(Music::kMenu);
+}
+
+// @orig 13D0:03F5 13E8:0EF9
+void Game::close_menu() {
+    const int result = *menu_->result();
+    const int load_slot = menu_->load_slot();
+    const int new_game_difficulty = menu_->new_game_difficulty();
+    menu_.reset();
+    difficulty_shown_ = false;
+    // IRGUMP_13d0_03f5: the game's music again.
+    if (audio_) audio_->music.pop();
+    cursor_.hide();
+    key_daemon_->set_rate(Keyboard::kDaemonRate);
+    keyboard_.set_repeat_delay(Keyboard::kRepeatDelay);
+    keyboard_.reset();
+    menu_process_->terminate();
+    menu_process_ = nullptr;
+    kernel_->drop_empty_levels();
+    // WORLD_13e8_10c3 then 0ef9: the status bar comes back (shown whatever
+    // its state before), the cursor returns to the arrow, hidden.
+    cursor_.reset(MouseCursor::kArrow);
+    cursor_.hide();
+    if (result == MainMenu::kQuit) {
+        quit_ = true;
+        return;
+    }
+    if (result == MainMenu::kLoad) pending_load_ = load_slot + 1;
+    if (result == MainMenu::kNewGame) pending_new_game_ = new_game_difficulty;
+    world_->state.status_bar_visible = true;
+    world_->state.screen_palette = world_->state.game_palette;  // palette_write_hw(DS:058C)
+    world_->state.cycle_paused = false;                         // MainMenu_dtor (13D0:03F5)
+    cursor_.pop();
+    apply_status_bar_mouse_range();
+}
+
+// @orig 1358:0046 1328:1588
+void Game::show_message(const std::string& text) {
+    if (message_ || menu_) return;
+    message_ = std::make_unique<MessageGump>(fonts_, text, kScreenWidth, kScreenHeight);
+    // Gump_run_modal: only the display and the events, so the game stops.
+    auto p = std::make_unique<ModalProcess>();
+    message_process_ = p.get();
+    kernel_->add(std::move(p));
+    kernel_->raise_level(*message_process_);
+    kernel_->interrupt_slice();
+}
+
+// @orig 1358:02C8
+void Game::close_message() {
+    message_.reset();
+    message_process_->terminate();
+    message_process_ = nullptr;
+    kernel_->drop_empty_levels();
+}
+
+// @orig 13E8:14B4
+bool Game::function_key(std::uint16_t code) {
+    const GameState& s = world_->state;
+    switch (code) {
+    case gump_key::kAltX:
+        // Quit? Yes: DS:6810 +0x40 = 1, a blocking fade to black (not
+        // reproduced), then system_shutdown.
+        ask(ShapeDialog::kQuitQuestion, 0x109, [this] { quit_ = true; });
+        return true;
+    case '?':
+    case gump_key::kF1: {
+        auto help = std::make_unique<HelpScreen>(
+            gumps_, help_pictures_,
+            [this](int n) {
+                return static_cast<int>(random_range(world_->state.random_state, 0, static_cast<std::uint16_t>(n - 1)));
+            },
+            [this](int sfx) {
+                if (audio_) audio_->play_sfx(sfx);
+            });
+        // 13E8:38E5: the menu mode, the palette faders stopped, cursor 0x27.
+        enter_menu_mode();
+        kernel_->fail_processes(0, PaletteFaderProcess::kType, kernel_->level());
+        cursor_.reset(HelpScreen::kCursor);
+        cursor_.show();
+        world_->state.screen_palette = *help->palette();
+        open_screen(std::move(help), [this](const ModalGump&) {
+            // 13E8:3AAE.
+            cursor_.hide();
+            world_->state.screen_palette = world_->state.game_palette;
+            leave_menu_mode();
+        });
+        return true;
+    }
+    case gump_key::kF2:
+        // The options screen: MISC.PAL, cursor 0x25; closing it saves the
+        // configuration (Options_dtor).
+        enter_menu_mode();
+        world_->state.screen_palette = menu_palette_;
+        cursor_.reset(MouseCursor::kMenuArrow);
+        cursor_.show();
+        open_screen(std::make_unique<OptionsGump>(gumps_, config_, audio_.get(), menu_shared_.options_focus),
+                    [this](const ModalGump&) {
+                        save_config();
+                        cursor_.reset(MouseCursor::kArrow);
+                        cursor_.hide();
+                        world_->state.screen_palette = world_->state.game_palette;
+                        leave_menu_mode();
+                    });
+        return true;
+    case gump_key::kF4:
+        // Load the quick save (slot 12, SAVEGAME.13)? Only while the player
+        // is the controlled NPC.
+        if (s.cru_stasis || s.controlled_npc != 1) return false;
+        ask(ShapeDialog::kQuickLoadQuestion, 0x107, [this] {
+            if (audio_) audio_->stop_all();
+            pending_load_ = kQuickSave;
+            pending_notice_ = ShapeDialog::kQuickLoadNotice;
+        });
+        return true;
+    case gump_key::kF5:
+        // Quick save? Writing a game is not reproduced yet (milestone 7):
+        // "yes" leaves as "no" does.
+        if (!player_may_act(*world_) || s.cru_stasis) return false;
+        ask(ShapeDialog::kQuickSaveQuestion, 0x108, [this] { leave_menu_mode(); });
+        return true;
+    case gump_key::kF8: {
+        // The load screen (1008:0088, mode 1): MISC.PAL, cursor 0x25 pushed.
+        if (s.cru_stasis) return false;
+        enter_menu_mode();
+        world_->state.screen_palette = menu_palette_;
+        cursor_.push(MouseCursor::kMenuArrow);
+        cursor_.show();
+        auto load = std::make_unique<LoadGump>(gumps_, fonts_, save_names_, menu_shared_.selected_slot);
+        open_screen(std::move(load), [this](const ModalGump& screen) {
+            if (screen.result()) pending_load_ = static_cast<const LoadGump&>(screen).slot() + 1;
+            cursor_.reset(MouseCursor::kArrow);
+            cursor_.hide();
+            world_->state.screen_palette = world_->state.game_palette;
+            leave_menu_mode();
+        });
+        return true;
+    }
+    default:
+        // F9 (the save screen) waits for milestone 7; F7 and the other keys
+        // of World_on_key are cheats (docs/interface.md).
+        return false;
+    }
+}
+
+// @orig 13F8:0000
+void Game::ask(std::uint16_t shape, int sfx, std::function<void()> yes) {
+    enter_menu_mode();
+    if (audio_) audio_->play_sfx(sfx);
+    open_screen(std::make_unique<ShapeDialog>(ShapeDialog::question(gumps_, shape)),
+                [this, yes = std::move(yes)](const ModalGump& screen) {
+                    if (screen.result()) yes();
+                    else leave_menu_mode();
+                });
+}
+
+void Game::notify(std::uint16_t shape) {
+    open_screen(std::make_unique<ShapeDialog>(ShapeDialog::notice(gumps_, shape)),
+                [this](const ModalGump&) { leave_menu_mode(); });
+}
+
+// @orig 1328:1588
+void Game::open_screen(std::unique_ptr<ModalGump> screen, std::function<void(const ModalGump&)> closed) {
+    screen_ = std::move(screen);
+    screen_closed_ = std::move(closed);
+    // Gump_run_modal: only the display and the events, so the game stops.
+    auto p = std::make_unique<ModalProcess>();
+    screen_process_ = p.get();
+    kernel_->add(std::move(p));
+    kernel_->raise_level(*screen_process_);
+    kernel_->interrupt_slice();
+}
+
+// @orig 1328:1588
+void Game::close_screen() {
+    const std::unique_ptr<ModalGump> screen = std::move(screen_);
+    const auto closed = std::move(screen_closed_);
+    screen_closed_ = nullptr;
+    screen_process_->terminate();
+    screen_process_ = nullptr;
+    kernel_->drop_empty_levels();
+    if (closed) closed(*screen);
+}
+
+// @orig 13A0:0005 13A0:0212
+void Game::read_computer(const std::string& text) {
+    if (modal() || movie_) return;
+    enter_menu_mode();
+    cursor_.hide();  // 13A0:0034
+    auto gump = std::make_unique<ComputerGump>(gumps_, fonts_, text, [this](int sfx) {
+        if (!audio_) return;
+        audio_->stop_sfx(sfx);
+        audio_->play_sfx(sfx);
+    }, kScreenWidth, kScreenHeight);
+    open_screen(std::move(gump), [this](const ModalGump&) {
+        // 13A0:0212: the cursor back, the keyboard flushed.
+        cursor_.show();
+        keyboard_.reset();
+        leave_menu_mode();
+    });
+}
+
+// @orig 13C8:00FE 13C8:04EE
+void Game::show_keypad(std::int16_t code, Pid pid) {
+    if (modal() || movie_) return;
+    enter_menu_mode();
+    auto gump = std::make_unique<KeypadGump>(gumps_, code, [this](int sfx) {
+        if (audio_) audio_->play_sfx(sfx);
+    }, kScreenWidth, kScreenHeight);
+    open_screen(std::move(gump), [this, pid](const ModalGump& screen) {
+        // 13C8:04EE: the keyboard and the mouse clicks flushed.
+        keyboard_.reset();
+        leave_menu_mode();
+        if (auto* p = dynamic_cast<UCProcess*>(kernel_->get(pid))) {
+            p->set_call_result(static_cast<std::uint16_t>(screen.result()));
+        }
+    });
+}
+
+// @orig 13E8:0E7D
+void Game::enter_menu_mode() {
+    // 13E8:0E7D: the sounds stop, the screen sprites and the status bar go,
+    // cursor 0x24 shown.
+    if (audio_) audio_->stop_all();
+    sprites_suspended_ = true;
+    world_->state.status_bar_visible = false;
+    apply_status_bar_mouse_range();
+    cursor_.show();
+    cursor_.reset(MouseCursor::kArrow);
+}
+
+// @orig 13E8:0EF9
+void Game::leave_menu_mode() {
+    // 13E8:0EF9: the screen sprites and the status bar back, the cursor
+    // popped and hidden, the keys and clicks forgotten (Input_I_flush), the
+    // "Crusader teleporting" flag cleared.
+    sprites_suspended_ = false;
+    world_->state.status_bar_visible = true;
+    apply_status_bar_mouse_range();
+    cursor_.pop();
+    cursor_.hide();
+    keyboard_.reset();
+    world_->state.crusader_teleporting = false;
+}
+
+// @orig 13D0:25A2 13D0:082E
+void Game::follow_menu_screen() {
+    // IRGUMP_13d0_25a2: DIFF.PAL, cursor 0x26 with the mouse at (320, 400);
+    // back in the menu (13D0:082E case 0): MISC.PAL and cursor 0x25 again.
+    const bool shown = menu_ && menu_->difficulty_screen();
+    if (shown == difficulty_shown_) return;
+    difficulty_shown_ = shown;
+    if (shown) {
+        world_->state.screen_palette = difficulty_palette_;
+        cursor_.push(DifficultyScreen::kCursor);
+        cursor_.move_to(DifficultyScreen::kMouseX, DifficultyScreen::kMouseY);
+    } else {
+        world_->state.screen_palette = menu_palette_;
+        cursor_.reset(MouseCursor::kMenuArrow);
+    }
+}
+
+// @orig 11B8:0932 11B8:098F
+void Game::apply_status_bar_mouse_range() {
+    // StatusBar_show / hide: mouse range y <= 439 or 479, mouse at (320, 240).
+    const bool shown = world_->state.status_bar_visible;
+    if (shown == status_bar_shown_) return;
+    status_bar_shown_ = shown;
+    cursor_.set_bottom(shown ? 439 : 479);
+    cursor_.move_to(320, 240);
+}
+
+// @orig 1360:045D
+void Game::mouse_move(int x, int y) {
+    cursor_.move_to(x, y);
+    if (message_) message_->mouse_move(cursor_.x(), cursor_.y());
+    else if (menu_) menu_->mouse_move(cursor_.x(), cursor_.y());
+    else if (screen_) screen_->mouse_move(cursor_.x(), cursor_.y());
+    else mouse_queue_.move(cursor_.x(), cursor_.y(), mouse_buttons_);
+}
+
+// @orig 1360:045D
+void Game::mouse_button(int button, bool pressed, int x, int y) {
+    if (button != 1 && button != 2) return;
+    const std::uint16_t bit = button == 1 ? 1 : 2;
+    mouse_buttons_ = static_cast<std::uint16_t>(pressed ? mouse_buttons_ | bit : mouse_buttons_ & ~bit);
+    cursor_.move_to(x, y);
+    if (!modal()) {
+        if (pressed) mouse_queue_.press(button == 2, cursor_.x(), cursor_.y(), mouse_buttons_);
+        else mouse_queue_.release(button == 2, cursor_.x(), cursor_.y(), mouse_buttons_);
+        return;
+    }
+    // The port's menus and screens take the left button at once, without
+    // the double-click delay of the queue.
+    if (button != 1) return;
+    if (message_) {
+        if (pressed) message_->mouse_down(cursor_.x(), cursor_.y());
+        else message_->mouse_up(cursor_.x(), cursor_.y());
+        if (message_->closed()) close_message();
+        return;
+    }
+    if (screen_) {
+        if (pressed) screen_->mouse_down(cursor_.x(), cursor_.y());
+        else screen_->mouse_up(cursor_.x(), cursor_.y());
+        if (screen_->closed()) close_screen();
+        else if (const Palette* p = screen_->palette()) world_->state.screen_palette = *p;
+        return;
+    }
+    if (!menu_) return;
+    if (pressed) {
+        menu_->mouse_down(cursor_.x(), cursor_.y());
+        follow_menu_screen();
+    } else {
+        menu_->mouse_up(cursor_.x(), cursor_.y());
+        follow_menu_screen();
+        if (menu_->result()) close_menu();
+    }
+}
+
+// @orig 1328:0624; the mouse events, then the idle event when there were none
+void Game::dispatch_mouse() {
+    bool any = false;
+    while (const auto e = mouse_queue_.next()) {
+        // Queued in play, but a menu or a screen opened since: the original
+        // gives them to it; the port's menus had theirs directly.
+        if (!mouse_in_play()) continue;
+        any = true;
+        world_->state.mouse_turn.speed = config_.mouse_speed;
+        if (world_mouse_->event(*e)) cursor_.move_to(WorldMouse::kCentreX, WorldMouse::kCentreY);
+    }
+    if (!any && mouse_in_play()) world_mouse_->idle();
+}
+
+// @orig 1188:19C1
+void Game::render(Surface8& screen, RenderStats* stats) {
+    if (movie_) {
+        screen = movie_->screen();
+        return;
+    }
+    if (menu_) {
+        menu_->draw(screen);
+        cursor_.draw(screen);
+        return;
+    }
+    if (screen_ && !screen_->over_view()) {
+        screen_->draw(screen);
+        cursor_.draw(screen);
+        return;
+    }
+    render_view(screen, stats);
+    if (message_) message_->draw(screen);
+    if (screen_) screen_->draw(screen);
+    cursor_.draw(screen);
+}
+
+// @orig 1188:12F1
+void Game::render_view(Surface8& screen, RenderStats* stats) {
+    screen.clear(0);
+    const GameState& s = world_->state;
+    const auto list =
+        build_display_list(*world_, shapes_, View{s.view_left, s.view_top}, screen.width, screen.height, stats);
+    // DLIST.C 11A0:05xx: right after item 1, in combat (or holstering,
+    // last action 0xB), its weapon (WPNOVLAY.DAT), unmirrored, at the item's
+    // screen place plus the offsets of the current action, direction, frame.
+    draw_display_list(screen, list, [this](Surface8& surface, const DrawItem& d) {
+        if (d.item->id != 1 || d.item->shape != 1) return;
+        const auto record = world_->npc_record(1);
+        const std::uint16_t last = static_cast<std::uint16_t>(record[npc::kLastAnim] | record[npc::kLastAnim + 1] << 8);
+        if (!in_combat(*world_, 1) && last != 0xB) return;
+        const Item* weapon = world_->get(world_->active_weapon(1));
+        const AnimAction* header = anims_.action(1, last);
+        if (!weapon || !header) return;
+        const auto piece =
+            weapon_overlay_.piece(weapon->shape, last, *header, world_->npc_direction(1), record[npc::kAnimFrame]);
+        if (!piece || (piece->shape == 0 && piece->frame == 0)) return;
+        const Shape* shape = shapes_.get(piece->shape);
+        if (!shape || piece->frame >= shape->frames().size()) return;
+        shape->frames()[piece->frame].draw(surface, d.sx + piece->dx, d.sy + piece->dy, false);
+    });
+    // SPMGR.C: the screen sprites (aiming mode), over the scene, unless
+    // suspended in the menu mode (DS:2D8F).
+    for (const ScreenSprite& sprite : world_->state.screen_sprites.all()) {
+        if (sprites_suspended_) break;
+        if (sprite.shape == 0) continue;
+        const Shape* shape = shapes_.get(sprite.shape);
+        if (!shape || sprite.frame >= shape->frames().size()) continue;
+        shape->frames()[sprite.frame].draw(screen, ((sprite.x - sprite.y) >> 1) - s.view_left,
+                                           ((sprite.x + sprite.y) >> 2) - sprite.z - s.view_top);
+    }
+    // SPMGR_11a8_05f6: the frame of the item selection, over the scene at
+    // the item's centre (getCX, getCY, getCZ).
+    if (const Item* selected = world_->get(selected_item(*world_)); selected && !sprites_suspended_) {
+        const ShapeInfo* info = world_->shape_info(selected->shape);
+        const int cx = static_cast<std::uint16_t>(selected->x - (info ? info->footpad_x : 0) * 8);
+        const int cy = static_cast<std::uint16_t>(selected->y - (info ? info->footpad_y : 0) * 8);
+        const int cz = (world_->location(*selected).z + (info ? info->footpad_z : 0) * 4) & 0xFF;
+        const Shape* frame = shapes_.get(kSelectionFrameShape);
+        if (frame && !frame->frames().empty()) {
+            frame->frames()[0].draw(screen, ((cx - cy) >> 1) - s.view_left, ((cx + cy) >> 2) - cz - s.view_top);
+        }
+    }
+    status_bar_.draw(screen, *world_);
+    // DISPLAY_1190_010f, not in the menu mode (DS:2CEE, set with DS:2D8F).
+    if (!sprites_suspended_) pickup_area_.draw(screen, world_->state.pickups);
+}
+
+void Game::move_camera(std::int32_t dx, std::int32_t dy) {
+    const GameState& s = world_->state;
+    world_->set_camera(s.camera_x + dx, s.camera_y + dy, s.camera_z);
+}
+
+}  // namespace crusader

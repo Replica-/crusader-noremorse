@@ -1,0 +1,6 @@
+build/
+dist/
+# Original game files are copyrighted: never commit them.
+data/
+data_us/
+__pycache__/
