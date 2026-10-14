@@ -7,7 +7,7 @@ This repository contains **no game files**: you need your own copy of the origin
 ## How the engine was rebuilt
 
 1. **Decompilation**: the DOS executable (Phar Lap extender) and the audio DLL `ASYLUM.DLL` are analysed with Ghidra to get pseudo-C and a disassembly of every function. The original modules (about 90) are identified by segment, and functions are named from library symbols, the intrinsics known from ScummVM, and reading the code.
-2. **Rewrite**: each function is rewritten by hand in modern C++, with no DOS dependency: hardware access (VGA, keyboard, mouse, Sound Blaster) goes through a thin SDL2 layer. Every function carries an `@orig` tag naming the original routine it replaces.
+2. **Rewrite**: each function is rewritten in modern C++, with no DOS dependency: hardware access (VGA, keyboard, mouse, Sound Blaster) goes through a thin SDL2 layer. Every function carries an `@orig` tag naming the original routine it replaces.
 3. **Verification**: file formats are tested against all the game data, and differential checks run the original routine in an x86 emulator to compare it with the C++ version on the same inputs.
 
 The game scripts ("usecode", 402 classes) are not rewritten: an interpreter runs them as they are, and the engine provides the native functions ("intrinsics") they call. Documentation of the internals is in [`docs/`](docs/).
