@@ -2,7 +2,7 @@
 
 A C++20 / SDL2 reimplementation of the *Crusader: No Remorse* (Origin, 1995) engine, for Windows and Linux. The project is **work in progress**: the game starts, you can walk, fight, and hear sounds, music and cutscenes, but the first mission cannot yet be played from start to finish.
 
-This repository contains **no game files**: you need your own copy of the original game. The target is the **French version** (`CRUSADER.EXE` dated 12/10/1995).
+This repository contains **no game files**: you need your own copy of the original game. The target is **at first** the **French version** (`CRUSADER.EXE` dated 12/10/1995).
 
 ## How the engine was rebuilt
 
