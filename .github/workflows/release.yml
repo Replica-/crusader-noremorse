@@ -63,7 +63,7 @@ jobs:
       - name: Configure
         if: matrix.name != 'portmaster-aarch64'
         shell: bash
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCRUSADER_VERSION="$VERSION"
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCRUSADER_VERSION="v$VERSION"
       - name: Build
         if: matrix.name != 'portmaster-aarch64'
         run: cmake --build build --config Release --parallel
@@ -74,7 +74,7 @@ jobs:
         if: matrix.name == 'portmaster-aarch64'
         run: |
           pip install ziglang ninja
-          python3 tools/portmaster/build.py --out build-portmaster --version "$VERSION"
+          python3 tools/portmaster/build.py --out build-portmaster --version "v$VERSION"
       - name: Package (PortMaster)
         if: matrix.name == 'portmaster-aarch64'
         shell: bash
