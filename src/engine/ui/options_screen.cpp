@@ -3,6 +3,8 @@
 #include "engine/audio/audio.hpp"
 #include "engine/ui/gump_keys.hpp"
 
+#include <string>
+
 
 namespace crusader {
 
@@ -36,6 +38,9 @@ constexpr std::uint16_t kMarker = 48;
 constexpr int kMarkerX = 456, kMarkerStep = 6;
 constexpr std::uint8_t kFocusColour = 0x0C;
 constexpr std::uint32_t kRepeatTicks = 10;
+// The controller button (port addition): colours of the quit button's frames.
+constexpr std::uint8_t kButtonColour = 0x75, kButtonFill = 0x34;
+constexpr int kButtonFont = 7;
 
 // Focus outline of each line (13D0:1E62); the quit line has none.
 constexpr std::array<OptionsScreen::Rect, OptionsScreen::kQuitLine> kLineRects = {{
@@ -70,8 +75,8 @@ bool step(int& s, bool up) {
 }  // namespace
 
 // @orig 13D0:0ECE
-OptionsScreen::OptionsScreen(ShapeCache& gumps, GameConfig& config, Audio* audio, int& focus)
-    : gumps_(&gumps), config_(&config), audio_(audio), focus_(&focus) {
+OptionsScreen::OptionsScreen(ShapeCache& gumps, GameConfig& config, Audio* audio, int& focus, const FontSet* fonts)
+    : gumps_(&gumps), config_(&config), audio_(audio), focus_(&focus), fonts_(fonts) {
     for (int i = 0; i < kWidgets; ++i) {
         const Placement& p = kPlacements[i];
         const Shape* s = gumps_->get(p.shape);
@@ -130,6 +135,10 @@ void OptionsScreen::draw_shape(Surface8& screen, std::uint16_t shape, int frame,
 
 // @orig 13D0:17C5
 void OptionsScreen::draw(Surface8& screen) const {
+    if (pad_) {
+        pad_->draw(screen);
+        return;
+    }
     screen.clear(0);
     for (int q = 0; q < 4; ++q) {
         draw_shape(screen, static_cast<std::uint16_t>(kFirstBackground + q), 0, kBackgroundCorners[q].x,
@@ -151,12 +160,64 @@ void OptionsScreen::draw(Surface8& screen) const {
         const int frame = is_choice(it.id) ? (chosen(it.id) ? 0 : 1) : (pressed(it.id) ? 1 : 0);
         draw_shape(screen, it.shape, frame, it.rect.x0, it.rect.y0);
     }
+    if (fonts_) draw_pad_button(screen);
+}
+
+// The "manette" button: a text button next to "quit", in its colours (frame
+// and text bright when focused or pressed).
+// @orig none: port-only gamepad button
+
+void OptionsScreen::draw_pad_button(Surface8& screen) const {
+    const bool lit = *focus_ == kPadLine || pad_pressed_;
+    const std::uint8_t colour = lit ? kFocusColour : kButtonColour;
+    const Rect& r = pad_rect_;
+    fill_rect(screen, r.x0, r.y0, r.x1, r.y1, kButtonFill);
+    outline(screen, r.x0, r.y0, r.x1, r.y1, colour);
+    TextWriter writer(*fonts_, kButtonFont);
+    const std::string text = "MANETTE";
+    const int width = writer.measure(text).width;
+    // Drawn on a scratch surface and copied in one colour, as the font has its own.
+    constexpr int kPad = 4, kAbove = 32, kHeight = 48;
+    Surface8 scratch(width + 2 * kPad, kHeight);
+    writer.print(scratch, kPad, kAbove, text);
+    const int x = r.x0 + (r.x1 - r.x0 + 1 - width) / 2, y = r.y0 + 14;
+    for (int sy = 0; sy < kHeight; ++sy) {
+        for (int sx = 0; sx < scratch.width; ++sx) {
+            const int dx = x - kPad + sx, dy = y - kAbove + sy;
+            if (scratch.row(sy)[sx] && dx >= 0 && dy >= 0 && dx < screen.width && dy < screen.height) {
+                screen.row(dy)[dx] = colour;
+            }
+        }
+    }
+}
+
+void OptionsScreen::open_pad() {
+    if (!fonts_) return;
+    pad_ = std::make_unique<GamepadScreen>(*fonts_, *config_, pad_focus_);
 }
 
 // @orig 13D0:20B7
 void OptionsScreen::key(std::uint16_t code) {
+    if (pad_) {
+        pad_->key(code);
+        if (pad_->closed()) pad_.reset();
+        return;
+    }
     if (closed_) return;
     int& focus = *focus_;
+    if (focus == kPadLine && fonts_) {
+        // The controller button, left of "quit".
+        switch (code) {
+        case gump_key::kEscape: closed_ = true; break;
+        case gump_key::kEnter: open_pad(); break;
+        case gump_key::kUp:
+        case '8': focus = kQuitLine - 1; break;
+        case gump_key::kRight:
+        case '6': focus = kQuitLine; quit_selected_ = true; break;
+        default: break;
+        }
+        return;
+    }
     switch (code) {
     case gump_key::kEscape:
         closed_ = true;
@@ -177,7 +238,12 @@ void OptionsScreen::key(std::uint16_t code) {
         break;
     case gump_key::kLeft:
     case '4':
-        if (focus >= 0 && focus < kQuitLine) act(kLeftOf[focus]);
+        if (focus >= 0 && focus < kQuitLine) {
+            act(kLeftOf[focus]);
+        } else if (focus == kQuitLine && fonts_) {
+            quit_selected_ = false;
+            focus = kPadLine;
+        }
         break;
     case gump_key::kRight:
     case '6':
@@ -199,7 +265,18 @@ const OptionsScreen::Item* OptionsScreen::hit(int x, int y) const {
 
 // @orig 13D0:0DC0 1310:0371
 void OptionsScreen::mouse_down(int x, int y) {
+    if (pad_) {
+        pad_->mouse_down(x, y);
+        if (pad_->closed()) pad_.reset();
+        return;
+    }
     if (closed_ || captured_ >= 0) return;
+    if (fonts_ && pad_rect_.contains(x, y)) {
+        pad_pressed_ = true;
+        if (*focus_ == kQuitLine) quit_selected_ = false;
+        *focus_ = kPadLine;
+        return;
+    }
     const Item* it = hit(x, y);
     if (!it) return;
     if (is_choice(it->id)) {
@@ -220,7 +297,9 @@ void OptionsScreen::mouse_down(int x, int y) {
 
 // @orig 1310:0151 1310:04CD
 void OptionsScreen::mouse_move(int x, int y) {
-    if (closed_ || captured_ < 0) return;
+    if (pad_ || closed_) return;
+    if (pad_pressed_) pad_pressed_ = pad_rect_.contains(x, y);
+    if (captured_ < 0) return;
     const Item& it = widgets_[captured_];
     inside_ = it.rect.contains(x, y);
     if (it.id == kQuit) quit_selected_ = inside_;  // 1310:0151, select / deselect (1378:00CD / 00E9)
@@ -229,6 +308,12 @@ void OptionsScreen::mouse_move(int x, int y) {
 
 // @orig 1310:001D 1310:0371
 void OptionsScreen::mouse_up(int x, int y) {
+    if (pad_) return;
+    if (pad_pressed_) {  // acts at the release inside, like the quit button
+        pad_pressed_ = false;
+        if (pad_rect_.contains(x, y)) open_pad();
+        return;
+    }
     if (closed_ || captured_ < 0) return;
     const Item& it = widgets_[captured_];
     captured_ = -1;
@@ -239,6 +324,10 @@ void OptionsScreen::mouse_up(int x, int y) {
 // @orig 1310:04FD
 void OptionsScreen::update(std::uint32_t ticks) {
     now_ = ticks;
+    if (pad_) {
+        pad_->update(ticks);
+        return;
+    }
     if (closed_ || captured_ < 0 || !inside_) return;
     const Widget w = widgets_[captured_].id;
     if (!is_repeating(w) || next_repeat_ >= now_) return;

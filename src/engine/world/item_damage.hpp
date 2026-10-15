@@ -21,14 +21,19 @@
 
 namespace crusader {
 
-// ITEM_10a8_275f: an item that is not an NPC is hit with `damage` of
-// `fire_type` (words 0x4000 and (fire type << 8) | damage).
+// ITEM_10a8_275f: an item that is not an NPC is hit by `other` with
+// `force`. The hitter 0x4000 stands for damage: the force is then
+// (fire type << 8) | damage; any other hitter (a contact of a move,
+// 10E8:123A) brings no damage.
 //  - A record without bit 4: the damage applies (damage_item); when the item
 //    breaks, its processes stop.
 //  - Otherwise, a record whose item would not break yet just loses hit
-//    points. Then, if the class has event 6, the event runs with the two
-//    words and, unless the item is parked (z 254), the damage applies; with
-//    neither, nothing happens (CRUSADER_1130_1090 is empty).
+//    points. Then, if the class has event 6 ("gotHit"), the event runs with
+//    the two words and, unless the item is parked (z 254), the damage
+//    applies; with neither, nothing happens (CRUSADER_1130_1090 is empty).
+constexpr ObjId kHitByDamage = 0x4000;
+void got_hit(Kernel& kernel, World& world, const AnimDat& anims, ObjId item, ObjId other, std::uint16_t force);
+// The same with damage of `fire_type`.
 void hit_item(Kernel& kernel, World& world, const AnimDat& anims, ObjId item, int damage, int fire_type);
 
 // ITEMDAM_10c0_030c. Returns true when the item breaks. Items flagged 0x100

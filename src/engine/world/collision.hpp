@@ -36,9 +36,12 @@ struct SweepResult {
     World::Point end{};        // where the box stops
     ObjId blocker = 0;         // first blocking item
     std::uint16_t axes = 0;    // blocked axes: 1 x, 2 y, 4 z
+    bool off_map = false;      // x or y below 0, or the end out of the fast area (+0x33)
     std::int32_t ground_gap = 0;
     bool supported = false;
-    std::vector<SweepHit> hits;
+    std::vector<SweepHit> hits;     // in the order met (the original's list is newest first)
+    World::Point delta{};           // movement asked for (the original's +0x16)
+    World::Point done{};            // movement up to the blocker, all of it when none (+0x10)
 };
 
 // Collision mask of a shape.
@@ -74,5 +77,22 @@ SweepResult try_move(const World& world, ObjId mover, const World::Point& end, s
 // Same from `start` instead of the mover's position (simulated moves).
 SweepResult try_move(const World& world, ObjId mover, const World::Point& start, const World::Point& end,
                      std::uint8_t flags);
+
+// ITEMFIND.C 123A, after a sweep of `mover` (that it describes): moves the
+// mover to `r.end` and sends the contact events, in this order:
+//  - with a blocker: two stackable items of the same shape (families 2 and 9,
+//    9 with the same frame too) merge instead (1088:0000, see the .cpp);
+//    otherwise the mover gets event 5 ("hit") and the blocker event 6
+//    ("gotHit", ITEM.C 275F), both with the other's id and a force of
+//    (|dx / 4| + |dy / 4| + |dz| + the largest of them) / 2 from `r.delta`;
+//  - then each item touched before the stop (on one axis at least), newest
+//    first, the blocker excepted: the same pair of events with force 0. The
+//    item the mover stands on (gap 0) counts, which is how floor pads,
+//    teleporters and mines notice who walks on them.
+// The original queues the events and starts them when all are known; event
+// processes are not run on the spot, so starting them in turn is the same.
+// The actor and legalMoveToPoint paths call leave_surface (ITEM.C 2970,
+// gravity.hpp) just before this.
+void finish_move(World& world, ObjId mover, const SweepResult& r);
 
 }  // namespace crusader

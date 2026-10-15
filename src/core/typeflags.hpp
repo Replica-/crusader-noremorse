@@ -13,6 +13,7 @@
 //   byte 7  weight      byte 8  volume
 // Footpad dimensions are 5-bit values in world tiles.
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <vector>
@@ -39,6 +40,8 @@ struct ShapeInfo {
     std::uint8_t anim_speed = 0;
     std::uint8_t weight = 0;
     std::uint8_t volume = 0;
+    // The 9 bytes as read, for Item::I_getTypeFlag (any bit by number).
+    std::array<std::uint8_t, 9> bytes{};
 
     bool is(Flag f) const { return flags & f; }
 

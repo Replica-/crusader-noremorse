@@ -15,21 +15,26 @@
 #include "engine/ui/computer_gump.hpp"
 #include "engine/ui/gump_keys.hpp"
 #include "engine/ui/keypad_gump.hpp"
+#include "engine/ui/weasel_gump.hpp"
 #include "engine/ui/shape_dialog.hpp"
 #include "engine/world/item_selection.hpp"
 #include "engine/world/player_commands.hpp"
 #include "engine/world/actor_anim.hpp"
 #include "engine/world/inventory.hpp"
+#include "engine/world/item_anim.hpp"
+#include "engine/world/item_damage.hpp"
 #include "engine/world/palette_cycle.hpp"
 #include "engine/world/pickup_list.hpp"
 #include "engine/world/teleport.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace crusader {
 
@@ -80,13 +85,16 @@ constexpr std::uint32_t kMenuRepeatDelay = 20;
 // The options screen and the load screen of the menu, opened by F2 / F8.
 class OptionsGump : public ModalGump {
 public:
-    OptionsGump(ShapeCache& gumps, GameConfig& config, Audio* audio, int& focus) : s_(gumps, config, audio, focus) {}
+    OptionsGump(ShapeCache& gumps, GameConfig& config, Audio* audio, int& focus, const FontSet& fonts)
+        : s_(gumps, config, audio, focus, &fonts) {}
     void draw(Surface8& screen) const override { s_.draw(screen); }
     void key(std::uint16_t code) override { s_.key(code); }
     void mouse_down(int x, int y) override { s_.mouse_down(x, y); }
     void mouse_move(int x, int y) override { s_.mouse_move(x, y); }
     void mouse_up(int x, int y) override { s_.mouse_up(x, y); }
     void update(std::uint32_t ticks) override { s_.update(ticks); }
+    bool waiting_for_pad() const override { return s_.waiting_for_pad(); }
+    void pad_button(int button) override { s_.pad_button(button); }
     bool closed() const override { return s_.closed(); }
 
 private:
@@ -95,29 +103,74 @@ private:
 
 class LoadGump : public ModalGump {
 public:
-    LoadGump(ShapeCache& gumps, const FontSet& fonts, const LoadScreen::Names& names, int& selected)
-        : s_(gumps, fonts, names, selected) {}
+    LoadGump(ShapeCache& gumps, const FontSet& fonts, const LoadScreen::Names& names, int& selected,
+             LoadScreen::Mode mode = LoadScreen::Mode::kLoad)
+        : s_(gumps, fonts, names, selected, mode) {}
     void draw(Surface8& screen) const override { s_.draw(screen); }
     void key(std::uint16_t code) override { s_.key(code); }
     void mouse_down(int x, int y) override { s_.mouse_down(x, y); }
     bool closed() const override { return s_.result().has_value(); }
     int result() const override { return s_.result().value_or(0); }
     int slot() const { return s_.slot(); }
+    const std::string& name() const { return s_.name(); }
 
 private:
     LoadScreen s_;
 };
 
-std::vector<std::uint8_t> load_damage_table(const std::filesystem::path& data) {
+constexpr std::size_t kSavedGlobals = 0x42;
+
+std::vector<std::uint8_t> load_damage_table(
+const std::filesystem::path& data) {
     const auto flex = FlexArchive::open(data / "STATIC/DAMAGE.FLX");
     const auto entry = flex.entry(0);
     return {entry.begin(), entry.end()};
 }
 
+// @orig none: version and language of the game data, read from CRUSADER.EXE.
+// The version is in the banner ("CRUSADER:  No Remorse V1.08"; DS:E8ED4 in the
+// French 1.08 executable); the language is told by a message of the start-up
+// code that exists in each translation.
+struct DataInfo {
+    std::string version;   // "1.08", empty when unknown
+    std::string language;  // "FR", empty when unknown
+};
+
+// @orig none: port-only data version detection
+
+DataInfo detect_data_info(const std::filesystem::path& data) {
+    std::ifstream in(data / "CRUSADER.EXE", std::ios::binary);
+    if (!in) return {};
+    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    DataInfo info;
+    constexpr std::string_view kBanner = "No Remorse V";
+    for (std::size_t at = bytes.find(kBanner); at != std::string::npos && info.version.empty();
+         at = bytes.find(kBanner, at + 1)) {
+        std::size_t end = at + kBanner.size();
+        const std::size_t begin = end;
+        while (end < bytes.size() && (std::isdigit(static_cast<unsigned char>(bytes[end])) || bytes[end] == '.')) ++end;
+        if (end > begin) info.version = bytes.substr(begin, end - begin);
+    }
+    struct Language {
+        std::string_view marker, name;
+    };
+    constexpr Language kLanguages[] = {
+        {"Appuyer sur une touche pour continuer.", "FR"},
+        {"Press any key to continue.", "US"},
+    };
+    for (const Language& l : kLanguages) {
+        if (bytes.find(l.marker) != std::string::npos) {
+            info.language = l.name;
+            break;
+        }
+    }
+    return info;
+}
+
 }  // namespace
 
 // @orig none: loads the data and builds the port's subsystems
-Game::Game(const std::filesystem::path& data)
+Game::Game(const std::filesystem::path& data, const std::filesystem::path& saves)
     : shapes_flex_(FlexArchive::open(data / "STATIC/SHAPES.FLX")),
       globs_(FlexArchive::open(data / "STATIC/GLOB.FLX")),
       fixed_(FlexArchive::open(data / "STATIC/FIXED.DAT")),
@@ -139,15 +192,19 @@ Game::Game(const std::filesystem::path& data)
       menu_palette_(Palette::load(data / "STATIC/MISC.PAL")),
       difficulty_palette_(Palette::load(data / "STATIC/DIFF.PAL")),
       cursor_(MouseCursor::load(data / "STATIC/MOUSE.SHP")),
-      save_names_(LoadScreen::read_names(data / "SAVEGAME")),
+      save_names_(LoadScreen::read_names(saves.empty() ? data / "SAVEGAME" : saves)),
       credits_data_(CreditsData::load(data / "STATIC")),
       help_pictures_(HelpScreen::Pictures::load(data / "STATIC")),
       data_(data),
+      save_dir_(saves.empty() ? data / "SAVEGAME" : saves),
       config_(GameConfig::load(data / "CRUSADER.CFG")) {
     // dsfx_init: without SOUND.FLX the game runs silent, as with "sound=off".
     if (std::filesystem::exists(data / "SOUND/SOUND.FLX")) {
         audio_ = std::make_unique<Audio>(SoundFlex::open(data / "SOUND/SOUND.FLX"), data / "SOUND");
     }
+    const DataInfo info = detect_data_info(data);
+    data_version_ = info.version;
+    data_language_ = info.language;
     set_config(config_);
     reset_world();
 }
@@ -216,10 +273,23 @@ void Game::reset_world() {
         show_keypad(static_cast<std::int16_t>(a[0] | a[1] << 8), p.pid());
         return 0;
     });
+    // WeaselGump::I_showWeaselGump(level): the calling process goes on once
+    // the shop is closed.
+    machine_->set_intrinsic(0x12D, [this](UCMachine&, UCProcess&, std::span<const std::uint8_t> a) -> std::uint32_t {
+        if (a.size() < 2) return 0;
+        show_weasel(static_cast<std::int16_t>(a[0] | a[1] << 8));
+        return 0;
+    });
     // Ultima8Engine::I_moveKeyDownRecently (10A8:4340): DS:322A, the number
     // of keys held, any key.
     machine_->set_intrinsic(0x096, [this](UCMachine&, UCProcess&, std::span<const std::uint8_t>) -> std::uint32_t {
         return keyboard_.held();
+    });
+    // Game::I_playCredits (13E8:003F): creates a process (vtable DS:628B)
+    // whose run is the end of the game (play_end_credits).
+    machine_->set_intrinsic(0x095, [this](UCMachine&, UCProcess&, std::span<const std::uint8_t>) -> std::uint32_t {
+        play_credits();
+        return 0;
     });
     // 11D8:342C: the colour cycling, once the game palette is on screen.
     kernel_->spawn<PaletteCycleProcess>(world_->state);
@@ -271,6 +341,9 @@ void Game::reset_world() {
     };
     hooks.designated_target_forgotten = [this](ObjId) { redesignate(*kernel_, *world_, anims_); };
     hooks.reset_fire = [this] { combat_->reset_fire(); };
+    hooks.got_hit = [this](ObjId item, ObjId other, std::uint16_t force) {
+        got_hit(*kernel_, *world_, anims_, item, other, force);
+    };
     world_->set_hooks(hooks);
     menu_.reset();
     menu_process_ = nullptr;
@@ -282,25 +355,90 @@ void Game::reset_world() {
     sprites_suspended_ = false;
 }
 
+// @orig none: the controller screen's "press a button"
+bool Game::waiting_for_pad() const {
+    if (menu_) return menu_->waiting_for_pad();
+    return screen_ && screen_->waiting_for_pad();
+}
+
+// @orig none
+void Game::pad_button(int button) {
+    if (menu_) menu_->pad_button(button);
+    else if (screen_) screen_->pad_button(button);
+}
+
 void Game::key(std::uint8_t scancode, bool extended, bool pressed, std::uint16_t flags, std::uint8_t ascii) {
     keyboard_.key(scancode, extended, pressed, flags, ascii, kernel_->ticks());
 }
 
+// @orig none: the slot's file in the save directory
+void Game::load_save(int slot) { load_save_file(save_dir_ / ("SAVEGAME." + std::to_string(slot))); }
+
 // @orig 1058:02F1 1028:0000
-void Game::load_save(int slot) {
+void Game::load_save_file(const std::filesystem::path& path) {
     reset_world();
-    const auto save = FlexArchive::open(data_ / "SAVEGAME" / ("SAVEGAME." + std::to_string(slot)));
+    const auto save = FlexArchive::open(path);
     world_->load_saved_items(save);
     const Item* player = world_->get(1);
     if (!player) throw std::runtime_error("saved game without the player (item 1)");
     // Entry 60 (FLAG_1410_02e7): the usecode globals, as in UNKDS.DAT.
     set_globals(save.entry(60));
+    // Entry 91: Weasel's introduction played (DS:5ECF). Entry 90, the alert
+    // (DS:135C), is read too but cleared when the game starts again.
+    if (const auto weasel = save.entry(91); !weasel.empty()) weasel_intro_played_ = weasel[0] != 0;
+
     // The kernel's processes (entries 100+) are not loaded yet, so the
     // scripts running at save time cannot resume. Instead the fast area is
     // rebuilt as on arrival: its items enter it again and start their events.
     // Glob items are recreated identically (checked against SAVEGAME.2).
+    // The guns and cameras that run WALLGUN's process (their enterFastArea
+    // spawns it unless status bit 4 says it runs; their leaveFastArea clears
+    // the bit) would otherwise stay idle: their saved process is not loaded.
+    static constexpr std::uint16_t kGuardedGuns[] = {0x108, 0x113, 0x1B9, 0x1BA, 0x1CD, 0x25F,
+                                                     0x260, 0x2F0, 0x373, 0x399, 0x3A1, 0x4C8};
+    world_->for_each([this](const Item& i) {
+        if (std::find(std::begin(kGuardedGuns), std::end(kGuardedGuns), i.shape) == std::end(kGuardedGuns)) return;
+        if (Item* gun = world_->get(i.id)) gun->flags &= static_cast<std::uint16_t>(~0x0004);
+    });
+    // A jet of steam being shut off (0x4FB from STEAM1, 0x512 from STEAM2,
+    // status 0x1000) waits in STEAMBOX_0327 for its last frame, then becomes
+    // the marker 0x3A9 (frame 0 or 1) that a valve opens again. Without that
+    // process it would loop forever, and no valve looks for it: finish it.
+    std::vector<ObjId> closing;
+    world_->for_each([&](const Item& i) {
+        if ((i.shape == 0x4FB || i.shape == 0x512) && (i.flags & 0x1000)) closing.push_back(i.id);
+    });
+    for (ObjId id : closing) {
+        Item* steam = world_->get(id);
+        const std::uint16_t frame = steam->shape == 0x512 ? 1 : 0;
+        world_->set_shape(*steam, 0x3A9);
+        world_->set_frame(*steam, frame);
+        steam->flags &= static_cast<std::uint16_t>(~0x1000);
+    }
     world_->clear_fast_area();
     world_->set_camera(player->x, player->y, player->z);
+    // An NPC saved while its death played (dead, last action 0x12 or 0x14,
+    // short of the action's last frame): without its animation process it
+    // would stay as it was, often still standing, and never become a body
+    // (TEST11, docs/bugs.md). The death is finished at once: the action's
+    // last frame, and its event calledFromAnim (0x0E), from which the NPC
+    // classes start NPCDEATH. Replaying the animation would not do: out of
+    // the fast area its steps are refused.
+    for (ObjId id = 2; id < 256; ++id) {
+        Item* npc = world_->get(id);
+        if (!npc || (npc->z & 0xFF) == 254 || !world_->is_dead(id)) continue;
+        const std::uint16_t last = world_->npc_word(id, npc::kLastAnim);
+        if (last != 0x12 && last != 0x14) continue;
+        const AnimAction* a = anims_.action(npc->shape, last);
+        if (!a || a->frame_count() == 0) continue;
+        const AnimFrame* end = a->frame(world_->npc_direction(id), a->frame_count() - 1);
+        if (!end || npc->frame == end->frame || actor_busy(*kernel_, id)) continue;
+        world_->set_frame(*npc, end->frame);
+        if (end->mirrored) npc->flags |= 0x0020;
+        else npc->flags &= static_cast<std::uint16_t>(~0x0020);
+        world_->npc_record(id)[npc::kAnimFrame] = static_cast<std::uint8_t>(a->frame_count() - 1);
+        if (end->event && world_->hooks().start_event) world_->hooks().start_event(id, ActorAnimProcess::kCalledFromAnimEvent);
+    }
     // 1200:02BF: the music of the saved game, from its start.
     if (audio_) {
         const auto track = save.entry(70);
@@ -316,7 +454,99 @@ void Game::load_save(int slot) {
     world_->state.cycle_paused = false;
 }
 
+// @orig 1058:0115
+void Game::save_game(int slot) {
+    if (slot < 1 || slot > LoadScreen::kNames) throw std::runtime_error("no save slot " + std::to_string(slot));
+    FlexWriter flex(1024);
+    auto bytes = [](std::initializer_list<std::uint32_t> words, std::size_t width) {
+        std::vector<std::uint8_t> out;
+        for (std::uint32_t w : words) {
+            for (std::size_t b = 0; b < width; ++b) out.push_back(static_cast<std::uint8_t>(w >> (8 * b)));
+        }
+        return out;
+    };
+    // Entry 9: the slot's name, 32 bytes (DS:7964); 90: the alert (DS:135C);
+    // 91: Weasel's introduction played (DS:5ECF).
+    std::vector<std::uint8_t> name(32, 0);
+    const std::string& text = save_names_[static_cast<std::size_t>(slot - 1)];
+    std::copy_n(text.begin(), std::min<std::size_t>(text.size(), 31), name.begin());
+    flex.add(9, name);
+    flex.add(90, bytes({world_->state.alert_active ? 1u : 0u}, 1));
+    flex.add(91, bytes({weasel_intro_played_ ? 1u : 0u}, 1));
+    flex.add(0, world_->saved_item_table());
+    flex.add(1, world_->saved_item_lists());
+    flex.add(10, world_->npc_table());
+    // Entry 20 (NPC_10f0_390d): the player block, its random seed taken
+    // just before (DS:7E12; the port's generator, not the original's).
+    const GameState& s = world_->state;
+    std::array<std::uint8_t, 0x15> player = s.player_block;
+    auto put = [&](std::size_t at, std::uint32_t v, std::size_t width) {
+        for (std::size_t b = 0; b < width; ++b) player[at + b] = static_cast<std::uint8_t>(v >> (8 * b));
+    };
+    put(0x00, 1, 2);
+    put(0x02, s.avatar_in_stasis ? 1 : 0, 2);
+    put(0x04, s.random_state, 4);
+    put(0x0B, s.difficulty, 2);
+    put(0x0D, s.keycards, 4);
+    put(0x11, s.battery, 2);
+    flex.add(20, player);
+    for (int part = 0; part < 3; ++part) flex.add(static_cast<std::size_t>(50 + part), world_->saved_tracker(part));
+    // Entry 60 (FLAG_1410_02e7): the usecode globals, DS:65A8 bytes (the
+    // size of UNKDS.DAT, 0x42).
+    flex.add(60, std::span(machine_->globals()).first(kSavedGlobals));
+
+    // Entries 70, 71 (STDINT_1200_0311): the music track and its flags.
+    flex.add(70, bytes({static_cast<std::uint32_t>(audio_ ? audio_->music.current() : 0)}, 2));
+    flex.add(71, bytes({static_cast<std::uint32_t>(audio_ ? audio_->music.flags() : 0)}, 2));
+    const auto& dir = save_dir_;
+    std::filesystem::create_directories(dir);
+    flex.write(dir / ("SAVEGAME." + std::to_string(slot)));
+}
+
+// @orig none: save directory of the port (tests)
+void Game::set_save_dir(const std::filesystem::path& dir) {
+    save_dir_ = dir;
+    save_names_ = LoadScreen::read_names(dir);
+}
+
+// @orig 1058:0528
+
+void Game::set_save_name(int slot, const std::string& name) {
+    if (slot < 1 || slot > LoadScreen::kNames) return;
+    save_names_[static_cast<std::size_t>(slot - 1)] = name.substr(0, 31);
+}
+
+// @orig 1008:041A 1048:0429
+void Game::save_named(int slot, const std::string& name) {
+    // The save screen: the name is set, then the free space of the drive is
+    // checked (GAMEPAL_1048_0429, 500000 bytes at least); without it, the
+    // message DS:00A3 instead of the save.
+    set_save_name(slot, name);
+    std::error_code ec;
+    const auto space = std::filesystem::space(save_dir_, ec);
+    if (!ec && space.available < 500000) {
+        show_message("ERROR:\n\nUnable to save game.\n\nPlease free up 5 Megs of drive space.");
+        return;
+    }
+    save_or_report(slot);
+}
+
+// @orig none: a failed write is reported instead of ending the game
+bool Game::save_or_report(int slot) {
+    try {
+        save_game(slot);
+        return true;
+    } catch (const std::exception& e) {
+        show_message(std::string("ERROR:\n\nUnable to save game.\n\n") + e.what());
+        return false;
+    }
+}
+
+
+// @orig 1410:0051
 void Game::set_globals(std::span<const std::uint8_t> bytes) {
+
+
     auto& globals = machine_->globals();
     std::fill(globals.begin(), globals.end(), std::uint8_t{0});
     std::copy_n(bytes.begin(), std::min(bytes.size(), globals.size()), globals.begin());
@@ -373,7 +603,7 @@ void Game::update(std::uint32_t elapsed_us) {
     if (pending_load_) {
         const int slot = pending_load_;
         pending_load_ = 0;
-        if (std::filesystem::exists(data_ / "SAVEGAME" / ("SAVEGAME." + std::to_string(slot)))) load_save(slot);
+        if (std::filesystem::exists(save_dir_ / ("SAVEGAME." + std::to_string(slot)))) load_save(slot);
         if (pending_notice_) {
             // F4: the notice once the game is loaded, in the menu mode again.
             const std::uint16_t shape = pending_notice_;
@@ -398,6 +628,8 @@ void Game::update(std::uint32_t elapsed_us) {
     const std::uint32_t before = kernel_->ticks();
     kernel_->advance_time(elapsed_us);
     kernel_->run_slice();
+    animate_scenery();
+    if (end_credits_pending_ && !modal()) play_end_credits();
     if (!modal()) selection_tick(*world_);
     mix_elapsed(elapsed_us);
     if (menu_) {
@@ -405,10 +637,23 @@ void Game::update(std::uint32_t elapsed_us) {
         run_credits(before);
     }
     if (screen_) {
+        // Weasel's shop closes itself at one of its steps.
         screen_->update(kernel_->ticks());
-        if (const Palette* p = screen_->palette()) world_->state.screen_palette = *p;
+        if (screen_->closed()) close_screen();
+        else if (const Palette* p = screen_->palette()) world_->state.screen_palette = *p;
     }
     apply_status_bar_mouse_range();
+}
+
+// @orig 1038:01B1 1188:1719
+void Game::animate_scenery() {
+    if (modal()) return;
+    ++game_passes_;
+    animate_items(*world_, game_passes_, animated_at_, [this](std::uint16_t shape) {
+        const Shape* s = shapes_.get(shape);
+        return s ? static_cast<int>(s->frames().size()) : 0;
+    });
+    animated_at_ = game_passes_;
 }
 
 // @orig none: audio clock of the port
@@ -428,6 +673,13 @@ void Game::mix_elapsed(std::uint32_t elapsed_us) {
 // @orig 1468:3F77 1468:4060 1468:4169
 void Game::play_movie(const std::string& name, MovieKind kind) {
     if (movie_) return;
+    Surface8 screen(kScreenWidth, kScreenHeight);
+    render_view(screen);
+    start_movie(name, kind, std::move(screen));
+}
+
+// @orig 1468:03E3 1468:3ABC
+void Game::start_movie(const std::string& name, MovieKind kind, Surface8 screen) {
     const std::filesystem::path base = data_ / "FLICS" / movie_base_name(name);
     std::filesystem::path avi = base;
     avi += ".AVI";
@@ -443,8 +695,6 @@ void Game::play_movie(const std::string& name, MovieKind kind) {
         txt += ".TXT";
         subtitles = load_movie_subtitles(txt, fonts_, MoviePlayer::kSubtitleFont);
     }
-    Surface8 screen(kScreenWidth, kScreenHeight);
-    render_view(screen);
     movie_ = std::make_unique<MoviePlayer>(std::move(*movie), kind, std::move(subtitles), config_.big_video,
                                            std::move(screen), world_->state.screen_palette, gumps_, fonts_);
     // 1468:3ABC: the colour cycling pauses.
@@ -481,7 +731,32 @@ void Game::end_movie() {
     keyboard_.reset();
     if (movie_->kind() != MovieKind::kOverlay) world_->state.screen_palette = movie_->kept_palette();
     if (movie_resumes_cycle_) world_->state.cycle_paused = false;
+    if (weasel_movie_) {
+        // 13E0:0CD8: palette_write_hw(DS:058C), DS:6810 +0x40 cleared.
+        weasel_movie_ = false;
+        world_->state.screen_palette = world_->state.game_palette;
+        world_->state.cycle_paused = false;
+    }
     movie_.reset();
+    next_start_up_movie();
+}
+
+// @orig 1028:0000
+void Game::next_start_up_movie() {
+    // Game_start after the end credits: the movies of the start-up, one
+    // after the other on a black screen (the credits leave it black); a
+    // missing one is skipped. Then the menu gets its music: in the original
+    // it only opens now (IRGUMP_13d0_0000), the port opened it before to
+    // hold the credits.
+    while (!movie_ && !next_movies_.empty()) {
+        const std::string next = next_movies_.front();
+        next_movies_.erase(next_movies_.begin());
+        start_movie(next, MovieKind::kCutsceneNoFade, Surface8(kScreenWidth, kScreenHeight));
+    }
+    if (!movie_ && end_credits_) {
+        end_credits_ = false;
+        if (audio_) audio_->music.push(Music::kMenu);
+    }
 }
 
 // @orig 1020:0C7F
@@ -520,7 +795,30 @@ void Game::run_credits(std::uint32_t ticks_before) {
         world_->state.screen_palette = menu_palette_;
         keyboard_.reset();
         cursor_.show();
+        if (end_credits_) {
+            // Game_start (1028:0000), while DS:08F6 (a mission on the command
+            // line) is -1 and DS:0904 (play them until a click) is 0.
+            next_movies_ = {"T01", "T02"};
+            next_start_up_movie();
+        }
     }
+}
+
+// @orig 13E8:0000 1028:0000
+void Game::play_end_credits() {
+    // 13E8:0000: the music stopped and its stack emptied (music_reset), no
+    // game any more (DS:5BEE), the cursor hidden, the screen black; then the
+    // credits (Credits_run) and Game_start: the start-up movies and the menu,
+    // where "back" and "save" do nothing. The menu is opened first here: it
+    // holds the credits as for its button 4.
+    end_credits_pending_ = false;
+    if (audio_) {
+        audio_->music.stop();
+        audio_->music.reset();
+    }
+    open_menu(true);
+    end_credits_ = true;
+    menu_->show_credits();
 }
 
 // @orig 1138:0896 13E8:14B4
@@ -592,6 +890,11 @@ void Game::on_key(const GameKeyEvent& e) {
 
 // @orig 13E8:10C3 13E8:0E7D
 void Game::open_menu() {
+    open_menu(false);
+}
+
+// @orig 13D0:0000
+void Game::open_menu(bool no_game) {
     if (menu_) return;
     // WORLD_13e8_0e7d and 10c3: the status bar goes, the cursor shows.
     world_->state.status_bar_visible = false;
@@ -608,19 +911,24 @@ void Game::open_menu() {
     cursor_.show();
     menu_ = std::make_unique<MainMenu>(
         MainMenu::Resources{&gumps_, &fonts_, &save_names_, &credits_data_, &config_, audio_.get(),
-                            [this] { save_config(); }},
-        menu_shared_, false);
+                            [this] { save_config(); },
+                            port_version_.empty() ? std::string() : "PORTAGE V" + port_version_,
+                            "DONNEES DU JEU " + (data_version_.empty() ? std::string("INCONNUES") : "V" + data_version_) + " " +
+                                (data_language_.empty() ? std::string("LANGUE INCONNUE") : data_language_)},
+        menu_shared_, no_game);
     auto p = std::make_unique<ModalProcess>();
     menu_process_ = p.get();
     kernel_->add(std::move(p));
     kernel_->raise_level(*menu_process_);
-    if (audio_) audio_->music.push(Music::kMenu);
+    // At the end of the game, once the start-up movies are over (end_movie).
+    if (audio_ && !no_game) audio_->music.push(Music::kMenu);
 }
 
 // @orig 13D0:03F5 13E8:0EF9
 void Game::close_menu() {
     const int result = *menu_->result();
     const int load_slot = menu_->load_slot();
+    const std::string save_name = menu_->save_name();
     const int new_game_difficulty = menu_->new_game_difficulty();
     menu_.reset();
     difficulty_shown_ = false;
@@ -642,6 +950,8 @@ void Game::close_menu() {
         return;
     }
     if (result == MainMenu::kLoad) pending_load_ = load_slot + 1;
+    // World_game_menu, result 2: Game_save, then back to the game.
+    if (result == MainMenu::kSave) save_named(load_slot + 1, save_name);
     if (result == MainMenu::kNewGame) pending_new_game_ = new_game_difficulty;
     world_->state.status_bar_visible = true;
     world_->state.screen_palette = world_->state.game_palette;  // palette_write_hw(DS:058C)
@@ -689,33 +999,40 @@ bool Game::function_key(std::uint16_t code) {
             [this](int sfx) {
                 if (audio_) audio_->play_sfx(sfx);
             });
-        // 13E8:38E5: the menu mode, the palette faders stopped, cursor 0x27.
+        // 13E8:38E5: the menu mode, the palette faders stopped, the colour
+        // cycling paused (DS:6810 +0x40), cursor 0x27.
         enter_menu_mode();
         kernel_->fail_processes(0, PaletteFaderProcess::kType, kernel_->level());
+        world_->state.cycle_paused = true;
         cursor_.reset(HelpScreen::kCursor);
         cursor_.show();
         world_->state.screen_palette = *help->palette();
         open_screen(std::move(help), [this](const ModalGump&) {
-            // 13E8:3AAE.
+            // 13E8:3AAE: the game palette, the colour cycling again.
             cursor_.hide();
             world_->state.screen_palette = world_->state.game_palette;
+            world_->state.cycle_paused = false;
             leave_menu_mode();
         });
         return true;
     }
     case gump_key::kF2:
         // The options screen: MISC.PAL, cursor 0x25; closing it saves the
-        // configuration (Options_dtor).
+        // configuration (Options_dtor). The colour cycling is paused while
+        // it is open (jumpToAllBlack, DS:6810 +0x40), else it would write
+        // the game's entries 1..14 over MISC.PAL.
         enter_menu_mode();
+        world_->state.cycle_paused = true;
         world_->state.screen_palette = menu_palette_;
         cursor_.reset(MouseCursor::kMenuArrow);
         cursor_.show();
-        open_screen(std::make_unique<OptionsGump>(gumps_, config_, audio_.get(), menu_shared_.options_focus),
+        open_screen(std::make_unique<OptionsGump>(gumps_, config_, audio_.get(), menu_shared_.options_focus, fonts_),
                     [this](const ModalGump&) {
                         save_config();
                         cursor_.reset(MouseCursor::kArrow);
                         cursor_.hide();
                         world_->state.screen_palette = world_->state.game_palette;
+                        world_->state.cycle_paused = false;
                         leave_menu_mode();
                     });
         return true;
@@ -730,15 +1047,21 @@ bool Game::function_key(std::uint16_t code) {
         });
         return true;
     case gump_key::kF5:
-        // Quick save? Writing a game is not reproduced yet (milestone 7):
-        // "yes" leaves as "no" does.
+        // Quick save? Yes: slot 12 (DS:0C94 = 12) under the name it has,
+        // then the notice.
         if (!player_may_act(*world_) || s.cru_stasis) return false;
-        ask(ShapeDialog::kQuickSaveQuestion, 0x108, [this] { leave_menu_mode(); });
+        ask(ShapeDialog::kQuickSaveQuestion, 0x108, [this] {
+            if (save_or_report(kQuickSave)) notify(ShapeDialog::kQuickSaveNotice);
+            else leave_menu_mode();
+        });
+
         return true;
     case gump_key::kF8: {
-        // The load screen (1008:0088, mode 1): MISC.PAL, cursor 0x25 pushed.
+        // The load screen (1008:0088, mode 1): MISC.PAL, cursor 0x25 pushed,
+        // the colour cycling paused as for F2.
         if (s.cru_stasis) return false;
         enter_menu_mode();
+        world_->state.cycle_paused = true;
         world_->state.screen_palette = menu_palette_;
         cursor_.push(MouseCursor::kMenuArrow);
         cursor_.show();
@@ -748,13 +1071,37 @@ bool Game::function_key(std::uint16_t code) {
             cursor_.reset(MouseCursor::kArrow);
             cursor_.hide();
             world_->state.screen_palette = world_->state.game_palette;
+            world_->state.cycle_paused = false;
             leave_menu_mode();
         });
         return true;
     }
+    case gump_key::kF9: {
+        // The save screen (1008:0088, mode 0), as F8 but only while the
+        // player may act; a name given saves the game (Game_save).
+        if (!player_may_act(*world_) || s.cru_stasis) return false;
+        enter_menu_mode();
+        world_->state.cycle_paused = true;
+        world_->state.screen_palette = menu_palette_;
+        cursor_.push(MouseCursor::kMenuArrow);
+        cursor_.show();
+        auto save = std::make_unique<LoadGump>(gumps_, fonts_, save_names_, menu_shared_.selected_slot,
+                                               LoadScreen::Mode::kSave);
+        open_screen(std::move(save), [this](const ModalGump& screen) {
+            cursor_.reset(MouseCursor::kArrow);
+            cursor_.hide();
+            world_->state.screen_palette = world_->state.game_palette;
+            world_->state.cycle_paused = false;
+            leave_menu_mode();
+            if (screen.result()) {
+                const auto& gump = static_cast<const LoadGump&>(screen);
+                save_named(gump.slot() + 1, gump.name());
+            }
+        });
+        return true;
+    }
     default:
-        // F9 (the save screen) waits for milestone 7; F7 and the other keys
-        // of World_on_key are cheats (docs/interface.md).
+        // F7 and the other keys of World_on_key are cheats (docs/interface.md).
         return false;
     }
 }
@@ -831,6 +1178,40 @@ void Game::show_keypad(std::int16_t code, Pid pid) {
             p->set_call_result(static_cast<std::uint16_t>(screen.result()));
         }
     });
+}
+
+// @orig 13E0:0000 13E0:0435
+void Game::show_weasel(int level) {
+    if (modal() || movie_) return;
+    std::vector<std::uint8_t> stuff;
+    if (std::ifstream in{data_ / "STATIC" / "STUFF.DAT", std::ios::binary}) {
+        stuff.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    enter_menu_mode();
+    WeaselGump::Hooks hooks;
+    hooks.play_sfx = [this](int sfx) {
+        if (audio_) audio_->play_sfx(sfx);
+    };
+    hooks.play_movie = [this](const std::string& name) { play_weasel_movie(name); };
+    hooks.random = [this](int n) {
+        return static_cast<int>(random_range(world_->state.random_state, 0, static_cast<std::uint16_t>(n - 1)));
+    };
+    auto gump = std::make_unique<WeaselGump>(*world_, gumps_, fonts_, std::move(stuff), level, weasel_intro_played_,
+                                             !config_.no_weasel, std::move(hooks), kScreenWidth, kScreenHeight);
+    // The dtor (13E0:0435): WORLD_13e8_0ef9.
+    open_screen(std::move(gump), [this](const ModalGump&) { leave_menu_mode(); });
+}
+
+// The cursor hidden, the movie played over the view and the shop (a
+// cutscene); the palette and the colour cycling come back in end_movie.
+// @orig 13E0:0CD8
+void Game::play_weasel_movie(const std::string& name) {
+    if (movie_) return;
+    Surface8 screen(kScreenWidth, kScreenHeight);
+    render_view(screen);
+    if (screen_) screen_->draw(screen);
+    start_movie(name, MovieKind::kCutscene, std::move(screen));
+    weasel_movie_ = movie_ != nullptr;
 }
 
 // @orig 13E8:0E7D
@@ -978,7 +1359,7 @@ void Game::render_view(Surface8& screen, RenderStats* stats) {
     // DLIST.C 11A0:05xx: right after item 1, in combat (or holstering,
     // last action 0xB), its weapon (WPNOVLAY.DAT), unmirrored, at the item's
     // screen place plus the offsets of the current action, direction, frame.
-    draw_display_list(screen, list, [this](Surface8& surface, const DrawItem& d) {
+    draw_display_list(screen, list, &xform_, [this](Surface8& surface, const DrawItem& d) {
         if (d.item->id != 1 || d.item->shape != 1) return;
         const auto record = world_->npc_record(1);
         const std::uint16_t last = static_cast<std::uint16_t>(record[npc::kLastAnim] | record[npc::kLastAnim + 1] << 8);

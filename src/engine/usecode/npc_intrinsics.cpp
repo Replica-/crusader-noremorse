@@ -6,6 +6,7 @@
 #include "engine/world/chargers.hpp"
 #include "engine/world/inventory.hpp"
 #include "engine/world/item_damage.hpp"
+#include "engine/world/projectile.hpp"
 #include "engine/world/sprite_process.hpp"
 #include "engine/world/teleport.hpp"
 
@@ -97,11 +98,6 @@ std::vector<std::uint16_t> register_npc_intrinsics(UCMachine& m, World& w, const
         w.npc_record(id)[npc::kFlags13] &= static_cast<std::uint8_t>(~0x02);
         return 0;
     });
-    // Item::I_explode(item, size, destroy) (1150:0859): with splash damage.
-    bind({0x017}, [&m, &w, &anims](ObjId id, Args a) -> std::uint32_t {
-        explode(m.kernel(), w, anims, id, arg16(a, 4), (arg16(a, 6) & 0xFF) != 0, true);
-        return 0;
-    });
     // SpriteProcess::I_createSprite(shape, first, last, delay, x, y, z) (1140:00DE).
     m.set_intrinsic(0x0C7, [&w](UCMachine& machine, UCProcess&, Args a) -> std::uint32_t {
         return create_sprite(machine.kernel(), w, arg16(a, 0), static_cast<std::int16_t>(arg16(a, 2)),
@@ -191,7 +187,103 @@ std::vector<std::uint16_t> register_npc_intrinsics(UCMachine& m, World& w, const
             return create_actor(machine.kernel(), w, anims, *types, static_cast<ObjId>(id[0] | id[1] << 8), arg16(a, 4));
         });
         bound.push_back(0x129);
+        // Actor::I_createActor(id*, shape, frame) (10F0:25B9): the new NPC's
+        // id is written through the pointer; returns whether there is one.
+        m.set_intrinsic(0x063, [&w, types](UCMachine& machine, UCProcess&, Args a) -> std::uint32_t {
+            const ObjId id = create_plain_actor(w, *types, arg16(a, 4), arg16(a, 6));
+            const std::array<std::uint8_t, 2> out{static_cast<std::uint8_t>(id), static_cast<std::uint8_t>(id >> 8)};
+            machine.assign(arg16(a, 0) | std::uint32_t{arg16(a, 2)} << 16, out);
+            return id != 0;
+        });
+        bound.push_back(0x063);
     }
+    // Actor::I_setDead (10F0:2010): Item::I_setBroken, then record +0x13 bit 0.
+    bind({0x021, 0x062, 0x074, 0x0A1, 0x0A9, 0x0D8, 0x0E7, 0x12E}, [&w](ObjId id, Args) -> std::uint32_t {
+        Item* npc = w.get(id);
+        auto r = w.npc_record(id);
+        if (!npc || r.empty()) return 0;
+        w.set_broken(*npc);
+        r[npc::kFlags13] |= 0x01;
+        return 0;
+    });
+    // Actor::I_isKneeling (10F0:21FB): record +0x13 bit 2. Actor::I_isFalling
+    // (10F0:1F01): record +0x59 bit 1 (gravity.cpp). Actor::I_getMana
+    // (10F0:3454): +0x57. Actor::I_getLastAnimSet (10F0:372E): +0x0D, the
+    // last action started.
+    bind({0x038}, [&w](ObjId id, Args) -> std::uint32_t { return (w.npc_record(id)[npc::kFlags13] >> 2) & 1u; });
+    bind({0x0AC}, [&w](ObjId id, Args) -> std::uint32_t { return (w.npc_record(id)[npc::kAnimFlags] >> 1) & 1u; });
+    bind({0x083}, [&w](ObjId id, Args) -> std::uint32_t { return w.npc_mana(id); });
+    bind({0x01D, 0x05C, 0x0BA, 0x0D7, 0x0E4, 0x132},
+         [&w](ObjId id, Args) -> std::uint32_t { return w.npc_word(id, npc::kLastAnim); });
+    // Actor::I_getLastActivityNo (10F0:3E35): +4, the activity before the
+    // current one. Actor::I_getEquip(npc, slot) (10F0:27C8): +0x1B, 30 slots.
+    bind({0x0DD}, [&w](ObjId id, Args) -> std::uint32_t { return w.npc_word(id, npc::kPreviousActivity); });
+    bind({0x0DF}, [&w](ObjId id, Args a) -> std::uint32_t {
+        return w.npc_equip(id, static_cast<std::int16_t>(arg16(a, 4)));
+    });
+    // Actor::I_setUnkByte(npc, value) (10F0:3E18): +0x63, read back by
+    // I_getUnkByte (0x00B). Actor::I_setCombatTactic(npc, tactic)
+    // (10F0:3594): +0x5C, which the attack process does not read yet
+    // (COMBAT.DAT tactics are not reproduced, attack.hpp).
+    bind({0x0E6}, [&w](ObjId id, Args a) -> std::uint32_t {
+        w.npc_record(id)[npc::kEggQuality] = static_cast<std::uint8_t>(arg16(a, 4));
+        return 0;
+    });
+    bind({0x0DE}, [&w](ObjId id, Args a) -> std::uint32_t {
+        w.set_npc_word(id, npc::kTactic, arg16(a, 4));
+        return 0;
+    });
+    // MainActor::I_getNumberOfCredits (10F0:3833): the quality of the credits
+    // (0x4ED) the player carries, 0 without.
+    m.set_intrinsic(0x0EB, [&w](UCMachine&, UCProcess&, Args) -> std::uint32_t {
+        const Item* credits = w.get(carried(w, 0x4ED));
+        return credits ? credits->quality : 0;
+    });
+    bound.push_back(0x0EB);
+
+    // Intrinsics on any item (not only NPCs): the item id behind the pointer.
+    auto bind_item = [&](std::uint16_t n, std::function<std::uint32_t(UCMachine&, ObjId, Args)> fn) {
+        m.set_intrinsic(n, [&w, fn](UCMachine& machine, UCProcess&, Args a) -> std::uint32_t {
+            std::array<std::uint8_t, 2> id{};
+            const std::uint32_t ptr = arg16(a, 0) | std::uint32_t{arg16(a, 2)} << 16;
+            if (!machine.dereference(ptr, id)) return 0;
+            const ObjId item = static_cast<ObjId>(id[0] | id[1] << 8);
+            return w.get(item) ? fn(machine, item, a) : 0;
+        });
+        bound.push_back(n);
+    };
+    // Actor::I_isBusy (10F0:010C): bit 0 of the item's byte in the table of
+    // DS:3A90, kept by the kernel (11D8:3F59) while the item owns a live
+    // process of type 0xF0, an actor animation.
+    bind_item(0x036, [](UCMachine& machine, ObjId id, Args) -> std::uint32_t {
+        return machine.kernel().find_process(id, ActorAnimProcess::kType) != nullptr;
+    });
+    // Item::I_fireWeapon(item, dx, dy, dz, dir, fire type, aim) (1130:11DA):
+    // the pid of the last projectile. Wall guns and lasers fire this way.
+    bind_item(0x01E, [&w, &anims](UCMachine& machine, ObjId id, Args a) -> std::uint32_t {
+        const auto s16 = [&](std::size_t pos) { return static_cast<int>(static_cast<std::int16_t>(arg16(a, pos))); };
+        return fire_weapon(machine.kernel(), w, anims, id, s16(4), s16(6), static_cast<std::int8_t>(arg16(a, 8)),
+                           arg16(a, 10) & 0xFF, arg16(a, 12), (arg16(a, 14) & 0xFF) != 0);
+    });
+    // Item::I_explode(item, size, destroy) (1150:0859): with splash damage,
+    // for any item (barrels: BARREL, MBARREL).
+    bind_item(0x017, [&w, &anims](UCMachine& machine, ObjId id, Args a) -> std::uint32_t {
+        explode(machine.kernel(), w, anims, id, arg16(a, 4), (arg16(a, 6) & 0xFF) != 0, true);
+        return 0;
+    });
+    // Item::I_receiveHit(item, attacker, dir, damage, fire type) (1130:0247):
+    // CRUSADER_1130_026b, the damage of a shot (steam, flames, pools...).
+    bind_item(0x035, [&w, &anims](UCMachine& machine, ObjId id, Args a) -> std::uint32_t {
+        apply_damage(machine.kernel(), w, anims, id, arg16(a, 4), static_cast<std::int8_t>(arg16(a, 6)),
+                     static_cast<std::int16_t>(arg16(a, 8)), arg16(a, 10));
+        return 0;
+    });
+    // Item::I_fireDistance(item, target, dir, dx, dy, dz) (1130:1755).
+    bind_item(0x116, [&w, &anims](UCMachine&, ObjId id, Args a) -> std::uint32_t {
+        const auto s16 = [&](std::size_t pos) { return static_cast<int>(static_cast<std::int16_t>(arg16(a, pos))); };
+        return static_cast<std::uint16_t>(fire_distance(w, anims, id, arg16(a, 4), arg16(a, 6) & 0xFF, s16(8), s16(10),
+                                                        static_cast<std::int8_t>(arg16(a, 12))));
+    });
     return bound;
 }
 

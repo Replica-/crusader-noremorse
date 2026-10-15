@@ -33,8 +33,13 @@
 // configuration is saved (Resources::save_config) and the menu is back. 0
 // (new game) opens the difficulty screen (difficulty_screen.hpp): a level
 // chosen closes the menu with 0 and new_game_difficulty() tells which;
-// cancelled, the menu is back. 2 (save) opens a sub-screen that the port does
-// not have yet; it leaves the menu open.
+// cancelled, the menu is back. 2 (save) opens the load screen in save mode:
+// a name given closes the menu with 2, load_slot() and save_name() tell
+// which slot and name; cancelled, the menu is back.
+//
+// Port addition (@orig none): two small lines centred at the bottom of the
+// menu, in the dim colour of the options buttons: the version of the port
+// (from the build) and the version of the game data detected.
 
 #include "core/surface.hpp"
 #include "engine/ui/credits.hpp"
@@ -48,6 +53,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 
 namespace crusader {
 
@@ -80,6 +86,10 @@ public:
         GameConfig* config;
         Audio* audio;                      // may be null
         std::function<void()> save_config;  // config_save, when the options close
+        // The two lines at the bottom of the menu (port build, game data
+        // detected); an empty line is not drawn.
+        std::string port_version;
+        std::string data_version;
     };
     MainMenu(const Resources& res, Shared& shared, bool no_game);
 
@@ -92,10 +102,16 @@ public:
     void mouse_up(int x, int y);
     // Timer ticks, at every pass of the modal loop.
     void update(std::uint32_t ticks);
+    // The controller screen of the options waits for a button, and gets it.
+    bool waiting_for_pad() const { return options_ && options_->waiting_for_pad(); }
+    void pad_button(int button) {
+        if (options_) options_->pad_button(button);
+    }
 
-    // Set once the menu has closed: kQuit, kBack, kLoad or kNewGame.
+    // Set once the menu has closed: kQuit, kBack, kLoad, kSave or kNewGame.
     std::optional<int> result() const { return result_; }
-    int load_slot() const { return load_slot_; }  // DS:0C94, for kLoad
+    int load_slot() const { return load_slot_; }  // DS:0C94, for kLoad and kSave
+    const std::string& save_name() const { return save_name_; }  // for kSave
     int new_game_difficulty() const { return new_game_difficulty_; }  // DS:7E19, for kNewGame
     const DifficultyScreen* difficulty_screen() const { return difficulty_.get(); }
     const LoadScreen* load_screen() const { return load_.get(); }
@@ -103,6 +119,9 @@ public:
     // The credits, while they run; the caller feeds frame() at 60 Hz and
     // calls end_credits() once finished().
     Credits* credits() { return credits_.get(); }
+    // Game::I_playCredits (game.hpp): the credits started from outside, as
+    // button 4 does.
+    void show_credits() { activate(kCredits); }
     void end_credits() { credits_.reset(); }
     int selected() const { return *selected_; }
     const Rect& button(int i) const { return buttons_[i]; }
@@ -112,6 +131,7 @@ private:
     void activate(int i);
 
     void after_sub_screen();
+    void draw_version(Surface8& screen, int y, const std::string& text) const;
 
     Resources res_;
     ShapeCache* gumps_;
@@ -122,6 +142,8 @@ private:
     std::unique_ptr<OptionsScreen> options_;
     std::unique_ptr<DifficultyScreen> difficulty_;
     int load_slot_ = -1;
+    std::string save_name_;
+
     int new_game_difficulty_ = 0;
     bool no_game_;
     std::array<Rect, kButtons> buttons_{};

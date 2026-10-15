@@ -38,8 +38,13 @@ public:
     bool terminated() const { return terminated_; }
     bool failed() const { return failed_; }
     std::uint32_t result() const { return result_; }
-    // Result of the last process this one waited for (usecode "push process result").
+    // The usecode result register (INTER_1418_038b, *param_2): written by
+    // the wake-up with the result of the process waited for, read by "push
+    // process result" (0x6D), written by "pop result" (0x08), and returned
+    // when the script ends. One register: a script that ends without its
+    // own pop_res returns what its last child left there.
     std::uint32_t wake_result() const { return wake_result_; }
+    void set_wake_result(std::uint32_t result) { wake_result_ = result; }
 
     bool suspended() const { return suspended_; }
     void suspend() { suspended_ = true; }
@@ -54,8 +59,10 @@ public:
 
     bool waiting() const { return !wait_expr_.empty(); }
     // Blocks until `other` terminates; successive calls combine with AND.
-    // No effect if `other` does not exist or already terminated.
-    void wait_for(Pid other);
+    // No effect if `other` does not exist or already terminated. Like
+    // Process_wait_for, a partner without an owner takes the other's; the
+    // usecode's `implies` (KERNEL_11d8_1327) passes `share_owner` false.
+    void wait_for(Pid other, bool share_owner = true);
     // Blocks until any of `others` terminates.
     void wait_for_any(const std::vector<Pid>& others);
 
@@ -81,7 +88,7 @@ private:
     };
 
     void finish(std::uint32_t result, bool failed);
-    bool add_wait_operand(Pid other);
+    bool add_wait_operand(Pid other, bool share_owner = true);
     void dependency_done(Pid pid, std::uint32_t result);
     bool evaluate_wait() const;
 

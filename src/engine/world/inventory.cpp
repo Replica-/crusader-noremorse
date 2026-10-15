@@ -18,7 +18,8 @@ constexpr std::uint8_t kFamilyWeapon = 10;
 constexpr std::uint8_t kFamilyAmmo = 11;
 constexpr std::uint16_t kDatalink = 0x4D4;
 
-// NPC_10f0_395e: the first of the player's 30 slots holding `shape`.
+}  // namespace
+
 // @orig 10F0:395E
 ObjId carried(const World& world, std::uint16_t shape) {
     for (int slot = 0; slot < 30; ++slot) {
@@ -28,6 +29,8 @@ ObjId carried(const World& world, std::uint16_t shape) {
     }
     return 0;
 }
+
+namespace {
 
 // NPC_10f0_2b03 / 2b2d / 2b62: the first empty slot of first..first+count-1.
 // @orig 10F0:2B03 10F0:2B2D 10F0:2B62
@@ -178,6 +181,23 @@ bool add_item_cru(World& world, ObjId item_id, bool show) {
     world.set_npc_word(kPlayer, kNpcActiveItem, static_cast<std::uint16_t>(slot));
     if (shape != kDatalink) shown();
     return true;
+}
+
+// The original reads the quality of the item it is given for the credits;
+// Weasel's shop gives a new one, whose quality is 0.
+// @orig 13E8:00C8
+bool may_add_item(const World& world, std::uint16_t shape) {
+    const ObjId c = carried(world, shape);
+    const int quality = c ? world.get(c)->quality : 0;
+    if (shape == 0x4ED) return c ? quality < 60000 : free_slot(world, 11, 15) != 0;
+    const std::uint8_t fam = world.family_of(shape);
+    if (fam == kFamilyWeapon) return free_slot(world, 1, 5) != 0;
+    if (fam == kFamilyAmmo) return c ? quality < 20 : free_slot(world, 6, 5) != 0;
+    if (fam != 12 && fam != 13) return false;
+    if (shape == 0x111 || shape == 0x3A2 || shape == 0x3A3 || shape == 0x3A4) return true;
+    if (!c) return free_slot(world, 11, 15) != 0;
+    if (shape == 0x52E || shape == 0x52F || shape == 0x530) return true;
+    return quality < (shape == 0x560 ? 20 : 10);
 }
 
 bool may_use(const World& world, ObjId item) {

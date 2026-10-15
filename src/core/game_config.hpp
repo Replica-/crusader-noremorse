@@ -2,13 +2,16 @@
 // CRUSADER.CFG, "key=value" lines: read at start-up (1020:0000) and written
 // back by config_save (1020:0C7F) when the options screen closes.
 //
-// Only the keys of the options screen are decoded here; the others (sound
-// card, CD letter, mouse buttons...) are kept as they are. Defaults are the
-// data segment's initial values, used when a key is missing.
+// Only the keys of the options screen, the subtitles and "noweasel" are
+// decoded here; the others (sound card, CD letter, mouse buttons...) are kept
+// as they are. Defaults are the data segment's initial values, used when a
+// key is missing.
 //
 // The original rewrites the whole file from its globals, with lines ending in
 // "\n\r"; the port replaces the lines of the keys it knows, keeps the other
 // lines and their order, and ends lines with "\r\n" like the installer.
+
+#include "core/pad_config.hpp"
 
 #include <filesystem>
 #include <string>
@@ -28,6 +31,10 @@ public:
     int mouse_speed = 2;       // "mousespeed" (DS:6001), 0..3
     bool big_video = false;    // "bigvideo" (DS:68CE: mode 0x13 / 8 when big, else 0x101 / 0)
     bool subtitles = false;    // "subtitles" (DS:0179): the cutscenes' subtitles
+    bool no_weasel = false;    // "noweasel" (DS:0178): no movies in Weasel's shop
+    // Port addition, written only when changed: "padmap" (comma-separated
+    // action numbers, see PadButton), "padaim" and "paddeadzone".
+    PadSettings pad;
 
     // A missing or unreadable file gives the defaults.
     static GameConfig load(const std::filesystem::path& path);

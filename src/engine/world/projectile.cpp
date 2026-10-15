@@ -229,10 +229,11 @@ Pid fire_weapon(Kernel& kernel, World& world, const AnimDat& anims, ObjId shoote
         }
     }
     // A shot of the controlled NPC enters the aiming mode; without a target,
-    // it then flies towards the crosshair (SPRITE_1140_0e88), with spread.
+    // it then flies towards the crosshair (SPRITE_1140_0e88), with spread, at
+    // the muzzle's height (param_4 already holds the shooter's z + dz).
     if (shooter == world.state.controlled_npc && !world.state.aim.active) enter_aim_mode(kernel, world, anims);
     const auto crosshair = target_item == 0 && shooter == world.state.controlled_npc && world.state.aim.active
-                               ? crosshair_aim(world, dz)
+                               ? crosshair_aim(world, origin.z)
                                : std::nullopt;
     // A target is aimed with spread (SPRITE_1140_09c9 with 1), a shot
     // straight ahead when aiming is asked (SPRITE_1140_0e01): both need `aim`.

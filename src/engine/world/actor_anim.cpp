@@ -3,6 +3,7 @@
 #include "core/dtable.hpp"
 #include "engine/audio/audio.hpp"
 #include "engine/world/aim_mode.hpp"
+#include "engine/world/attack.hpp"
 #include "engine/world/collision.hpp"
 #include "engine/world/gravity.hpp"
 #include "engine/world/item_selection.hpp"
@@ -64,6 +65,13 @@ void ActorAnimProcess::start(const AnimAction& a) {
     }
     record[npc::kLastAnim] = static_cast<std::uint8_t>(action_);
     record[npc::kLastAnim + 1] = static_cast<std::uint8_t>(action_ >> 8);
+    // The controlled NPC is in combat while it plays a combat action
+    // (NPC_10f0_3183 / Actor::I_clrInCombat, which does nothing more for it):
+    // this is what shows its weapon (WPNOVLAY.DAT, DLIST.C).
+    if (owner() == world_.state.controlled_npc) {
+        if (in_combat_stance(world_, owner())) record[npc::kCombatFlags] |= 0x08;
+        else record[npc::kCombatFlags] &= static_cast<std::uint8_t>(~0x08);
+    }
 }
 
 // @orig 11D8:17DB
@@ -76,7 +84,7 @@ const ActorAnimProcess* ActorAnimProcess::next_queued() const {
     return next;
 }
 
-// @orig 1158:1908
+// @orig 1158:1908 1158:2F21
 void ActorAnimProcess::run() {
     // ANIMPRIM.C 1908: nothing happens while the actor falls.
     if (auto r = world_.npc_record(owner()); !r.empty() && (r[npc::kAnimFlags] & 0x02)) {
@@ -84,7 +92,9 @@ void ActorAnimProcess::run() {
         return;
     }
     if (!step()) {
-        terminate();
+        // A blocked step fails the process (vfunc +0x2C, 1158:2F21).
+        if (blocked_) fail();
+        else terminate();
         return;
     }
     const Item* item = world_.get(owner());
@@ -137,6 +147,53 @@ bool ActorAnimProcess::step() {
 
     const AnimFrame* f = a->frame(dir_, static_cast<std::size_t>(index));
     if (!f) return false;
+
+    // ANIMPRIM.C 1908: the frame's step. A blocked step normally ends the
+    // animation (+0x3C, the process fails) before the frame shows; an
+    // unstoppable action (flag 0x08) plays its remaining frames in place (+0x3B).
+    const World::Point start{item->x, item->y, item->z};
+    World::Point reached = start;
+    const int move_dir = a->turned() ? (dir_ + 4) & 0xF : dir_;
+    const int d = f->distance * 2;
+    if (!in_place_ && (d != 0 || f->delta_z != 0)) {
+        const World::Point target{item->x + kDirectionDx[move_dir] * d, item->y + kDirectionDy[move_dir] * d,
+                                  std::max(0, item->z + f->delta_z)};
+        SweepResult r;
+        if (f->ground_check) {
+            // Walking move needing support, which may climb steps (ITEM.C 1841
+            // in mode 1: a refused step sends no contact events). Refused for
+            // lack of ground alone, the step goes over the edge anyway and the
+            // fall check below makes the actor stumble.
+            r = try_move(world_, owner(), target, kSweepSupportOnly | kSweepStepUp);
+            if (!r.ok && r.blocker == 0) r = try_move(world_, owner(), target, kSweepNoGround);
+        } else {
+            // A plain sweep; against an obstacle only the vertical part is kept.
+            r = sweep(world_, item->shape, owner(), start, target, kSweepNoGround);
+            if (!r.ok && r.blocker != 0) {
+                r = sweep(world_, item->shape, owner(), start, {start.x, start.y, target.z}, kSweepNoGround);
+            }
+        }
+        if (r.ok) {
+            // Moved, leaving what it stood on or carried (ITEM.C 2970), with
+            // the contact events (ITEMFIND.C 123A).
+            leave_surface(kernel(), world_, owner());
+            finish_move(world_, owner(), r);
+            item = world_.get(owner());
+            if (!item) return false;
+            reached = r.end;
+        } else if (f->ground_check && r.blocker == 0) {
+            reached = target;
+        } else if (flags & 0x08) {
+            in_place_ = true;
+            if (f->ground_check) reached = target;
+        } else {
+            blocked_ = true;
+            // The support under the actor is still checked (flag 0x80 aside).
+            if (!(flags & 0x80)) fall_if_unsupported(start, f->ground_check ? target : start);
+            return false;
+        }
+    }
+
     world_.set_frame(*item, f->frame);
     if (f->mirrored) item->flags |= 0x0020;
     else item->flags &= static_cast<std::uint16_t>(~0x0020);
@@ -144,33 +201,18 @@ bool ActorAnimProcess::step() {
     if (f->sfx != 0) {
         if (Audio* audio = world_.audio()) audio->sources.retrigger(world_, f->sfx, owner());
     }
+    // Flag 0x4000: usecode event 0x0E (calledFromAnim, 10A8:2B01) of the
+    // actor's class; the NPC classes start NPCDEATH from it on the last frame
+    // of their deaths. The script runs later, as a new process.
+    if (f->event && world_.hooks().start_event) {
+        world_.hooks().start_event(owner(), kCalledFromAnimEvent);
+        if (!world_.get(owner()) || terminated()) return false;
+    }
     if (f->fires_weapon() && world_.hooks().fire_weapon) {
         world_.hooks().fire_weapon(owner(), f->muzzle_a, f->muzzle_b, f->muzzle_z, dir_);
+        if (!world_.get(owner())) return false;
     }
-
-    const int move_dir = a->turned() ? (dir_ + 4) & 0xF : dir_;
-    const int d = f->distance * 2;
-    const std::int32_t z = std::max(0, item->z + f->delta_z);
-    if (d != 0 || f->delta_z != 0) {
-        // Frames with the ground flag need support and may climb steps
-        // (sweep flags 0x11); others only check for obstacles (4).
-        const World::Point target{item->x + kDirectionDx[move_dir] * d, item->y + kDirectionDy[move_dir] * d, z};
-        const std::uint8_t sweep_flags = f->ground_check ? (kSweepSupportOnly | kSweepStepUp) : kSweepNoGround;
-        const World::Point start{item->x, item->y, item->z};
-        const SweepResult r = try_move(world_, owner(), target, sweep_flags);
-        if (r.ok) {
-            world_.move_item(owner(), r.end.x, r.end.y, r.end.z);
-            if (f->ground_check && fall_if_unsupported(start, r.end)) return false;
-        } else if (f->ground_check && r.blocker == 0) {
-            // Refused for lack of ground: over the edge.
-            if (fall_if_unsupported(start, target)) return false;
-            blocked_ = true;
-            return false;
-        } else {
-            blocked_ = true;
-            return false;
-        }
-    }
+    if (f->ground_check && fall_if_unsupported(start, reached)) return false;
     return true;
 }
 
@@ -179,10 +221,12 @@ bool ActorAnimProcess::fall_if_unsupported(const World::Point& from, const World
     // ANIMPRIM.C 3091: when no two opposite quarters of the footprint rest on
     // something (ground down to 9 below), the actor stumbles (action 0x3B,
     // replacing its animations, unless rolling or kneeling) and falls with
-    // the step as speed.
+    // the step as speed. After a blocked step the support is looked for
+    // where the actor stayed.
     const Item* item = world_.get(owner());
     if (!item) return false;
-    if (support_mask(world_, item->shape, to.x, to.y, to.z, true, owner()) & 0x10) return false;
+    const World::Point& at = blocked_ ? from : to;
+    if (support_mask(world_, item->shape, at.x, at.y, at.z, true, owner()) & 0x10) return false;
     auto record = world_.npc_record(owner());
     const std::uint16_t last =
         record.empty() ? 0 : static_cast<std::uint16_t>(record[npc::kLastAnim] | record[npc::kLastAnim + 1] << 8);
@@ -324,6 +368,28 @@ void note_player_movement(World& world, std::uint16_t action, std::uint32_t now)
 
 }  // namespace
 
+namespace {
+
+// DS:135F: the actions (after the weapon's remapping) that leave the player
+// kneeling; any other stands him up.
+constexpr std::uint16_t kKneelingActions[] = {0x28, 0x2E, 0x2F, 0x2A, 0x2B, 0x3D, 0x3E, 0x17, 0x18, 0x32};
+
+// NPC_10f0_221b / 226d, for the player only: record +0x13 bit 2
+// (Actor::I_isKneeling) and the footpad height of his shape, 6 kneeling and
+// 10 standing.
+// @orig 10F0:221B 10F0:226D
+void set_kneeling(World& world, ObjId actor, bool kneel) {
+    if (actor != 1) return;
+    const Item* item = world.get(actor);
+    auto record = world.npc_record(actor);
+    if (!item || record.empty()) return;
+    world.set_footpad_z(item->shape, kneel ? 6 : 10);
+    if (kneel) record[npc::kFlags13] |= 0x04;
+    else record[npc::kFlags13] &= static_cast<std::uint8_t>(~0x04);
+}
+
+}  // namespace
+
 // @orig 10F0:0245
 Pid do_anim(Kernel& kernel, World& world, const AnimDat& anims, ObjId actor, std::uint16_t action, int dir,
             std::uint32_t max_queued, bool replace) {
@@ -361,6 +427,8 @@ Pid do_anim(Kernel& kernel, World& world, const AnimDat& anims, ObjId actor, std
         if (action == 7 || action == 0xC) record[0x5A] |= 0x02;
         else if (action == 0xB || action == 0x10) record[0x5A] &= static_cast<std::uint8_t>(~0x02);
     }
+    set_kneeling(world, actor, std::find(std::begin(kKneelingActions), std::end(kKneelingActions), action) !=
+                                   std::end(kKneelingActions));
     const Pid pid = kernel.add(std::make_unique<ActorAnimProcess>(world, anims, actor, action, dir, last));
     aim_after_do_anim(kernel, world, anims, actor, action, pid);
     return pid;

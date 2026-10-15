@@ -3,17 +3,20 @@
 #include <SDL.h>
 
 #include <array>
+#include <cmath>
 #include <stdexcept>
 
 namespace crusader {
 
-SdlPresenter::SdlPresenter(const std::string& title, int width, int height, int scale)
+SdlPresenter::SdlPresenter(const std::string& title, int width, int height, int scale, bool fullscreen)
     : width_(width), height_(height) {
+    set_gamma(1.0);
     if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
         throw std::runtime_error(std::string("SDL video: ") + SDL_GetError());
     }
     window_ = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                               width * scale, height * scale, SDL_WINDOW_RESIZABLE);
+                               width * scale, height * scale,
+                               SDL_WINDOW_RESIZABLE | (fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
     if (!window_) {
         throw std::runtime_error(std::string("SDL window: ") + SDL_GetError());
     }
@@ -44,6 +47,13 @@ void SdlPresenter::warp_mouse(int x, int y) {
     SDL_WarpMouseInWindow(window_, wx, wy);
 }
 
+void SdlPresenter::set_gamma(double gamma) {
+    if (!(gamma > 0)) gamma = 1.0;
+    for (std::size_t i = 0; i < gamma_table_.size(); ++i) {
+        gamma_table_[i] = static_cast<std::uint8_t>(std::lround(255.0 * std::pow(i / 255.0, 1.0 / gamma)));
+    }
+}
+
 void SdlPresenter::set_title(const std::string& title) {
     SDL_SetWindowTitle(window_, title.c_str());
 }
@@ -52,7 +62,7 @@ void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
     std::array<Uint32, 256> lut;
     for (std::size_t i = 0; i < lut.size(); ++i) {
         const Rgb& c = palette.colors[i];
-        lut[i] = 0xFF000000u | Uint32{c.r} << 16 | Uint32{c.g} << 8 | c.b;
+        lut[i] = 0xFF000000u | Uint32{gamma_table_[c.r]} << 16 | Uint32{gamma_table_[c.g]} << 8 | gamma_table_[c.b];
     }
 
     void* pixels = nullptr;

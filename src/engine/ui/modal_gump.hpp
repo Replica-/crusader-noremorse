@@ -22,6 +22,10 @@ public:
     virtual void mouse_up(int, int) {}
     // Timer ticks, at every pass of the modal loop.
     virtual void update(std::uint32_t) {}
+    // Port addition: a controller button (PadButton) pressed while
+    // waiting_for_pad(), which the platform layer then keeps from the game.
+    virtual bool waiting_for_pad() const { return false; }
+    virtual void pad_button(int) {}
 
     virtual bool closed() const = 0;
     // The gump's result once closed (Gump_run_modal's return value).

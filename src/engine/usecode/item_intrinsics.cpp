@@ -3,6 +3,7 @@
 #include "engine/audio/audio.hpp"
 #include "engine/kernel.hpp"
 #include "engine/world/activity.hpp"
+#include "engine/world/actor_anim.hpp"
 #include "engine/world/collision.hpp"
 #include "engine/world/gravity.hpp"
 #include "engine/world/inventory.hpp"
@@ -36,15 +37,75 @@ Item* item_arg(UCMachine& m, World& w, Args a, std::size_t pos = 0) {
     return w.get(static_cast<ObjId>(id[0] | id[1] << 8));
 }
 
+// Weight of what an item holds (SHAPHAND_1090_0603): each content's weight
+// (TYPEFLAG byte 7) and what it holds in turn. Only families 6 and 7 have
+// contents (ITEM.C 0DF6). The original skips the item of DS:0F86, which
+// nothing sets in this version.
+// @orig 1090:0603
+int contents_weight(const World& w, const Item& item) {
+    const std::uint8_t family = w.family_of(item.shape);
+    if (family != kFamilyContainer && family != kFamilyActorContainer) return 0;
+    int total = 0;
+    for (ObjId id : item.contents) {
+        if (const Item* c = w.get(id)) {
+            const ShapeInfo* info = w.shape_info(c->shape);
+            total += contents_weight(w, *c) + (info ? info->weight : 0);
+        }
+    }
+    return total;
+}
+
+// ITEM.C 04AE: the item's own weight plus its contents'.
+// @orig 10A8:04AE
+int total_weight(const World& w, const Item& item) {
+    const ShapeInfo* info = w.shape_info(item.shape);
+    return (info ? info->weight : 0) + contents_weight(w, item);
+}
+
+// Shapes that drop what rests on them when destroyed: crates (MCRATE,
+// DAMNMCR8), luggage (LUGGAGE, DAMNLUGG), steel boxes (SSBOX_EW, SSBOX_NS) and
+// 0x1FD / 0x1FE. Listed in Item::I_destroy (10A8:1365).
+bool drops_what_rests_on_it(std::uint16_t shape) {
+    return shape == 0x432 || shape == 0x5A0 || shape == 0x1FD || shape == 0x1FE || shape == 0x08F ||
+           shape == 0x59F || shape == 0x2B3 || shape == 0x2CA;
+}
+
 }  // namespace
+
+// Item::I_destroy (10A8:1365): removes the item and its contents. Its
+// looping sounds stop first; an NPC's other sounds play on, detached. An NPC
+// loses bit 0 of record +0x59 (NPC_10f0_2130). The items resting on a crate
+// fall (Item::I_fall, ITEMFIND_10c8_0f73: a surface search above, every item)
+// before it goes; the fall only starts here and runs once the crate is gone.
+// Not reproduced: shape 0x4FE with a controlled robot (CRUSYS_1060_02da).
+// @orig 10A8:1365
+void destroy_item(Kernel& kernel, World& w, ObjId id) {
+    const Item* item = w.get(id);
+    if (!item) return;
+    if (Audio* audio = w.audio()) {
+        if (is_npc_id(id)) audio->sources.detach(id);
+        audio->sources.stop_item_loops(id);
+    }
+    if (is_npc_id(id)) {
+        if (auto r = w.npc_record(id); !r.empty()) r[npc::kAnimFlags] &= 0xFE;
+    }
+    if (drops_what_rests_on_it(item->shape)) {
+        static constexpr std::uint8_t kAll[] = {'$'};
+        for (ObjId above : w.surface_search(id, 1, kAll)) {
+            if (above != id && w.get(above)) fall(kernel, w, above);
+        }
+    }
+    w.destroy(id);
+}
 
 // @orig none: binds the intrinsics, numbered by USECODE/UNKCOFF.DAT
 std::vector<std::uint16_t> register_item_intrinsics(UCMachine& m, World& w) {
     std::vector<std::uint16_t> bound;
     // Usecode events and process cleanup requested by the world.
     w.set_hooks({
-        [&m, &w](ObjId id, std::uint16_t event) {
-            if (const Item* item = w.get(id)) m.start_event(w.usecode_class(*item), event, id);
+        [&m, &w](ObjId id, std::uint16_t event) -> std::uint16_t {
+            const Item* item = w.get(id);
+            return item ? m.start_event(w.usecode_class(*item), event, id) : 0;
         },
         [&m](ObjId id) { m.kernel().fail_processes(id, Kernel::kAnyType, 1); },
         [&m, &w](ObjId id, std::uint16_t event, std::span<const std::uint8_t> args) {
@@ -93,6 +154,17 @@ std::vector<std::uint16_t> register_item_intrinsics(UCMachine& m, World& w) {
     bind({0x001}, [](Item& i, Args) { return i.frame; });
     bind({0x002, 0x05B}, [&w](Item& i, Args a) { w.set_frame(i, arg16(a, 4)); return 0u; });
     bind({0x003}, [](Item& i, Args) { return i.map_number; });
+    // Item::I_getSurfaceWeight (10A8:0602): the total weight of the items
+    // standing on it (surface search above with the script "$", which on its
+    // fast path does not skip the item itself).
+    bind({0x059}, [&w](Item& i, Args) {
+        static constexpr std::uint8_t kAll[] = {'$'};
+        int total = 0;
+        for (ObjId id : w.surface_search(i.id, 1, kAll)) {
+            if (const Item* on = w.get(id)) total += total_weight(w, *on);
+        }
+        return static_cast<std::uint32_t>(static_cast<std::uint16_t>(total));
+    });
     // Item::I_equip(item, value) (10A8:2A35): event 10 of the item's class
     // when the class has it (Usecode_start_event_if_present, mask 0x400),
     // with the value sign-extended to 4 bytes as its argument; the pid or 0.
@@ -108,6 +180,9 @@ std::vector<std::uint16_t> register_item_intrinsics(UCMachine& m, World& w) {
     };
     bind({0x006, 0x0B6}, equip_event(10));
     bind({0x0B1}, equip_event(11));
+    // Item::I_cast (10A8:2F3E): event 0x11 (mask 0x20000) without argument;
+    // the pid or 0.
+    bind({0x0E8}, [&m, &w](Item& i, Args) -> std::uint32_t { return m.start_event(w.usecode_class(i), 0x11, i.id); });
     // Item::I_avatarStoleSomething (10A8:2FDA): the same with event 0x13
     // (mask 0x80000), nothing for a dead NPC.
     bind({0x0B2}, [&w, steal = equip_event(0x13)](Item& i, Args a) -> std::uint32_t {
@@ -231,7 +306,9 @@ std::vector<std::uint16_t> register_item_intrinsics(UCMachine& m, World& w) {
         i.quality = static_cast<std::uint16_t>((i.quality & 0xFF00) | (arg16(a, 4) & 0xFF));
         return 0u;
     });
-    bind({0x0F4, 0x07F}, [](Item& i, Args) { return i.quality; });
+    bind({0x0F4}, [](Item& i, Args) { return i.quality; });  // Item::I_getQ (10A8:0C94)
+    // Item::I_getQuality (10A8:0CAA): the quality only for family 1, else 0.
+    bind({0x07F}, [&w](Item& i, Args) -> std::uint32_t { return w.family_of(i.shape) == 1 ? i.quality : 0u; });
     bind({0x0F5}, [](Item& i, Args a) { i.quality = arg16(a, 4); return 0u; });
     bind({0x069, 0x06F, 0x08A, 0x08F, 0x0AE, 0x0F8, 0x100, 0x102, 0x105, 0x107, 0x109, 0x10B, 0x10D, 0x10F, 0x111,
           0x115, 0x11C, 0x125, 0x130},
@@ -241,20 +318,53 @@ std::vector<std::uint16_t> register_item_intrinsics(UCMachine& m, World& w) {
         const ShapeInfo* info = w.shape_info(i.shape);
         return info ? info->family : 0u;
     });
-
-    // Item::I_destroy: removes the item (and its contents). Its looping
-    // sounds stop first; an NPC's other sounds play on, detached (10A8:1365).
-    m.set_intrinsic(0x00A, [&w](UCMachine& machine, UCProcess&, Args a) -> std::uint32_t {
-        Item* item = item_arg(machine, w, a);
-        if (!item) return 0;
-        if (Audio* audio = w.audio()) {
-            if (is_npc_id(item->id)) audio->sources.detach(item->id);
-            audio->sources.stop_item_loops(item->id);
+    // Item::I_getTypeFlag(item, bit) (10A8:0FEF): bit `bit` of the shape's
+    // 9 TYPEFLAG bytes, from bit 0 of byte 0.
+    bind({0x11B}, [&w](Item& i, Args a) -> std::uint32_t {
+        const ShapeInfo* info = w.shape_info(i.shape);
+        const std::uint16_t bit = arg16(a, 4);
+        return info && bit / 8u < info->bytes.size() ? (info->bytes[bit / 8u] >> (bit & 7)) & 1u : 0u;
+    });
+    // Item::I_setQuality(item, quality) (10A8:0CEE): only for family 1.
+    bind({0x080, 0x0BB, 0x133}, [&w](Item& i, Args a) -> std::uint32_t {
+        if (w.family_of(i.shape) == 1) i.quality = arg16(a, 4);
+        return 0;
+    });
+    // Item::I_getUnkEggType (10A8:0D31): for an egg of family 4, the
+    // quality's low byte (its usecode class, World::usecode_class), else 0.
+    bind({0x0A3}, [&w](Item& i, Args) -> std::uint32_t {
+        return w.family_of(i.shape) == 4 ? i.quality & 0xFFu : 0u;
+    });
+    // Egg::I_getEggXRange (1098:051D): the high nibble of the NPC number
+    // byte (the low one is the y range, teleport.cpp).
+    bind({0x0A8}, [](Item& i, Args) -> std::uint32_t { return i.npc_number >> 4; });
+    // Egg::I_setEggXRange(egg, range) (1098:055B): the high nibble.
+    bind({0x0A4}, [](Item& i, Args a) -> std::uint32_t {
+        i.npc_number = static_cast<std::uint8_t>((i.npc_number & 0x0F) | arg16(a, 4) << 4);
+        return 0;
+    });
+    // Item::I_isInNpc (10A8:24B5): whether one of the containers holding the
+    // item, going outwards, is an NPC.
+    bind({0x067}, [&w](Item& i, Args) -> std::uint32_t {
+        for (const Item* it = &i; it && (it->flags & kItemContained); it = w.get(it->parent)) {
+            if (is_npc_id(it->parent)) return 1;
         }
-        w.destroy(item->id);
+        return 0;
+    });
+
+    m.set_intrinsic(0x00A, [&w](UCMachine& machine, UCProcess&, Args a) -> std::uint32_t {
+        if (Item* item = item_arg(machine, w, a)) destroy_item(machine.kernel(), w, item->id);
         return 0;
     });
     bound.push_back(0x00A);
+    // Container::I_destroyContents (10A8:14AF): for a container (family 6 or
+    // 7), Item::I_destroy on each content (SHAPHAND_1090_05cb).
+    bind({0x02D}, [&m, &w](Item& i, Args) -> std::uint32_t {
+        const std::uint8_t family = w.family_of(i.shape);
+        if (family != kFamilyContainer && family != kFamilyActorContainer) return 0;
+        for (ObjId c : std::vector<ObjId>(i.contents)) destroy_item(m.kernel(), w, c);
+        return 0;
+    });
 
     auto bind_raw = [&](std::uint16_t n, UCMachine::Intrinsic fn) {
         m.set_intrinsic(n, std::move(fn));
@@ -304,15 +414,20 @@ std::vector<std::uint16_t> register_item_intrinsics(UCMachine& m, World& w) {
     // the item from its position (the outermost container's) to the point,
     // with the sweep flags (4, no ground needed, when 0). Reaching it moves
     // the item there and returns 1; otherwise, unless bit 0 of `mode` is set,
-    // the item is moved as far as it got, and 0 is returned. The contact
-    // events of the move (10E8:123A) are not reproduced.
+    // the item is moved as far as it got, and 0 is returned. Either move
+    // first leaves what the item carried or stood on (ITEM.C 2970,
+    // leave_surface), then sends the contact events (10E8:123A, finish_move).
     bind_raw(0x031, [&w, read_point](UCMachine& machine, UCProcess&, Args a) -> std::uint32_t {
         Item* item = item_arg(machine, w, a);
         if (!item) return 0;
         const World::Point end = read_point(machine, arg32(a, 4));
         const std::uint8_t flags = static_cast<std::uint8_t>(arg16(a, 10)) ? static_cast<std::uint8_t>(arg16(a, 10)) : 4;
         const SweepResult r = sweep(w, item->shape, item->id, w.location(*item), end, flags);
-        if (r.ok || !(arg16(a, 8) & 1)) w.move_item(item->id, r.end.x, r.end.y, r.end.z);
+        if (r.ok || !(arg16(a, 8) & 1)) {
+            const ObjId id = item->id;
+            leave_surface(machine.kernel(), w, id);
+            finish_move(w, id, r);
+        }
         return r.ok;
     });
     // CurrentMap::I_canExistAt(shape, x, y, z) (1150:0B67): whether a box with
@@ -325,6 +440,20 @@ std::vector<std::uint16_t> register_item_intrinsics(UCMachine& m, World& w) {
         const int fx = info ? info->footpad_x : 0, fy = info ? info->footpad_y : 0, fz = info ? info->footpad_z : 0;
         const int h = fz == 0 && !(lender && lender->is(ShapeInfo::kFixed)) ? 1 : fz * 8;
         return box_free(w, fx * 16, fy * 16, h, collision_mask(lender), World::Point{arg16(a, 2), arg16(a, 4), arg16(a, 6) & 0xFF});
+    });
+    // CurrentMap::I_canExistAtPoint(item, shape, point*) (10A8:4071): the item
+    // is unused; whether the box of `shape` (below 0x800), with its own
+    // mask, is free at the point (ITEMFIND_10e8_00d9, unflipped).
+    bind_raw(0x032, [&w, read_point](UCMachine& machine, UCProcess&, Args a) -> std::uint32_t {
+        const std::uint16_t shape = arg16(a, 4);
+        return shape < 0x800 && position_free(w, shape, read_point(machine, arg32(a, 6)));
+    });
+    // Item::I_shoot(item, point*, speed, gravity) (10A8:38D1), gravity.hpp.
+    bind_raw(0x08B, [&w, read_point](UCMachine& machine, UCProcess&, Args a) -> std::uint32_t {
+        if (Item* item = item_arg(machine, w, a)) {
+            shoot(machine.kernel(), w, item->id, read_point(machine, arg32(a, 4)), arg16(a, 8), arg16(a, 10));
+        }
+        return 0;
     });
     // Item::I_create(id*, shape, frame): new item on the pending stack; its id
     // is written through the pointer (0 on failure). Returns 1 on success.
@@ -352,6 +481,9 @@ std::vector<std::uint16_t> register_item_intrinsics(UCMachine& m, World& w) {
             return hurl(machine.kernel(), w, i->id, s16(4), s16(6), s16(8), s16(10));
         });
     }
+    // Item::I_enterFastArea (10A8:2B30): World::enter_fast_area, which the
+    // scripts call for items they bring in; the pid of event 0x0F, or 0.
+    bind({0x08C}, [&w](Item& i, Args) -> std::uint32_t { return w.enter_fast_area(i); });
     // Item::I_inFastArea.
     bind({0x02F}, [](Item& i, Args) -> std::uint32_t { return (i.flags & kItemFastArea) != 0; });
     // Actor::I_isNPC(item): the id alone decides (1..255), the item need not exist.
@@ -382,6 +514,11 @@ std::vector<std::uint16_t> register_item_intrinsics(UCMachine& m, World& w) {
     bind({0x00D}, [&w](Item& i, Args a) -> std::uint32_t {
         const Item* other = w.get(arg16(a, 4));
         return direction_8(i.x, i.y, other ? other->x : 0, other ? other->y : 0);
+    });
+    // Item::I_getDirFromItem(item, other id) (10A8:1A3F): the opposite one.
+    bind({0x0C8}, [&w](Item& i, Args a) -> std::uint32_t {
+        const Item* other = w.get(arg16(a, 4));
+        return (direction_8(i.x, i.y, other ? other->x : 0, other ? other->y : 0) + 4) % 8;
     });
     // Item::I_getClosestDirectionInRange(x1, y1, x2, y2, steps, lo, hi).
     bind_raw(0x027, [](UCMachine&, UCProcess&, Args a) -> std::uint32_t {

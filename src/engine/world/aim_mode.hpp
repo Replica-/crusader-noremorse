@@ -84,7 +84,8 @@ void turn_crosshair(Kernel& kernel, World& world, const AnimDat& anims, std::uin
                     int& dir, int& action);
 
 // SPRITE_1140_0E88: the point a shot aims at, the crosshair's x and y with
-// `z` (the muzzle's height offset, as the original passes it).
+// `z`, the muzzle's height in the world (Item::I_fireWeapon adds the
+// shooter's z to the muzzle offset before passing it; low byte kept).
 std::optional<World::Point> crosshair_aim(const World& world, int z);
 
 void designate(Kernel& kernel, World& world, const AnimDat& anims, ObjId target);  // 1138:0459

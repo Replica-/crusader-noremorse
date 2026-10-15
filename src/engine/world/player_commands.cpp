@@ -71,16 +71,6 @@ ObjId active_item(const World& world) {
     return slot == 0 ? 0 : world.npc_equip(kPlayer, slot);
 }
 
-// NPC_10f0_395e: the first of the player's 30 slots holding `shape`.
-// @orig 10F0:395E
-ObjId carried(const World& world, std::uint16_t shape) {
-    for (int slot = 0; slot < 30; ++slot) {
-        const Item* item = world.get(world.npc_equip(kPlayer, slot));
-        if (item && item->shape == shape) return item->id;
-    }
-    return 0;
-}
-
 // Quality - 1; at 0 the item is destroyed (Item_I_destroy: its looping
 // sounds stop) and leaves the player's slots. True when it was destroyed.
 // @orig 13E8:14B4

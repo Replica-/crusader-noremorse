@@ -7,6 +7,8 @@
 #include "core/palette.hpp"
 #include "core/surface.hpp"
 
+#include <array>
+#include <cstdint>
 #include <string>
 
 struct SDL_Window;
@@ -17,12 +19,14 @@ namespace crusader {
 
 class SdlPresenter {
 public:
-    SdlPresenter(const std::string& title, int width, int height, int scale);
+    SdlPresenter(const std::string& title, int width, int height, int scale, bool fullscreen = false);
     ~SdlPresenter();
     SdlPresenter(const SdlPresenter&) = delete;
     SdlPresenter& operator=(const SdlPresenter&) = delete;
 
     void set_title(const std::string& title);
+    // Brightens (> 1) or darkens (< 1) the picture; 1 is the original palette.
+    void set_gamma(double gamma);
     void present(const Surface8& frame, const Palette& palette);
     // Puts the system pointer on a point of the game screen (mouse_warp).
     void warp_mouse(int x, int y);
@@ -31,6 +35,7 @@ private:
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
     SDL_Texture* texture_ = nullptr;
+    std::array<std::uint8_t, 256> gamma_table_;
     int width_;
     int height_;
 };

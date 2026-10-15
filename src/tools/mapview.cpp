@@ -4,6 +4,7 @@
 //        mapview [data_dir] [map] --png out.png [cx cy]   one frame to a PNG
 //        mapview [data_dir] [map] --pick x y [cx cy]      items under a screen pixel
 //        mapview [data_dir] --save N [...]                state of SAVEGAME/SAVEGAME.N, centred on the player
+//        mapview [data_dir] [map] --find S                items of shape S on the map (id, frame, x, y, z)
 //   Right click: prints the items under the cursor (draw order, boxes).
 //   Arrows / mouse drag  scroll        PageUp/PageDown  previous/next map
 //   Home                 recentre      Esc              quit
@@ -13,6 +14,7 @@
 #include "core/palette.hpp"
 #include "core/png_writer.hpp"
 #include "core/typeflags.hpp"
+#include "core/xform.hpp"
 #include "engine/world/render.hpp"
 #include "engine/world/world.hpp"
 #include "platform/sdl_presenter.hpp"
@@ -81,10 +83,12 @@ int main(int argc, char** argv) {
     bool show_cycles = false;
     std::optional<int> save_slot;
     std::optional<Camera> forced;
+    std::optional<int> find_shape;
     std::vector<std::string> pos;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--png") == 0 && i + 1 < argc) png = argv[++i];
         else if (std::strcmp(argv[i], "--cycles") == 0) show_cycles = true;
+        else if (std::strcmp(argv[i], "--find") == 0 && i + 1 < argc) find_shape = std::stoi(argv[++i], nullptr, 0);
         else if (std::strcmp(argv[i], "--save") == 0 && i + 1 < argc) save_slot = std::stoi(argv[++i]);
         else if (std::strcmp(argv[i], "--pick") == 0 && i + 2 < argc) {
             const int px = std::stoi(argv[++i]);
@@ -102,6 +106,7 @@ int main(int argc, char** argv) {
         const auto globs = FlexArchive::open(data / "STATIC/GLOB.FLX");
         const auto typeflags = load_typeflags(data / "STATIC/TYPEFLAG.DAT");
         const auto palette = Palette::load(data / "STATIC/GAMEPAL.PAL");
+        const auto xform = XformTable::load(data / "STATIC/XFORMPAL.DAT");
         ShapeCache shapes(shapes_flex, ShapeLayout::World);
 
         auto load_map = [&](std::size_t m) {
@@ -128,6 +133,14 @@ int main(int argc, char** argv) {
             camera = map_centre(*world);
         }
         if (forced) camera = *forced;
+        if (find_shape) {
+            world->for_each([&](const Item& i) {
+                if (i.shape == *find_shape && !i.parent)
+                    std::printf("id %-5u frame %3u  camera %d %d  z %d\n", i.id, i.frame, world_from_usecode(i.x),
+                                world_from_usecode(i.y), i.z);
+            });
+            return 0;
+        }
         Surface8 screen(kScreenW, kScreenH);
         RenderStats stats;
 
@@ -135,7 +148,7 @@ int main(int argc, char** argv) {
         auto render = [&] {
             screen.clear(0);
             list = build_display_list(*world, shapes, camera, kScreenW, kScreenH, &stats);
-            draw_display_list(screen, list);
+            draw_display_list(screen, list, &xform);
         };
 
         if (show_cycles) {

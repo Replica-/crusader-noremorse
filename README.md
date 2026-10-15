@@ -10,7 +10,7 @@ This repository contains **no game files**: you need your own copy of the origin
 2. **Rewrite**: each function is rewritten in modern C++, with no DOS dependency: hardware access (VGA, keyboard, mouse, Sound Blaster) goes through a thin SDL2 layer. Every function carries an `@orig` tag naming the original routine it replaces.
 3. **Verification**: file formats are tested against all the game data, and differential checks run the original routine in an x86 emulator to compare it with the C++ version on the same inputs.
 
-The game scripts ("usecode", 402 classes) are not rewritten: an interpreter runs them as they are, and the engine provides the native functions ("intrinsics") they call. Documentation of the internals is in [`docs/`](docs/).
+The game scripts ("usecode", 402 classes) are not rewritten: an interpreter runs them as they are, and the engine provides the native functions ("intrinsics") they call.
 
 ## Running the game
 
@@ -20,6 +20,7 @@ Get the archive of the latest version from the [Releases](../../releases) page:
 
 - Windows: `crusader-X.Y.Z-windows-x64.zip` (SDL2 is built into the executable)
 - Linux: `crusader-X.Y.Z-linux-x64.tar.gz` — requires SDL2: `sudo apt install libsdl2-2.0-0` (or your distribution's equivalent)
+- aarch64 handhelds (PortMaster: muOS, Knulli, ROCKNIX, ArkOS…): `crusader-X.Y.Z-portmaster-aarch64.zip` — see [`tools/portmaster/README.md`](tools/portmaster/README.md)
 
 Checksums are in `SHA256SUMS`.
 
@@ -67,13 +68,15 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-SDL2 is taken from the system if installed (`libsdl2-dev` on Linux), otherwise it is downloaded and built. Tests that need game data read it from `data/` and skip themselves when it is absent.
+SDL2 is taken from the system if installed (`libsdl2-dev` on Linux), otherwise it is downloaded and built.
+
+The tests in `tests/` need no game data. The end-to-end tests in `e2e/` run on the original game data and are registered only when it is found (`-DCRUSADER_DATA_DIR=…`, `data/` by default); those that load saved games read them from `-DCRUSADER_TEST_SAVES_DIR=…` and skip themselves when it is absent.
 
 Besides `crusader`, the build produces a few tools: `shapeview` (shape viewer), `mapview` (map viewer), `ucsmoke` and `useprobe` (script execution), `diffcheck` (comparison with the original).
 
 ## Versioning
 
-Versions follow [SemVer](https://semver.org) and are computed automatically from [Conventional Commits](https://www.conventionalcommits.org): `fix:` → patch, `feat:` → minor, `BREAKING CHANGE` → major (minor while on `0.x`). Every published version is built and tested on Linux and Windows. Details in [`docs/RELEASING.md`](docs/RELEASING.md).
+Versions follow [SemVer](https://semver.org) and are computed automatically from [Conventional Commits](https://www.conventionalcommits.org): `fix:` → patch, `feat:` → minor, `BREAKING CHANGE` → major (minor while on `0.x`). Every published version is built and tested on Linux and Windows, and cross-built for PortMaster. Details in [`docs/RELEASING.md`](docs/RELEASING.md).
 
 ## To do
 

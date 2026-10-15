@@ -21,7 +21,10 @@
 #include "engine/world/screen_sprites.hpp"
 
 #include <array>
+#include <bitset>
+
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <optional>
 #include <span>
@@ -49,6 +52,11 @@ struct Item {
     std::uint8_t hit_points = 0;  // from DAMAGE.FLX at creation (item table array 12)
     // Item table array 11, not decoded yet (rarely non-zero), kept raw.
     std::uint16_t save_u2 = 0;
+    // In a container but out of its chain in the saved game it came from
+    // (weapons equipped by some NPCs; the original's reason is not decoded):
+    // written back out of the chain.
+    bool unchained = false;
+
     // Port only: a projectile drawn as an item (the original draws a sprite,
     // outside the world). Collisions ignore it.
     bool sprite_only = false;
@@ -62,9 +70,10 @@ struct Item {
 // Stored inside a container. As in the original's item table, x then holds
 // the container id (getX/getY/getZ return the outermost container's position).
 constexpr std::uint16_t kItemContained = 0x0008;
-// Out of the world: on the pending-item stack (Item::I_create, I_push) or
-// parked at z = 254 (dead NPCs, stored items; all 264 / 1143 such items of
-// SAVEGAME.1 / .13 are at z = 254). Not drawn.
+// Out of the world: on the pending-item stack (Item::I_create, I_push). Not
+// drawn. Freed slots keep it too (the 264 / 1143 slots at z = 254 that have
+// it in SAVEGAME.1 / .13 are all in the free lists, dead NPCs among them).
+
 constexpr std::uint16_t kItemEthereal = 0x0800;
 // Set on items created by an egg (glob eggs add 0x80; monster eggs' NPCs):
 // such an NPC takes the events of its shape's class (World::usecode_class).
@@ -76,6 +85,11 @@ constexpr std::uint16_t kItemDisposable = 0x0080;
 constexpr std::uint16_t kItemEquipped = 0x0200;
 // Inside the fast area (enterFastArea / leaveFastArea).
 constexpr std::uint16_t kItemFastArea = 0x2000;
+// Gravity (1040:06D2): set when the last step of a fall was blocked; such
+// an item makes others leave it at each step. Low friction (0x4000) would
+// make a landed item roll on; nothing sets it in this version.
+constexpr std::uint16_t kItemBouncing = 0x0400;
+constexpr std::uint16_t kItemLowFriction = 0x4000;
 // Broken (Item::I_setBroken; dead NPCs): not aimed at.
 constexpr std::uint16_t kItemBroken = 0x8000;
 
@@ -86,6 +100,8 @@ constexpr std::uint8_t kFamilyActorContainer = 7;
 // Item ids 1..255 are NPCs (Actor::I_isNPC); other items come after.
 inline bool is_npc_id(ObjId id) { return id != 0 && id <= 0xFF; }
 constexpr ObjId kFirstItemId = 0x100;
+// Slots of the item table (ids 0x100..0x27FF for items, 1..0xFF for NPCs).
+constexpr std::size_t kItemSlots = 0x2800;
 
 struct FixedRecord {
     std::uint16_t x, y;
@@ -121,6 +137,12 @@ struct GameState {
     std::uint16_t difficulty = 1;     // World::I_gameDifficulty
     std::uint16_t battery = 0;        // DS:7E1F, MainActor::I_getMaxEnergy
     std::uint32_t keycards = 0;       // DS:7E1B, bit n: keycard n (MainActor::I_hasKeycard)
+    // The 21-byte player block at DS:7E0E (saved game entry 20) as last
+    // loaded; the fields the port keeps elsewhere are written over it when
+    // saving (+2 stasis, +4 random seed, +0xB difficulty, +0xD keycards,
+    // +0x11 battery). Bytes +8..+0xA and +0x13..+0x14 are not decoded.
+    std::array<std::uint8_t, 0x15> player_block{};
+
     std::uint16_t controlled_npc = 1; // World::I_getControlledNPCNum (1 = the player)
     // DS:7E10 (Ultima8Engine::I_setAvatarInStasis / I_getAvatarInStasis):
     // the player is busy (a healer or charger serving him, a teleport with
@@ -251,7 +273,8 @@ class Audio;
 struct WorldHooks {
     // Starts usecode event `event` of the item's class if the class has it
     // (UPROCESS.C; the original returns the new pid without running it).
-    std::function<void(ObjId item, std::uint16_t event)> start_event;
+    // Returns that pid, 0 when the event did not start.
+    std::function<std::uint16_t(ObjId item, std::uint16_t event)> start_event;
     // Fails the item's game-level processes of any type (KERNEL.C kill routine).
     std::function<void(ObjId item)> fail_processes;
     // Same with argument bytes (pushed as the original lays them in memory).
@@ -281,13 +304,17 @@ struct WorldHooks {
     std::function<void(ObjId item)> designated_target_forgotten;
     // Controller_fire_reset then the end of the AutoFirer (1138:2F9F).
     std::function<void()> reset_fire;
+    // ITEM.C 275F: the item is hit by `other` with `force` (contact events
+    // of a move, 10E8:123A; see hit_item).
+    std::function<void(ObjId item, ObjId other, std::uint16_t force)> got_hit;
 };
 
 class World {
 public:
     GameState state;
 
-    explicit World(std::vector<ShapeInfo> typeflags = {}) : typeflags_(std::move(typeflags)) {}
+    explicit World(std::vector<ShapeInfo> typeflags = {}) : typeflags_(std::move(typeflags)) { init_free_slots(); }
+
 
     void set_hooks(WorldHooks hooks) { hooks_ = std::move(hooks); }
     const WorldHooks& hooks() const { return hooks_; }
@@ -302,16 +329,27 @@ public:
 
     Item* get(ObjId id);
     const Item* get(ObjId id) const;
-    // Allocates an id (lowest free from kFirstItemId; 1..255 are NPC slots)
-    // and stores the item.
+    // Allocates the id at the head of the free item slots (ITEMCACH_10b0_262a;
+    // 1..255 are NPC slots) and stores the item.
     Item& add(Item item);
-    // Stores the item under item.id (saved games keep their slot numbers).
+    // Stores the item under item.id (saved games keep their slot numbers),
+    // taking the slot out of its free list.
     Item& add_with_id(Item item);
-    void destroy(ObjId id);  // also destroys contents
+    void destroy(ObjId id);  // also destroys contents; the slot becomes free
     std::size_t item_count() const { return items_.size(); }
 
     const ShapeInfo* shape_info(std::uint16_t shape) const {
         return shape < typeflags_.size() ? &typeflags_[shape] : nullptr;
+    }
+    // The footpad height of a shape (TYPEFLAG bytes 3-4, bits 7-11), which
+    // the player's kneeling changes (10F0:221B / 226D).
+    // @orig 10F0:221B 10F0:226D
+    void set_footpad_z(std::uint16_t shape, std::uint8_t z) {
+        if (shape >= typeflags_.size()) return;
+        ShapeInfo& info = typeflags_[shape];
+        info.footpad_z = z;
+        info.bytes[3] = static_cast<std::uint8_t>((info.bytes[3] & 0x7F) | (z & 1) << 7);
+        info.bytes[4] = static_cast<std::uint8_t>((info.bytes[4] & 0xF0) | (z >> 1));
     }
 
     // Creates the items of one map from FIXED.DAT; returns the top-level ids.
@@ -358,6 +396,26 @@ public:
     // SAVEGAME Flex, see docs/savegame.md) and the saved fast area (entry 1).
     // Returns the number of items.
     std::size_t load_saved_items(const FlexArchive& save);
+    // The same entries as ITEMCACH_10b0_0b67 writes them: the item table
+    // (twelve arrays; free slots keep what they held last) and its lists
+    // (map number, fast area, cell heads and counts, free lists, pending
+    // stack). Throws if an item has an id past the table.
+    std::vector<std::uint8_t> saved_item_table() const;
+    std::vector<std::uint8_t> saved_item_lists() const;
+    // Entry 10 (NPC_10f0_00bc): the NPC table as is.
+    std::span<const std::uint8_t> npc_table() const { return npcs_; }
+    // Entries 50, 51, 52 (TRACKER_1128_05b7): slot count, items tracked, slots.
+    std::vector<std::uint8_t> saved_tracker(int part) const;
+
+    // Free slots of the item table (ITEMCACH.C), head first: items (head
+    // DS:7DC8, tail 7DCC, count 7DD0) and NPCs (7DCA, 7DCE, 7DD2). A freed
+    // slot goes to the head; a new item takes the head.
+    struct FreeSlots {
+        std::deque<ObjId> ids;
+        ObjId tail = 0;
+    };
+    const FreeSlots& free_items() const { return free_items_; }
+    const FreeSlots& free_npcs() const { return free_npcs_; }
 
     // Per-shape hit points given to created items (STATIC/DAMAGE.FLX entry 0:
     // 6 bytes per shape, byte 0 bit 0 = present, byte 5 = hit points).
@@ -380,10 +438,9 @@ public:
     Point location(const Item& item) const;
 
     // NPC_10f0_236b: a new NPC of `shape` / `frame` on the pending stack, in
-    // the lowest free slot 2..255; with none, a disposable NPC (status 2) out
-    // of the fast area and of special shapes is destroyed and its slot reused.
-    // Returns 0 when there is no slot. (The original keeps a list of free
-    // slots, ITEMCACH_10b0_268d; its order is not reproduced.)
+    // the free NPC slot at the head of its list (ITEMCACH_10b0_268d); with
+    // none, a disposable NPC (status 2) out of the fast area and of special
+    // shapes is destroyed and its slot reused. Returns 0 when there is no slot.
     ObjId create_npc(std::uint16_t shape, std::uint16_t frame);
 
     // Item::I_create: a new item of `shape`/`frame` on the pending stack.
@@ -422,8 +479,10 @@ public:
     std::vector<ObjId> area_search(ObjId centre, std::uint16_t range, std::span<const std::uint8_t> script) const;
     // Type 6: items resting on `item` (mode bit 0: their bottom at its top)
     // and/or supporting it (bit 1: their top at its bottom), with footprints
-    // overlapping in x and y.
-    std::vector<ObjId> surface_search(ObjId item, int mode, std::span<const std::uint8_t> script) const;
+    // overlapping in x and y. `sides`, when given, receives for each item
+    // found 1 if it rests on `item`, 2 if it supports it (search +0x40).
+    std::vector<ObjId> surface_search(ObjId item, int mode, std::span<const std::uint8_t> script,
+                                      std::vector<std::uint8_t>* sides = nullptr) const;
     // Type 4: contents of `container` in order.
     std::vector<ObjId> container_search(ObjId container, std::span<const std::uint8_t> script) const;
     // Loop filter, a byte-coded RPN expression (ITEMFIND.C 010C), see docs/usecode.md.
@@ -442,7 +501,8 @@ public:
     void clear_fast_area();
     // Item::I_enterFastArea / leaveFastArea (ITEM.C), reduced to what the
     // port has: the flag, process cleanup and the usecode events 0x0F / 0x10.
-    void enter_fast_area(Item& item);
+    // enter_fast_area returns the pid of event 0x0F, 0 when none started.
+    std::uint16_t enter_fast_area(Item& item);
     void leave_fast_area(Item& item);
 
     // Items that shots can aim at (TRACKER.C, 100 slots at DS:26E0, count at
@@ -562,6 +622,9 @@ private:
     void track(ObjId id);    // TRACKER_1128_0098
     void untrack(ObjId id);  // TRACKER_1128_00fe
     void clear_tracked();    // TRACKER_1128_0066 + 0000
+    void init_free_slots();  // ITEMCACH_10b0_161b
+    void push_free(ObjId id);    // ITEMCACH_10b0_1a23
+    void remove_free(ObjId id);  // ITEMCACH_10b0_1986, nothing if the slot is not free
 
     std::vector<ShapeInfo> typeflags_;
     std::vector<std::uint8_t> damage_;
@@ -581,6 +644,14 @@ private:
     std::size_t tracked_count_ = 0;
     std::unordered_map<ObjId, Item> items_;
     ObjId next_id_ = 1;
+    FreeSlots free_items_, free_npcs_;
+    std::bitset<kItemSlots> free_mask_;
+    // What the free slots held last (the original leaves it in the table).
+    std::unordered_map<ObjId, Item> stale_;
+    // Saved cell counts minus the chain lengths (the original's counts drift).
+    std::array<std::int16_t, kGridSize * kGridSize> cell_count_bias_{};
+    std::uint16_t slot0_array11_ = 0;  // array 11 of slot 0, kept raw
+
 };
 
 }  // namespace crusader

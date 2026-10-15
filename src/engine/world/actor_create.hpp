@@ -38,6 +38,14 @@ ObjId create_actor(Kernel& kernel, World& world, const AnimDat& anims, const dta
 // record +0x63 = 0. Returns the NPC (0 if none).
 ObjId spawn_from_egg(Kernel& kernel, World& world, const AnimDat& anims, const dtable::NpcTypes& types, ObjId egg);
 
+// Actor::I_createActor(shape, frame) (10F0:25B9): a new NPC of `shape`
+// (World::create_npc, left on the pending stack) with the hit points of its
+// type (NPC_10f0_2610), then its type's weapon, created where the NPC is and
+// equipped in the first free slot of 1..5, and its default activities
+// (NPC_10f0_0145, record words +0x1E, +0x40, +0x42). A shape that is no NPC
+// type gets nothing (the original reads before the table). Returns the NPC.
+ObjId create_plain_actor(World& world, const dtable::NpcTypes& types, std::uint16_t shape, std::uint16_t frame);
+
 // ITEM_10a8_3b10: weapon (index in the weapon table) of a shape at
 // difficulty 4.
 int hard_weapon(World& world, std::uint16_t shape);

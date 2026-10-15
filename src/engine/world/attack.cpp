@@ -81,6 +81,13 @@ bool weapon_drawn(const World& world, ObjId id) {
     return !r.empty() && (r[npc::kStance] & 0x02);
 }
 
+// @orig 10F0:1F40
+bool in_combat_stance(const World& world, ObjId id) {
+    const auto r = world.npc_record(id);
+    const std::uint16_t a = r.empty() ? 0 : static_cast<std::uint16_t>(r[npc::kLastAnim] | r[npc::kLastAnim + 1] << 8);
+    return a != 1 && a != 0 && a != 0x3A && a != 0xB && a != 0x10;
+}
+
 bool controlled_npc_still(const World& world, std::uint32_t now) {
     return world.state.player_moved_at == 0 || now >= world.state.player_moved_at + world.state.player_move_window;
 }

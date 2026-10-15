@@ -34,6 +34,31 @@ bool screen_overlap(const DrawItem& a, const DrawItem& b) {
     return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
 
+// Whether the screen hexagons of the two world boxes overlap (ScummVM,
+// SortItem::overlap). Sprites whose rectangles meet but whose boxes do not
+// cover each other get no ordering constraint: such constraints chained
+// floors, steps and crates into cycles.
+// @orig ?: display list sort (DLIST.C), not located
+bool box_overlap(const DrawItem& a, const DrawItem& b) {
+    struct Hex {
+        int left, right;      // x of the near-left and far-right corners
+        int top_x, top_y;     // far-left corner, top face
+        int bot_x, bot_y;     // near-right corner, bottom face
+    };
+    auto hex = [](const DrawItem& d) {
+        return Hex{project_x(d.x_left, d.y), project_x(d.x, d.y_far),
+                   project_x(d.x_left, d.y_far), project_y(d.x_left, d.y_far, d.z_top),
+                   project_x(d.x, d.y), project_y(d.x, d.y, d.z)};
+    };
+    const Hex p = hex(a), q = hex(b);
+    if (p.right <= q.left || p.left >= q.right) return false;
+    // Each top edge of a against the bottom corner of b, and the reverse
+    // (screen slopes 1/2).
+    const int tx = p.top_x - q.bot_x, ty = p.top_y - q.bot_y;
+    const int bx = p.bot_x - q.top_x, by = p.bot_y - q.top_y;
+    return tx + 2 * ty < 0 && -tx + 2 * ty < 0 && bx - 2 * by < 0 && -bx - 2 * by < 0;
+}
+
 // Draw-order comparison between two items whose screen rectangles overlap.
 // Decision order (after ScummVM's reverse engineering of the original sorter,
 // SortItem::below): clear separation in z, then y, then x; z with an 8-unit
@@ -46,6 +71,8 @@ struct SortKey {
     bool x_flat() const { return d.x_left == d.x; }
     bool y_flat() const { return d.y_far == d.y; }
     bool has(ShapeInfo::Flag f) const { return d.shape_flags & f; }
+    // ScummVM's _fbigsq: flat, as wide as deep, 128 world units or more.
+    bool big_square_flat() const { return flat() && d.x - d.x_left == d.y - d.y_far && d.x - d.x_left >= 128; }
 };
 
 // Compares a < b on a predicate; returns nullopt when they tie.
@@ -103,6 +130,15 @@ bool behind(const DrawItem& da, const DrawItem& db) {
         if (auto r = prefer(a.has(ShapeInfo::kDraw), b.has(ShapeInfo::kDraw), false)) return *r;
         if (auto r = prefer(a.has(ShapeInfo::kSolid), b.has(ShapeInfo::kSolid), false)) return *r;
         if (auto r = prefer(a.has(ShapeInfo::kOccludes), b.has(ShapeInfo::kOccludes), false)) return *r;
+        // Large square flats (floor tiles) first, so that the markings laid
+        // on them (hazard stripes 0x10C) are not cut by the next tile.
+        if (auto r = prefer(a.big_square_flat(), b.big_square_flat(), false)) return *r;
+        // Both large squares, one laid on the other (the force field floor
+        // FFFLOOR 0x135, 64 x 64, on 256 x 256 tiles): the larger first, or
+        // the tile hides the outline of the smaller one.
+        if (a.big_square_flat() && b.big_square_flat()) {
+            if (auto r = prefer(da.x - da.x_left, db.x - db.x_left, false)) return *r;
+        }
     }
     if (da.x == db.x && da.y == db.y) {
         if (auto r = prefer(a.has(ShapeInfo::kTranslucent), b.has(ShapeInfo::kTranslucent), true)) return *r;
@@ -126,6 +162,11 @@ bool behind(const DrawItem& da, const DrawItem& db) {
 }
 
 }  // namespace
+
+std::optional<bool> draw_before(const DrawItem& a, const DrawItem& b) {
+    if (!screen_overlap(a, b) || !box_overlap(a, b)) return std::nullopt;
+    return behind(a, b);
+}
 
 std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes, const Camera& camera, int w,
                                          int h, RenderStats* stats) {
@@ -182,12 +223,17 @@ std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes,
 
     // Dependency graph between screen-overlapping items, then DFS topological
     // order (cycles, which the original also had to break, are cut by the DFS).
-    std::sort(items.begin(), items.end(), [](const DrawItem& a, const DrawItem& b) { return a.left < b.left; });
+    // Ties are broken by id: the order of unconstrained items follows from the
+    // order of this list, and must not change as the camera moves.
+    std::sort(items.begin(), items.end(), [](const DrawItem& a, const DrawItem& b) {
+        if (a.left != b.left) return a.left < b.left;
+        return a.item->id < b.item->id;
+    });
     const std::size_t n = items.size();
     std::vector<std::vector<std::uint32_t>> before(n);  // before[i]: items to draw before i
     for (std::size_t i = 0; i < n; ++i) {
         for (std::size_t j = i + 1; j < n && items[j].left < items[i].right; ++j) {
-            if (!screen_overlap(items[i], items[j])) continue;
+            if (!screen_overlap(items[i], items[j]) || !box_overlap(items[i], items[j])) continue;
             if (behind(items[i], items[j])) before[j].push_back(static_cast<std::uint32_t>(i));
             else before[i].push_back(static_cast<std::uint32_t>(j));
         }
@@ -196,14 +242,19 @@ std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes,
     std::vector<DrawItem> ordered;
     ordered.reserve(n);
     std::vector<std::pair<std::uint32_t, std::size_t>> stack;
-    // Visit in depth order so unconstrained items keep a sensible order.
+    // Visit in depth order so unconstrained items keep a sensible order: low z
+    // first, flat before thick (the original's list order, ScummVM's
+    // SortItem::listLessThan), then by depth and, for a total order, by id.
     std::vector<std::uint32_t> roots(n);
     for (std::uint32_t i = 0; i < n; ++i) roots[i] = i;
     std::sort(roots.begin(), roots.end(), [&](std::uint32_t a, std::uint32_t b) {
         const auto& A = items[a];
         const auto& B = items[b];
         if (A.z != B.z) return A.z < B.z;
-        return A.x + A.y < B.x + B.y;
+        const bool flat_a = A.z == A.z_top, flat_b = B.z == B.z_top;
+        if (flat_a != flat_b) return flat_a;
+        if (A.x + A.y != B.x + B.y) return A.x + A.y < B.x + B.y;
+        return A.item->id < B.item->id;
     });
     for (std::uint32_t root : roots) {
         if (state[root]) continue;
@@ -244,11 +295,14 @@ std::vector<std::size_t> pick(const std::vector<DrawItem>& list, int x, int y) {
     return hits;
 }
 
-// @orig ?: display list drawing (DLIST.C), not located
-void draw_display_list(Surface8& screen, const std::vector<DrawItem>& list,
+// @orig 11A0:02E4 (blitter choice; the walk over the list is not located)
+void draw_display_list(Surface8& screen, const std::vector<DrawItem>& list, const XformTable* xform,
                        const std::function<void(Surface8&, const DrawItem&)>& after) {
     for (const DrawItem& d : list) {
-        d.frame->draw(screen, d.sx, d.sy, d.mirrored);
+        // TYPEFLAG translucent shapes (windows, force fields...) go through
+        // the translucent blitter (asm_blit_4, mirrored asm_blit_5).
+        const bool translucent = d.shape_flags & ShapeInfo::kTranslucent;
+        d.frame->draw(screen, d.sx, d.sy, d.mirrored, translucent ? xform : nullptr);
         if (after) after(screen, d);
     }
 }

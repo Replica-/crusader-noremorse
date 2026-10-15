@@ -1,6 +1,7 @@
 #include "engine/world/world.hpp"
 
 #include "core/bytes.hpp"
+#include "core/dtable.hpp"
 #include "engine/audio/audio.hpp"
 
 #include <algorithm>
@@ -13,6 +14,15 @@ namespace crusader {
 namespace {
 constexpr std::size_t kRecordSize = 16;
 constexpr std::uint8_t kFamilyGlobEgg = 3;
+// The item table of a saved game (entry 0): one array per field, in this
+// order and with these widths (x, y, z, shape, frame, status, quality, NPC
+// number, map, next, array 11, hit points). The entry is 20 bytes per slot:
+// the last 10240 are not written by the original (left as they are).
+constexpr std::size_t kFieldWidths[] = {2, 2, 1, 2, 1, 2, 2, 1, 1, 2, 2, 1};
+constexpr std::size_t kItemTableSize = kItemSlots * 20;
+// Entry 1: map, fast area, cell heads, cell counts, then the list words.
+constexpr std::size_t kCellWords = 64 * 64;
+constexpr std::size_t kListWordsAt = 10 + 2 * 2 * kCellWords;
 }  // namespace
 
 // @orig 10B0:01E7
@@ -110,11 +120,21 @@ const Item* World::get(ObjId id) const {
 
 // @orig 10B0:262A
 Item& World::add(Item item) {
-    ObjId id = kFirstItemId;
-    while (items_.contains(id)) {
-        if (id == 0xFFFF) throw std::runtime_error("item table full");
-        ++id;
+    // The head of the free item slots. With none left (viewers expanding a
+    // whole map's globs), the port goes on past the table, where the
+    // original stops on an assertion.
+    ObjId id = 0;
+    if (!free_items_.ids.empty()) {
+        id = free_items_.ids.front();
+        remove_free(id);
+    } else {
+        id = static_cast<ObjId>(std::max<std::size_t>(next_id_, kItemSlots));
+        while (items_.contains(id)) {
+            if (id == 0xFFFF) throw std::runtime_error("item table full");
+            ++id;
+        }
     }
+    stale_.erase(id);
     item.id = id;
     if (id >= next_id_) next_id_ = static_cast<ObjId>(id + 1);
     Item& added = items_.emplace(id, std::move(item)).first->second;
@@ -126,6 +146,10 @@ Item& World::add(Item item) {
 Item& World::add_with_id(Item item) {
     if (item.id == 0) throw std::runtime_error("item id 0 is reserved");
     if (item.id >= next_id_) next_id_ = static_cast<ObjId>(item.id + 1);
+    stale_.erase(item.id);
+    remove_free(item.id);
+
+
     if (const Item* old = get(item.id)) unlink_from_cell(*old);
     items_.erase(item.id);
     const ObjId id = item.id;
@@ -177,13 +201,13 @@ bool World::cells_consistent() const {
     return linked == expected;
 }
 
-// @orig ?: loading of the saved item table (SAVEGAME entries 0 and 1), not located
+// @orig 10B0:0FED (entries 0 and 1; entries 10 and 20 as NPC_10f0_00e5 and 38dd)
 std::size_t World::load_saved_items(const FlexArchive& save) {
-    // Item table, saved as one array per field (ITEMCACH.C save routine,
-    // 10240 slots; slot number = object id). Field order and widths:
-    constexpr std::size_t kSlots = 10240;
+    // Item table, saved as one array per field (10240 slots; slot number =
+    // object id).
+    constexpr std::size_t kSlots = kItemSlots;
     const auto d = save.entry(0);
-    const std::size_t widths[] = {2, 2, 1, 2, 1, 2, 2, 1, 1, 2, 2, 1};
+    const auto& widths = kFieldWidths;
     std::size_t offsets[12];
     std::size_t pos = 0;
     for (std::size_t f = 0; f < 12; ++f) {
@@ -200,10 +224,38 @@ std::size_t World::load_saved_items(const FlexArchive& save) {
     clear_tracked();
     for (auto& c : cells_) c.clear();
     next_id_ = 1;
+    init_free_slots();
+
+    // Entry 1 ends with the free lists (counts, heads, tails) and the
+    // pending stack (top, count), chained through array 9 like the cells.
+    const auto lists = save.entry(1);
+    constexpr std::size_t kListsEnd = kListWordsAt;
+    std::vector<ObjId> free_items, free_npcs, pending;
+
+    ObjId item_tail = static_cast<ObjId>(kItemSlots - 1), npc_tail = static_cast<ObjId>(kNpcSlots - 1);
+    std::vector<bool> is_free(kSlots);
+    auto chain = [&](ObjId head) {
+        std::vector<ObjId> ids;
+        for (ObjId id = head; id != 0 && id < kSlots && ids.size() < kSlots; id = field(9, id)) ids.push_back(id);
+        return ids;
+    };
+    const bool has_lists = lists.size() >= kListsEnd + 16;
+    if (has_lists) {
+        free_items = chain(read_u16(lists, kListsEnd + 4));
+        free_npcs = chain(read_u16(lists, kListsEnd + 6));
+        item_tail = read_u16(lists, kListsEnd + 8);
+        npc_tail = read_u16(lists, kListsEnd + 10);
+        pending = chain(read_u16(lists, kListsEnd + 12));
+        for (ObjId id : free_items) is_free[id] = true;
+        for (ObjId id : free_npcs) is_free[id] = true;
+    }
+
+    slot0_array11_ = field(10, 0);
     std::size_t count = 0;
     for (std::size_t slot = 1; slot < kSlots; ++slot) {
+
         const std::uint16_t shape = field(3, slot);
-        if (shape == 0) continue;
+        if (shape == 0 && !is_free[slot]) continue;
         Item item;
         item.id = static_cast<ObjId>(slot);
         item.x = field(0, slot);
@@ -211,19 +263,61 @@ std::size_t World::load_saved_items(const FlexArchive& save) {
         item.z = field(2, slot);
         item.shape = shape;
         item.frame = static_cast<std::uint8_t>(field(4, slot));
-        item.flags = field(5, slot);
+        // ITEMCACH_10b0_0fed clears status bit 0 of every slot once read.
+        item.flags = static_cast<std::uint16_t>(field(5, slot) & ~0x0001);
+
         item.quality = field(6, slot);
         item.npc_number = static_cast<std::uint8_t>(field(7, slot));
         item.map_number = static_cast<std::uint8_t>(field(8, slot));
         item.save_u2 = field(10, slot);
         item.hit_points = static_cast<std::uint8_t>(field(11, slot));
+        if (is_free[slot]) {
+            stale_[item.id] = std::move(item);  // a free slot, with what it held last
+            continue;
+        }
         add_with_id(std::move(item));
         ++count;
     }
+    if (has_lists) {
+        free_items_ = {};
+        free_npcs_ = {};
+        free_mask_.reset();
+        // Port saves made before 2026-10-15 left array 9 at 0 for slots never
+        // used (z = 0xFE, shape 0), which cut the free chains short; games
+        // loaded from them saved the short lists again. Such slots, in no
+        // list (the original's saves have none), come after the chain in id
+        // order, as init_free_slots leaves them.
+        auto repair = [&](std::vector<ObjId>& chained, ObjId from, ObjId to) {
+            for (ObjId id = from; id < to; ++id) {
+                if (!is_free[id] && !items_.contains(id) && field(3, id) == 0 && field(2, id) == 0xFE) {
+                    chained.push_back(id);
+                    is_free[id] = true;
+                }
+            }
+        };
+        repair(free_items, static_cast<ObjId>(kFirstItemId), static_cast<ObjId>(kSlots));
+        repair(free_npcs, 2, static_cast<ObjId>(kNpcSlots));
+        for (ObjId id : free_items) free_items_.ids.push_back(id);
+        for (ObjId id : free_npcs) free_npcs_.ids.push_back(id);
+        for (ObjId id : free_items) free_mask_.set(id);
+        for (ObjId id : free_npcs) free_mask_.set(id);
+        free_items_.tail = item_tail;
+        free_npcs_.tail = npc_tail;
+    } else {
+        // No lists saved: every unused slot is free, in id order.
+        free_items_ = {};
+        free_npcs_ = {};
+        free_mask_.reset();
+        for (std::size_t id = kSlots - 1; id >= 2; --id) {
+            if (id != 1 && !items_.contains(static_cast<ObjId>(id))) push_free(static_cast<ObjId>(id));
+        }
+    }
     pending_.clear();
+    for (auto it = pending.rbegin(); it != pending.rend(); ++it) {
+        if (items_.contains(*it)) pending_.push_back(*it);
+    }
 
     // Entry 1 starts with the u16 map number, then the fast area (s0, s1, d0, d1).
-    const auto lists = save.entry(1);
     if (lists.size() >= 10) {
         auto word = [&](std::size_t at) { return static_cast<std::int16_t>(read_u16(lists, at)); };
         current_map_ = word(0);
@@ -244,9 +338,13 @@ std::size_t World::load_saved_items(const FlexArchive& save) {
                     c.push_back(id);
                     id = field(9, id);
                 }
+                const std::size_t at = static_cast<std::size_t>(cx * kGridSize + cy);
+                cell_count_bias_[at] =
+                    static_cast<std::int16_t>(read_u16(lists, 10 + kGridSize * kGridSize * 2 + 2 * at) - c.size());
             }
         }
     }
+
 
     // Entry 10: NPC table.
     const auto npcs = save.entry(10);
@@ -262,7 +360,11 @@ std::size_t World::load_saved_items(const FlexArchive& save) {
     // ...); +0xB is the difficulty (DS:7E19, World::I_gameDifficulty), +0xD
     // the keycards (DS:7E1B), +0x11 the battery (DS:7E1F, MainActor::I_getMaxEnergy).
     const auto player = save.entry(20);
-    if (player.size() >= 0x0D) state.difficulty = static_cast<std::uint16_t>(player[0x0B] | player[0x0C] << 8);
+    state.player_block.fill(0);
+    std::copy_n(player.begin(), std::min(player.size(), state.player_block.size()), state.player_block.begin());
+    if (player.size() >= 0x04) state.avatar_in_stasis = (player[0x02] | player[0x03] << 8) != 0;
+    if (player.size() >= 0x0D) state.difficulty
+ = static_cast<std::uint16_t>(player[0x0B] | player[0x0C] << 8);
     if (player.size() >= 0x11) state.keycards = read_u32(player, 0x0D);
     if (player.size() >= 0x13) state.battery = static_cast<std::uint16_t>(player[0x11] | player[0x12] << 8);
 
@@ -286,14 +388,136 @@ std::size_t World::load_saved_items(const FlexArchive& save) {
         if (!(item.flags & kItemContained) || linked.count(id)) continue;
         if (Item* parent = get(static_cast<ObjId>(item.x))) {
             item.parent = parent->id;
+            item.unchained = true;
             parent->contents.push_back(id);
         }
     }
     return count;
 }
 
+// @orig 10B0:0B67 (entry 0)
+std::vector<std::uint8_t> World::saved_item_table() const {
+    std::vector<std::uint8_t> out(kItemTableSize, 0);
+    std::size_t offsets[12];
+    std::size_t pos = 0;
+    for (std::size_t f = 0; f < 12; ++f) {
+        offsets[f] = pos;
+        pos += kItemSlots * kFieldWidths[f];
+    }
+    auto put = [&](std::size_t f, std::size_t slot, std::uint32_t v) {
+        const std::size_t at = offsets[f] + slot * kFieldWidths[f];
+        out[at] = static_cast<std::uint8_t>(v);
+        if (kFieldWidths[f] == 2) out[at + 1] = static_cast<std::uint8_t>(v >> 8);
+    };
+
+    // Array 9 chains the lists: map cells, container contents, the pending
+    // stack from its top, the free lists. The last item of a list, and an
+    // item in none (NPCs of other maps), get 0.
+    std::vector<ObjId> next(kItemSlots, 0);
+    auto link = [&](auto first, auto last) {
+        for (auto it = first; it != last && std::next(it) != last; ++it) next[*it] = *std::next(it);
+    };
+    for (const auto& c : cells_) link(c.begin(), c.end());
+    auto chained = [&](const Item& container) {
+        std::vector<ObjId> ids;
+        for (ObjId c : container.contents) {
+            if (const Item* child = get(c); child && !child->unchained) ids.push_back(c);
+        }
+        return ids;
+    };
+    for (const auto& [id, item] : items_) {
+        const auto ids = chained(item);
+        link(ids.begin(), ids.end());
+    }
+    link(pending_.rbegin(), pending_.rend());
+    link(free_items_.ids.begin(), free_items_.ids.end());
+    link(free_npcs_.ids.begin(), free_npcs_.ids.end());
+
+    // Slots never used are at z = 0xFE (ITEMCACH_10b0_161b), chained in
+    // their free list like the others.
+    for (std::size_t slot = 0; slot < kItemSlots; ++slot) {
+        put(2, slot, 0xFE);
+        put(9, slot, next[slot]);
+    }
+    auto write = [&](const Item& item) {
+        if (item.id >= kItemSlots) throw std::runtime_error("item " + std::to_string(item.id) + " past the item table");
+        const std::size_t s = item.id;
+        put(0, s, static_cast<std::uint32_t>(item.x));
+        put(1, s, static_cast<std::uint32_t>(item.y));
+        put(2, s, static_cast<std::uint32_t>(item.z));
+        put(3, s, item.shape);
+        put(4, s, item.frame);
+        put(5, s, item.flags);
+        put(6, s, item.quality);
+        put(7, s, item.npc_number);
+        put(8, s, item.map_number);
+        put(9, s, next[s]);
+        put(10, s, item.save_u2);
+        put(11, s, item.hit_points);
+    };
+    put(10, 0, slot0_array11_);
+    for (const auto& [id, item] : stale_) write(item);
+    for (const auto& [id, item] : items_) write(item);
+    // A container's quality heads its chain.
+    for (const auto& [id, item] : items_) {
+        const std::uint8_t fam = family(item);
+        if (fam != kFamilyContainer && fam != kFamilyActorContainer) continue;
+        const auto ids = chained(item);
+        put(6, id, ids.empty() ? 0 : ids.front());
+
+
+    }
+    return out;
+}
+
+// @orig 10B0:0B67 (entry 1)
+std::vector<std::uint8_t> World::saved_item_lists() const {
+    std::vector<std::uint8_t> out(kListWordsAt + 16, 0);
+    auto word = [&](std::size_t at, std::uint32_t v) {
+        out[at] = static_cast<std::uint8_t>(v);
+        out[at + 1] = static_cast<std::uint8_t>(v >> 8);
+    };
+    word(0, static_cast<std::uint32_t>(current_map_));  // DS:10FE
+    word(2, static_cast<std::uint32_t>(fast_area_.s0));  // DS:7DC0
+    word(4, static_cast<std::uint32_t>(fast_area_.s1));
+    word(6, static_cast<std::uint32_t>(fast_area_.d0));
+    word(8, static_cast<std::uint32_t>(fast_area_.d1));
+    // Cell heads (DS:1100) and counts (DS:1104), x-major.
+    for (std::size_t at = 0; at < kCellWords; ++at) {
+        const auto& c = cells_[at];
+        word(10 + 2 * at, c.empty() ? 0 : c.front());
+        word(10 + 2 * kCellWords + 2 * at, static_cast<std::uint32_t>(static_cast<int>(c.size()) + cell_count_bias_[at]));
+    }
+    auto head = [](const FreeSlots& l) -> std::uint32_t { return l.ids.empty() ? 0 : l.ids.front(); };
+    word(kListWordsAt + 0, static_cast<std::uint32_t>(free_items_.ids.size()));  // DS:7DD0
+    word(kListWordsAt + 2, static_cast<std::uint32_t>(free_npcs_.ids.size()));   // DS:7DD2
+    word(kListWordsAt + 4, head(free_items_));                                    // DS:7DC8
+    word(kListWordsAt + 6, head(free_npcs_));                                     // DS:7DCA
+    word(kListWordsAt + 8, free_items_.tail);                                     // DS:7DCC
+    word(kListWordsAt + 10, free_npcs_.tail);                                     // DS:7DCE
+    word(kListWordsAt + 12, pending_.empty() ? 0 : pending_.back());              // DS:7DD4
+    word(kListWordsAt + 14, static_cast<std::uint32_t>(pending_.size()));         // DS:7DD6
+    return out;
+}
+
+// @orig 1128:05B7
+std::vector<std::uint8_t> World::saved_tracker(int part) const {
+    // 50: the slot count (DS:26E4), 51: the items tracked (DS:26E6), 52: the
+    // slots (DS:26E0).
+    std::vector<std::uint8_t> out;
+    auto word = [&](std::uint32_t v) {
+        out.push_back(static_cast<std::uint8_t>(v));
+        out.push_back(static_cast<std::uint8_t>(v >> 8));
+    };
+    if (part == 0) word(kTrackedSlots);
+    else if (part == 1) word(static_cast<std::uint32_t>(tracked_count_));
+    else for (ObjId id : tracked_) word(id);
+    return out;
+}
+
 // @orig 10C8:18C0
-std::vector<ObjId> World::rect_search(std::int32_t x0, std::int32_t y0, std::int32_t x1, std::int32_t y1) const {
+std::vector<ObjId> World::rect_search(
+std::int32_t x0, std::int32_t y0, std::int32_t x1, std::int32_t y1) const {
     // 16-bit coordinates; negative bounds become 0 (low) or 0x7FFF (high).
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
@@ -330,12 +554,11 @@ World::Point World::location(const Item& item) const {
 
 // @orig 10F0:236B 10B0:268D
 ObjId World::create_npc(std::uint16_t shape, std::uint16_t frame) {
-    ObjId slot = 0;
-    for (ObjId id = 2; id < kNpcSlots && slot == 0; ++id) {
-        if (!get(id)) slot = id;
-    }
+    ObjId slot = free_npcs_.ids.empty() ? 0 : free_npcs_.ids.front();
     for (ObjId id = 2; id < kNpcSlots && slot == 0; ++id) {
         const Item* i = get(id);
+        if (!i) continue;
+
         const std::uint16_t s = i->shape;
         if ((i->z & 0xFF) != 0xFE && s != 0x3AC && s != 0x4DC && s != 0x524 && s != 0x4D9 && s != 0x4E0 &&
             (i->flags & 0x0002) && !(i->flags & kItemFastArea)) {
@@ -367,13 +590,14 @@ ObjId World::create(std::uint16_t shape, std::uint8_t frame) {
     item.frame = frame;
     item.hit_points = initial_hit_points(shape);
     const std::uint8_t fam = family(item);
-    // Family 10 takes its quality from the DTABLE.C tables (not decoded yet).
-    // Families 11 and 12 get quality 1, then the item's usecode event 0x0C
-    // ("combine") is started.
-    if (fam == 11 || fam == 12) item.quality = 1;
+    // Item::I_create (10A8:11E7): a weapon (family 10) gets the rounds of a
+    // full clip (DTABLE_1120_0180), families 11 and 12 get quality 1; the
+    // item's usecode event 0x0C ("combine") is then started (setQAndCombine).
+    if (fam == 10) item.quality = dtable::clip_size(shape);
+    else if (fam == 11 || fam == 12) item.quality = 1;
     const ObjId id = add(std::move(item)).id;
     push(id);
-    if ((fam == 11 || fam == 12) && hooks_.start_event) hooks_.start_event(id, 0x0C);
+    if ((fam == 10 || fam == 11 || fam == 12) && hooks_.start_event) hooks_.start_event(id, 0x0C);
     return id;
 }
 
@@ -395,6 +619,7 @@ void World::push(ObjId id) {
     }
     if (on_map(*item)) unlink_from_cell(*item);
     detach(*item);
+    item->unchained = false;
     item->flags |= kItemEthereal;
     pending_.push_back(id);
 }
@@ -438,15 +663,17 @@ bool World::has_fast_area_events(const Item& item) const {
 }
 
 // @orig 10A8:2B30
-void World::enter_fast_area(Item& item) {
-    // Not reproduced: sound sources and family 4/7/8 special cases.
+std::uint16_t World::enter_fast_area(Item& item) {
+    // Families 4/7/8 and the NPC reset are handled below through hooks. Not
+    // reproduced: the shape 0x4FE hook (CRUSYS_1060_021b) and the family 7
+    // branch taken when DAT_1478_0907 is set (never set in this version).
     item.flags |= kItemFastArea;
-    if (item.sprite_only) return;  // port-only sprite items: no events, not tracked
+    if (item.sprite_only) return 0;  // port-only sprite items: no events, not tracked
     if (is_trackable(item.shape) && !(item.flags & kItemBroken)) track(item.id);
     // Dead NPCs stop here, except four shapes.
     if (is_npc_id(item.id) && is_dead(item.id) && item.shape != 0x576 && item.shape != 0x596 &&
         item.shape != 0x59C && item.shape != 0x58F) {
-        return;
+        return 0;
     }
     // Monster eggs (family 7) make their NPC (ITEMFIND_10e0_0247) and stop
     // here. Trigger eggs (family 4, teleport eggs of family 8 at frame 0)
@@ -454,11 +681,12 @@ void World::enter_fast_area(Item& item) {
     const std::uint8_t fam = family(item);
     if (fam == 7 && hooks_.monster_egg) {
         hooks_.monster_egg(item.id);
-        return;
+        return 0;
     }
     if ((fam == 4 || (fam == 8 && item.frame == 0)) && hooks_.egg_hatcher) hooks_.egg_hatcher(item.id);
     if (is_npc_id(item.id) && hooks_.npc_entered_fast_area) hooks_.npc_entered_fast_area(item.id);
-    if (has_fast_area_events(item) && hooks_.start_event) hooks_.start_event(item.id, 0x0F);
+    if (has_fast_area_events(item) && hooks_.start_event) return hooks_.start_event(item.id, 0x0F);
+    return 0;
 }
 
 // @orig 10A8:2DAD
@@ -821,7 +1049,49 @@ void World::destroy(ObjId id) {
     if (Item* parent = get(item->parent)) std::erase(parent->contents, id);
     unlink_from_cell(*item);
     std::erase(pending_, id);
+    // ITEMCACH_10b0_1a23: the slot goes to the head of its free list and
+    // keeps what it held, at z = 0xFE. The player's slot is never freed.
+    if (id != 1 && id < kItemSlots) {
+        Item& last = stale_[id] = std::move(*item);
+        last.z = 0xFE;
+        push_free(id);
+    }
     items_.erase(id);
+}
+
+// @orig 10B0:161B
+void World::init_free_slots() {
+    // Every slot free: NPCs 2..0xFF, items 0x100..0x27FF, each in id order.
+    free_items_ = {};
+    free_npcs_ = {};
+    free_mask_.reset();
+    for (std::size_t id = kNpcSlots - 1; id >= 2; --id) push_free(static_cast<ObjId>(id));
+    for (std::size_t id = kItemSlots - 1; id >= kFirstItemId; --id) push_free(static_cast<ObjId>(id));
+    free_npcs_.tail = static_cast<ObjId>(kNpcSlots - 1);
+    free_items_.tail = static_cast<ObjId>(kItemSlots - 1);
+    stale_.clear();
+    cell_count_bias_.fill(0);
+}
+
+// @orig 10B0:1A23
+void World::push_free(ObjId id) {
+    FreeSlots& list = is_npc_id(id) ? free_npcs_ : free_items_;
+    // As the original: the tail moves to the new slot when the head was the
+    // tail (an empty list, but also a list of one).
+    const ObjId head = list.ids.empty() ? 0 : list.ids.front();
+    if (head == list.tail) list.tail = id;
+    list.ids.push_front(id);
+    free_mask_.set(id);
+}
+
+// @orig 10B0:1986
+void World::remove_free(ObjId id) {
+    if (id >= kItemSlots || !free_mask_.test(id)) return;
+    FreeSlots& list = is_npc_id(id) ? free_npcs_ : free_items_;
+    if (id == list.tail) list.tail = 0;
+    if (!list.ids.empty() && list.ids.front() == id) list.ids.pop_front();
+    else list.ids.erase(std::find(list.ids.begin(), list.ids.end(), id));
+    free_mask_.reset(id);
 }
 
 // @orig 10B0:05D6

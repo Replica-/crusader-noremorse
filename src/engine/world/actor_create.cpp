@@ -54,6 +54,30 @@ bool set_equip(World& world, ObjId npc, int slot, ObjId item_id) {
     return true;
 }
 
+// @orig 10F0:25B9 10F0:2610 10F0:0145
+ObjId create_plain_actor(World& world, const dtable::NpcTypes& types, std::uint16_t shape, std::uint16_t frame) {
+    const ObjId npc = world.create_npc(shape, frame);
+    if (npc == 0) return 0;
+    const int type = types.index(shape);
+    auto r = world.npc_record(npc);
+    set_word(r, 0x00, types.word(type, 0x02));
+    if (const std::uint16_t weapon = types.word(type, 0x18); weapon != 0) {
+        const Item* self = world.get(npc);
+        const World::Point at{self->x, self->y, self->z & 0xFF};
+        const ObjId gun = world.create(dtable::weapon_at(weapon).shape(), 0);
+        world.pop_to_coords(at.x, at.y, at.z);
+        int slot = 0;
+        for (int s = 1; s <= 5 && slot == 0; ++s) {
+            if (world.npc_equip(npc, s) == 0) slot = s;
+        }
+        set_equip(world, npc, slot, gun);
+        set_word(r, 0x15, static_cast<std::uint16_t>(slot));
+    }
+    static constexpr std::size_t kDefaults[] = {0x1E, 0x40, 0x42};
+    for (int i = 0; i < 3; ++i) set_word(r, npc::kDefaultActivity + 2 * i, types.word(type, kDefaults[i]));
+    return npc;
+}
+
 namespace {
 
 struct ActorSpec {

@@ -56,7 +56,6 @@ private:
     std::uint16_t this_copy_ = 0;  // stack offset of the copied object, 0 if none
     std::uint16_t this_slot_ = 0;  // stack offset of the `this` pointer
     std::uint32_t temp_ = 0;             // return value of calls/intrinsics, spawned pid
-    std::uint32_t own_result_ = 0;       // set by pop_res, returned on termination
     std::vector<std::pair<std::uint16_t, std::uint8_t>> free_on_terminate_;  // (handle, 1 string/2 slist/3 list)
 };
 

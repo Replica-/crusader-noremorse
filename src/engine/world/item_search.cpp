@@ -171,7 +171,8 @@ bool is_fast_path(std::span<const std::uint8_t> s, bool surface) {
 }  // namespace
 
 // @orig 10C8:0F73
-std::vector<ObjId> World::surface_search(ObjId item_id, int mode, std::span<const std::uint8_t> script) const {
+std::vector<ObjId> World::surface_search(ObjId item_id, int mode, std::span<const std::uint8_t> script,
+                                         std::vector<std::uint8_t>* sides) const {
     std::vector<ObjId> found;
     const Item* item = get(item_id);
     if (!item) return found;
@@ -215,7 +216,10 @@ std::vector<ObjId> World::surface_search(ObjId item_id, int mode, std::span<cons
                 }
                 const bool above = (mode & 1) && static_cast<std::uint8_t>(c.z) == top;
                 const bool below = (mode & 2) && static_cast<std::uint8_t>(c.z + height(c)) == bottom;
-                if ((above || below) && matches_loop_script(c, script)) found.push_back(id);
+                if ((above || below) && matches_loop_script(c, script)) {
+                    found.push_back(id);
+                    if (sides) sides->push_back(above ? 1 : 2);
+                }
             }
         }
     }

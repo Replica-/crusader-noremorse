@@ -77,6 +77,9 @@ public:
 
     // One scheduling pass over the table.
     void run_slice();
+    // Ticks between the start of the previous pass and of this one (DS:3A88,
+    // measured by the original's main loop); 0 before the second pass.
+    std::uint32_t slice_ticks() const { return slice_ticks_; }
 
     // Ends the current pass after the running process: for a call that blocks
     // in the original (a cutscene played inside its intrinsic), the usecode
@@ -108,6 +111,8 @@ private:
     bool interrupted_ = false;
 
     std::uint32_t ticks_ = 0;
+    std::uint32_t slice_start_ = 0, slice_ticks_ = 0;
+    bool sliced_ = false;
     std::uint64_t tick_remainder_ = 0;  // microseconds * kTicksPerSecond not yet turned into a tick
 };
 

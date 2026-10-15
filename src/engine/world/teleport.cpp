@@ -1,6 +1,7 @@
 #include "engine/world/teleport.hpp"
 
 #include "engine/audio/audio.hpp"
+#include "engine/world/aim_mode.hpp"
 #include "engine/world/gravity.hpp"
 
 #include <array>
@@ -145,7 +146,7 @@ private:
 };
 
 // Process DS:0566 (1028:0477).
-// @orig 1028:0436 1028:0477
+// @orig 1028:0436 1028:0477 1138:3181
 class SwitchMap : public Process {
 public:
     SwitchMap(Kernel& kernel, World& world, int map) : kernel_(kernel), world_(world), map_(map) {}
@@ -153,9 +154,18 @@ public:
 protected:
     void run() override {
         // The colour cycling pauses; GAMEPAL_1028_03f6, this process
-        // included; then the teleport.
+        // included (not the Controller, reset instead: 1138:3181); then
+        // the teleport.
         world_.state.cycle_paused = true;
         kernel_.fail_all();
+        leave_aim_mode(kernel_, world_);
+        if (world_.hooks().reset_fire) world_.hooks().reset_fire();
+        GameState::Aim& aim = world_.state.aim;
+        aim.marker_pid = 0;
+        aim.target = 0;
+        aim.marker = -1;
+        aim.marked_dir = 0x10;
+        aim.turns = 0;
         if (Audio* audio = world_.audio()) {
             audio->stop_all();
             audio->sources.clear();

@@ -38,6 +38,9 @@ constexpr std::size_t kLastHit = 0x69;           // u32, time of the last hit
 
 bool in_combat(const World& world, ObjId npc);   // Actor::I_isInCombat
 bool weapon_drawn(const World& world, ObjId npc);
+// NPC_10f0_1f40: the NPC's last action is a combat one (not 0, 1, 0x3A,
+// 0xB or 0x10).
+bool in_combat_stance(const World& world, ObjId npc);
 // CRUSADER_1130_1180: the controlled NPC has not started a moving action
 // lately (see GameState::player_moved_at).
 bool controlled_npc_still(const World& world, std::uint32_t now);

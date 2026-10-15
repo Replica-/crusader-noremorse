@@ -64,6 +64,8 @@ public:
     // Process type of actor animations (Process_set_owner keeps per-item
     // counters for types 0xF0..0xF7).
     static constexpr std::uint16_t kType = 0xF0;
+    // Usecode event of a frame flagged 0x4000 (calledFromAnim).
+    static constexpr std::uint16_t kCalledFromAnimEvent = 0x0E;
 
     ActorAnimProcess(World& world, const AnimDat& anims, ObjId actor, std::uint16_t action, int dir, Pid previous);
 
@@ -72,7 +74,8 @@ public:
     Pid previous() const { return previous_; }
     // Changes the direction (ANIMPRIM.C 31DA), also of a running animation.
     void set_direction(int dir);
-    // True when the last step was refused by a collision (the process then ends).
+    // True when the last step was refused by a collision (+0x3C; the process
+    // then fails).
     bool blocked() const { return blocked_; }
     // 1158:2E55: a turning animation of the controlled NPC (+0x40), counted
     // in DS:288A; its end lets the aiming mode back (1158:2E66).
@@ -96,6 +99,7 @@ private:
     Pid previous_;
     bool started_ = false;
     bool blocked_ = false;
+    bool in_place_ = false;  // +0x3B: an unstoppable action blocked, the rest plays in place
     bool turning_ = false;
 };
 

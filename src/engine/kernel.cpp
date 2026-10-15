@@ -96,6 +96,10 @@ void Kernel::run_slice() {
     // Index loop: processes spawned during the slice with a higher pid run in
     // this same pass, as in the original table walk.
     interrupted_ = false;
+    // DS:3A88, which the main loop (11D8:31CF) measures around each pass.
+    slice_ticks_ = sliced_ ? ticks_ - slice_start_ : 0;
+    slice_start_ = ticks_;
+    sliced_ = true;
     for (std::size_t pid = 1; pid < table_.size() && !interrupted_; ++pid) {
         Process* p = table_[pid].get();
         if (!p) {

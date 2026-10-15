@@ -5,6 +5,7 @@
 #include "engine/world/activity.hpp"
 #include "engine/world/aim_mode.hpp"
 #include "engine/world/actor_anim.hpp"
+#include "engine/world/attack.hpp"
 #include "engine/world/player_commands.hpp"
 
 namespace crusader {
@@ -35,12 +36,6 @@ bool kneeling(const World& w, ObjId npc) {  // Actor::I_isKneeling, record +0x13
     return !r.empty() && (r[npc::kFlags13] & 0x04);
 }
 
-// NPC_10f0_1f40: the NPC stands in a combat stance.
-bool in_combat_stance(const World& w, ObjId npc) {
-    const std::uint16_t a = last_anim(w, npc);
-    return a != 1 && a != 0 && a != 0x3A && a != 0xB && a != 0x10;
-}
-
 // NPC_10f0_0122.
 bool on_map_40(const World& w, ObjId npc) {
     const Item* it = w.get(npc);
@@ -59,9 +54,11 @@ ObjId find_equipped(const World& w, std::uint16_t shape) {
 
 }  // namespace
 
+// @orig 1138:00E3
 CombatControl::CombatControl(World& world, const AnimDat& anims, const Keyboard& keyboard, AvatarMover& mover)
     : world_(world), anims_(anims), keyboard_(keyboard), mover_(mover) {
     set_type(kType);
+    set_runs_at_any_level(true);
     set_rate(60);
 }
 

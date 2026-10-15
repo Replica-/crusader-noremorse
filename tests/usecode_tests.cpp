@@ -192,6 +192,50 @@ void test_spawn_implies_result() {
     CHECK(m.faults().empty());
 }
 
+// One result register (INTER_1418_038b): a script that ends without its own
+// pop_res returns what the child it waited for left there (WALLGUN_3A77
+// after ITEM_0574).
+void test_result_register_shared() {
+    Asm parent;
+    parent.b({PUSH_DWORD, 0, 0, 0, 0}).b({SPAWN, 0, 0}).w(0).w(1);
+    parent.b({PUSH_PID}).b({PUSH_RETVAL}).b({IMPLIES, 1, 1}).b({POP_TEMP}).b({SUSPEND});
+    parent.b({RET});
+    Asm child;
+    child.b({SUSPEND}).b({PUSH_BYTE, 7}).b({W2D}).b({POP_RES}).b({RET});
+    const auto file = make_file({parent.finish(), child.finish()});
+    Kernel k;
+    UCMachine m(k, file);
+    CHECK(run_to_end(k, m, start(m, 0)) == 7);
+    CHECK(m.faults().empty());
+}
+
+// `implies` blocks the process on its target, but INTER_1418_038b leaves its
+// loop only on suspend / ret (the exit code local_36): the instructions after
+// it, down to the suspend the compiler always emits (implies, pop_temp,
+// suspend: 2498 times in the game), run in the same slice. They used to run
+// only after the target had finished, one more tick late.
+void test_implies_runs_on_until_suspend() {
+    Asm parent;
+    parent.b({PUSH_DWORD, 0, 0, 0, 0}).b({SPAWN, 0, 0}).w(0).w(1);
+    parent.b({PUSH_PID}).b({PUSH_RETVAL}).b({IMPLIES, 1, 1}).b({POP_TEMP});
+    parent.b({CALLI, 0}).w(0x20).b({SUSPEND}).b({RET});
+    Asm child;  // alive for three more ticks
+    child.b({SUSPEND}).b({SUSPEND}).b({SUSPEND}).b({RET});
+    const auto file = make_file({parent.finish(), child.finish()});
+    Kernel k;
+    UCMachine m(k, file);
+    int reached = 0;
+    m.set_intrinsic(0x20, [&](UCMachine&, UCProcess&, std::span<const std::uint8_t>) {
+        ++reached;
+        return std::uint32_t{0};
+    });
+    start(m, 0);
+    k.advance_time(1'000'000 / 60);
+    k.run_slice();
+    CHECK(reached == 1);  // before the child is over
+    CHECK(m.faults().empty());
+}
+
 void test_invalid_opcode_faults() {
     const auto file = make_file({{0x7B}});
     Kernel k;
@@ -211,6 +255,8 @@ int main() {
     test_list_foreach();
     test_intrinsic();
     test_spawn_implies_result();
+    test_result_register_shared();
+    test_implies_runs_on_until_suspend();
     test_invalid_opcode_faults();
     std::printf(failures ? "%d failure(s)\n" : "all usecode checks passed\n", failures);
     return failures ? 1 : 0;

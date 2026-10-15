@@ -45,13 +45,21 @@
 // filter (_ASS_SetOversampling / _ASS_ClrOversampling), volumes
 // (_ASS_SetSoundVolume / _ASS_SetMusicVolume), mouse speed DS:6001 (0..3).
 // The volume and mouse buttons play sound 0x98 even at the end of the range.
+//
+// Port addition: a "manette" button (line 9, left of "quit", a text button in
+// the colours of the quit one) opens the controller screen
+// (gamepad_screen.hpp), which then gets every event until it closes. Left
+// from "quit" and right from the button move between them; Enter opens it.
+// Without fonts the button is absent.
 
 #include "core/game_config.hpp"
 #include "core/surface.hpp"
+#include "engine/ui/gamepad_screen.hpp"
 #include "engine/world/render.hpp"
 
 #include <array>
 #include <cstdint>
+#include <memory>
 
 namespace crusader {
 
@@ -66,6 +74,7 @@ public:
     };
     static constexpr int kWidgets = 17;
     static constexpr int kQuitLine = 8;
+    static constexpr int kPadLine = 9;  // the controller button
     static constexpr int kSteps = 23;
     static constexpr std::array<std::uint8_t, kSteps> kSoundSteps = {  // DS:5BB6
         0x00, 0x02, 0x05, 0x08, 0x0B, 0x0E, 0x11, 0x14, 0x17, 0x1A, 0x1D, 0x20,
@@ -81,7 +90,7 @@ public:
     };
 
     // `focus` is DS:5BEA; `audio` may be null (no sound).
-    OptionsScreen(ShapeCache& gumps, GameConfig& config, Audio* audio, int& focus);
+    OptionsScreen(ShapeCache& gumps, GameConfig& config, Audio* audio, int& focus, const FontSet* fonts = nullptr);
 
     void draw(Surface8& screen) const;
 
@@ -92,9 +101,16 @@ public:
     void mouse_up(int x, int y);
     // Timer ticks, at every pass of the modal loop: the repeating buttons.
     void update(std::uint32_t ticks);
+    // The controller screen waits for a button press to bind (see Gamepad::set_capture).
+    bool waiting_for_pad() const { return pad_ && pad_->waiting(); }
+    void pad_button(int button) {
+        if (pad_) pad_->pad_button(button);
+    }
 
     bool closed() const { return closed_; }
     int focus() const { return *focus_; }
+    const GamepadScreen* gamepad() const { return pad_.get(); }
+    Rect pad_button() const { return pad_rect_; }
     int sound_step() const { return sound_step_; }
     int music_step() const { return music_step_; }
     // Whether a two-choice widget is chosen, or another widget drawn pressed
@@ -114,6 +130,8 @@ private:
     static bool is_repeating(Widget w) { return w >= kSoundDown && w < kQuit; }
     static int line_of(Widget w);
 
+    void draw_pad_button(Surface8& screen) const;
+    void open_pad();
     void act(Widget w);           // Options_key
     void widget_acted(Widget w);  // 13D0:1D81
     const Item* hit(int x, int y) const;
@@ -132,6 +150,11 @@ private:
     std::uint32_t now_ = 0;
     std::uint32_t next_repeat_ = 0;
     bool closed_ = false;
+    const FontSet* fonts_ = nullptr;
+    Rect pad_rect_{380, 318, 503, 339};
+    bool pad_pressed_ = false;  // the mouse holds the controller button
+    int pad_focus_ = 0;
+    std::unique_ptr<GamepadScreen> pad_;
 };
 
 }  // namespace crusader

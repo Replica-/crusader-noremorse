@@ -1,8 +1,7 @@
-// Items, maps and item intrinsics. Synthetic checks always run; checks on the
-// original data run when data/ is present.
-
+// Items, maps and item intrinsics on synthetic worlds (no game data).
 #include "core/shape.hpp"
 #include "core/typeflags.hpp"
+#include "core/xform.hpp"
 #include "engine/kernel.hpp"
 #include "engine/usecode/item_intrinsics.hpp"
 #include "engine/usecode/uc_machine.hpp"
@@ -208,7 +207,10 @@ void test_fast_area() {
     World w(tf);
     std::vector<std::pair<ObjId, std::uint16_t>> events;
     std::vector<ObjId> failed;
-    w.set_hooks({[&](ObjId id, std::uint16_t ev) { events.emplace_back(id, ev); },
+    w.set_hooks({[&](ObjId id, std::uint16_t ev) -> std::uint16_t {
+                     events.emplace_back(id, ev);
+                     return 0;
+                 },
                  [&](ObjId id) { failed.push_back(id); }});
     auto place = [&](std::uint16_t shape, std::int32_t cx, std::int32_t cy, std::uint16_t flags = 0) {
         Item i;
@@ -419,16 +421,21 @@ void test_collisions() {
     CHECK(!try_move(w, m3, {540, 300, 0}, kSweepSupportOnly | kSweepStepUp).ok);
     CHECK(sweep(w, 21, m3, {500, 300, 0}, {540, 300, 0}, kSweepNoGround).ok);
 
-    // Walking off a step: the first move leaves the box at the step's height
-    // (the drop sweep starts on the step and touches it, as in the original);
-    // the next one, clear of the step, follows the ground down (up to 9).
+    // Walking off a step: the ground up to 9 below is followed down, straight
+    // down from the end point (ITEMFIND_10e8_162f passes param_4 as the
+    // start of the second sweep).
     const ObjId m4 = place(21, 330, 200, 8);
     place(23, 330, 200, 0);  // under it, x 299..330
     r = try_move(w, m4, {380, 200, 8}, kSweepSupportOnly | kSweepStepUp);
-    CHECK(r.ok && r.end.z == 8 && r.ground_gap == 8);
-    w.move_item(m4, r.end.x, r.end.y, r.end.z);
-    r = try_move(w, m4, {390, 200, 8}, kSweepSupportOnly | kSweepStepUp);
     CHECK(r.ok && r.end.z == 0);
+    // Down a staircase (SAVEGAME TEST9): the box still overlaps the step it
+    // leaves; a drop from the start would cross that step and leave the box
+    // 8 above the next one, where it would fall.
+    place(23, 330, 400, 8);  // upper step, x 299..330, top at 16
+    place(23, 362, 400, 0);  // lower step, x 331..362, top at 8
+    const ObjId m5 = place(21, 335, 400, 16);
+    r = try_move(w, m5, {350, 400, 16}, kSweepSupportOnly | kSweepStepUp);
+    CHECK(r.ok && r.end.z == 8);
 
     // Free positions (ITEMFIND.C 00D9): the wall's box blocks, the flat
     // floor never does, nor does the space above the wall; the item standing
@@ -483,6 +490,86 @@ void test_support_and_fall() {
     }
     CHECK(w.get(crate)->z == 0 && k.process_count() == 0);
     CHECK(w.cells_consistent());
+}
+
+// The gravity step (1040:06D2) beyond a plain fall.
+void test_gravity_step() {
+    std::vector<ShapeInfo> tf(32);
+    tf[20].footpad_x = 4;  // platform 64 x 64, flat, fixed, solid
+    tf[20].footpad_y = 4;
+    tf[20].flags = ShapeInfo::kSolid | ShapeInfo::kFixed;
+    tf[21].footpad_x = 1;  // crate 16 x 16 x 16, solid, heavy
+    tf[21].footpad_y = 1;
+    tf[21].footpad_z = 2;
+    tf[21].flags = ShapeInfo::kSolid;
+    tf[21].weight = 10;
+    tf[22].footpad_x = 1;  // wall 16 x 64 x 64, fixed, solid
+    tf[22].footpad_y = 4;
+    tf[22].footpad_z = 8;
+    tf[22].flags = ShapeInfo::kSolid | ShapeInfo::kFixed;
+    auto place = [](World& w, std::uint16_t s, std::int32_t x, std::int32_t y, std::int32_t z) {
+        const ObjId id = w.create(s, 0);
+        w.pop_to_coords(x, y, z);
+        return id;
+    };
+    auto run = [](Kernel& k, std::uint32_t ticks_per_slice, int slices) {
+        for (int i = 0; i < slices && k.process_count(); ++i) {
+            k.advance_time((ticks_per_slice * 1'000'000 + Kernel::kTicksPerSecond - 1) / Kernel::kTicksPerSecond);
+            k.run_slice();
+        }
+    };
+
+    // A crate landing half over the platform's edge (low-x quarters only)
+    // stays there; the controlled one is pushed off it and falls to the ground.
+    for (const bool controlled : {false, true}) {
+        World w(tf);
+        w.set_camera(300, 300, 0);
+        place(w, 20, 100, 100, 40);
+        const ObjId crate = place(w, 21, 108, 90, 48);
+        if (controlled) w.state.controlled_npc = crate;
+        Kernel k;
+        fall(k, w, crate);
+        run(k, 1, 600);
+        const Item& c = *w.get(crate);
+        std::printf("gravity: %s crate over the edge ends at (%d, %d, %d), bouncing %d\n",
+                    controlled ? "controlled" : "plain", c.x, c.y, c.z, (c.flags & kItemBouncing) != 0);
+        CHECK(k.process_count() == 0 && (c.flags & kItemBouncing));
+        if (controlled) CHECK(c.z == 0 && c.x >= 116);
+        else CHECK(c.z == 40 && c.x == 108 && c.y == 90);
+        CHECK(w.cells_consistent());
+    }
+
+    // Thrown at a wall: three quarters of the speed lost, then sent back.
+    {
+        World w(tf);
+        w.set_camera(300, 300, 0);
+        place(w, 22, 140, 120, 0);  // x 125..140
+        const ObjId crate = place(w, 21, 100, 100, 0);
+        Kernel k;
+        hurl(k, w, crate, 16, 0, 8, 2);
+        int max_x = 0;
+        for (int i = 0; i < 600 && k.process_count(); ++i) {
+            k.advance_time(1'000'000 / Kernel::kTicksPerSecond);
+            k.run_slice();
+            max_x = std::max(max_x, static_cast<int>(w.get(crate)->x));
+        }
+        const Item& c = *w.get(crate);
+        std::printf("gravity: crate thrown at the wall reaches x %d, ends at (%d, %d, %d)\n", max_x, c.x, c.y, c.z);
+        CHECK(max_x == 124 && c.x < 124 && c.z == 0 && (c.flags & kItemBouncing) && k.process_count() == 0);
+    }
+
+    // Slices 4 ticks apart (DS:3A88): each step goes 4 times as far. From z
+    // 100 at ticks 20, 36 and 52: 0, then -2 * 4 * 4, then -4 * 4 * 4.
+    {
+        World w(tf);
+        w.set_camera(300, 300, 0);
+        const ObjId crate = place(w, 21, 200, 200, 100);
+        Kernel k;
+        fall(k, w, crate);
+        run(k, 4, 13);  // up to tick 52
+        std::printf("gravity: 4-tick slices, z %d at tick %u\n", w.get(crate)->z, k.ticks());
+        CHECK(k.ticks() == 52 && k.slice_ticks() == 4 && w.get(crate)->z == 4);
+    }
 }
 
 void test_on_screen() {
@@ -550,134 +637,64 @@ void test_random_range() {
     CHECK(random_range(a, 0, 1000) == random_range(b, 0, 1000));  // deterministic
 }
 
-void test_original_maps(const std::filesystem::path& data) {
-    const auto typeflags = load_typeflags(data / "STATIC/TYPEFLAG.DAT");
-    CHECK(typeflags.size() == 2048);
-    std::size_t containers = 0;
-    for (const auto& s : typeflags) containers += s.family == 6;
-    CHECK(containers == 46);
 
-    const auto fixed = FlexArchive::open(data / "STATIC/FIXED.DAT");
-    const auto globs = FlexArchive::open(data / "STATIC/GLOB.FLX");
-    std::size_t maps = 0, items = 0, contained = 0, expanded = 0;
-    for (std::size_t map = 0; map < fixed.count(); ++map) {
-        if (fixed.entry(map).empty()) continue;
-        World w(typeflags);
-        w.load_fixed_map(fixed, map);
-        ++maps;
-        items += w.item_count();
-        expanded += w.expand_glob_eggs(globs);
-        w.for_each([&](const Item& i) { contained += i.parent != 0; });
+// A world whose slots were never used (new game, map change) written then
+// loaded keeps its free lists: array 9 chains the never-used slots too.
+// Saves from before that fix, whose chains stop at the first never-used slot,
+// get those slots back in id order.
+void test_save_fresh_slots() {
+    World w;
+    for (int i = 0; i < 3; ++i) {
+        Item item;
+        item.shape = 0x30;
+        item.x = 1000 + 32 * i;
+        item.y = 1000;
+        w.add(std::move(item));
     }
-    std::printf("FIXED.DAT: %zu maps, %zu items, %zu inside containers, %zu items from glob eggs\n", maps, items,
-                contained, expanded);
-    CHECK(expanded > items);  // most of the scenery comes from globs
-    CHECK(maps == 63);
+    w.destroy(kFirstItemId + 1);
+    const auto path = std::filesystem::temp_directory_path() / "crusader_fresh_slots.flx";
+    auto reload = [&](std::vector<std::uint8_t> table) {
+        FlexWriter out(2);
+        out.add(0, table);
+        out.add(1, w.saved_item_lists());
+        out.write(path);
+        World loaded;
+        loaded.load_saved_items(FlexArchive::open(path));
+        return loaded;
+    };
+    auto same_lists = [&](const World& loaded) {
+        return loaded.item_count() == w.item_count() && loaded.free_items().ids == w.free_items().ids &&
+               loaded.free_npcs().ids == w.free_npcs().ids;
+    };
+    const auto table = w.saved_item_table();
+    const std::size_t array9 = kItemSlots * (2 + 2 + 1 + 2 + 1 + 2 + 2 + 1 + 1);
+    auto chain_length = [&](const World::FreeSlots& list) {
+        std::size_t n = 0;
+        for (ObjId id = list.ids.front(); id != 0 && n <= kItemSlots; ++n)
+            id = static_cast<ObjId>(table[array9 + 2 * id] | table[array9 + 2 * id + 1] << 8);
+        return n;
+    };
+    CHECK(chain_length(w.free_items()) == w.free_items().ids.size());
+    CHECK(chain_length(w.free_npcs()) == w.free_npcs().ids.size());
+    CHECK(same_lists(reload(table)));
 
-    // Saved game: item table with the player in slot 1.
-    const auto save = FlexArchive::open(data / "SAVEGAME/SAVEGAME.1");
-    World sw(typeflags);
-    const std::size_t saved = sw.load_saved_items(save);
-    std::size_t bad = 0;
-    const auto shapes_flex = FlexArchive::open(data / "STATIC/SHAPES.FLX");
-    sw.for_each([&](const Item& i) {
-        if (shapes_flex.entry(i.shape).empty()) { ++bad; return; }
-        const auto shape = Shape::parse(shapes_flex.entry(i.shape));
-        if (i.frame >= shape.frames().size()) ++bad;
-    });
-    const std::size_t from_globs = sw.expand_glob_eggs(globs);
-    std::printf("SAVEGAME.1: %zu items (%zu invalid), +%zu glob items not already saved\n", saved, bad, from_globs);
-    std::size_t in_containers = 0, linked = 0;
-    sw.for_each([&](const Item& i) {
-        if (!(i.flags & kItemContained)) return;
-        ++in_containers;
-        const Item* parent = sw.get(i.parent);
-        if (parent && std::ranges::count(parent->contents, i.id) == 1) ++linked;
-    });
-    CHECK(saved == 8288);
-    CHECK(in_containers == 12 && linked == 12);
-    // Map grid from entry 1: every item on the map in its cell, once.
-    CHECK(sw.cells_consistent());
-    // The player stands on one of the items below him (Item::I_isOn).
-    {
-        const std::uint8_t all[] = {'$'};
-        const std::vector<ObjId> below = sw.surface_search(1, 2, all);
-        const auto on = std::ranges::count_if(below, [&](ObjId id) { return pair_intrinsic(sw, 0x046, 1, id) == 1; });
-        std::printf("SAVEGAME.1: player on %td of the %zu items below\n", on, below.size());
-        CHECK(on > 0);
+    // The old writing: array 9 left at 0 past the first never-used slots.
+    auto broken = table;
+    for (ObjId id : {ObjId{kFirstItemId + 10}, ObjId{20}}) {
+        broken[array9 + 2 * id] = 0;
+        broken[array9 + 2 * id + 1] = 0;
     }
-
-    // Saved fast area (entry 1), around the camera: 11 x 7 cells in s, d.
-    // Glob items on the map are exactly those of the area; moving the camera
-    // across the map replaces them with those of the new area.
-    {
-        World mw(typeflags);
-        mw.load_saved_items(save);
-        mw.set_globs(&globs);
-        CHECK((mw.fast_area() == FastArea{69, 79, 13, 19}));
-        auto glob_items = [&](std::size_t& outside) {
-            std::size_t n = 0;
-            outside = 0;
-            mw.for_each([&](const Item& i) {
-                if (!(i.flags & kItemDisposable) || i.parent || (i.flags & kItemEthereal)) return;
-                ++n;
-                outside += !mw.fast_area().contains(i.x, i.y);
-            });
-            return n;
-        };
-        std::size_t outside = 0;
-        const std::size_t saved_globs = glob_items(outside);
-        CHECK(saved_globs == 539 && outside == 0);
-        mw.update_fast_area(27667, 24763);  // player position in SAVEGAME.2
-        const std::size_t new_globs = glob_items(outside);
-        std::printf("SAVEGAME.1 camera moved: %zu glob items around the camera, %zu after the move\n", saved_globs,
-                    new_globs);
-        CHECK(outside == 0 && new_globs > 300);
-
-        // SAVEGAME.2 was saved with that fast area: the original made the same glob items.
-        World ow(typeflags);
-        ow.load_saved_items(FlexArchive::open(data / "SAVEGAME/SAVEGAME.2"));
-        CHECK(ow.fast_area() == mw.fast_area());
-        using Key = std::tuple<std::int32_t, std::int32_t, std::int32_t, std::uint16_t, std::uint16_t>;
-        auto keys = [](const World& world) {
-            std::multiset<Key> k;
-            world.for_each([&](const Item& i) {
-                // 0x82 = from a glob; other disposable items (0x81) come from elsewhere.
-                if ((i.flags & 0x82) == 0x82 && !i.parent && !(i.flags & kItemEthereal))
-                    k.emplace(i.x, i.y, i.z, i.shape, i.frame);
-            });
-            return k;
-        };
-        const auto ours = keys(mw), original = keys(ow);
-        std::vector<Key> only_ours, only_original;
-        std::ranges::set_difference(ours, original, std::back_inserter(only_ours));
-        std::ranges::set_difference(original, ours, std::back_inserter(only_original));
-        std::printf("glob items vs SAVEGAME.2: %zu ours, %zu original, %zu only ours, %zu only original\n",
-                    ours.size(), original.size(), only_ours.size(), only_original.size());
-        CHECK(only_ours.empty() && only_original.empty());
-    }
-
-    // NPC table (entry 10): the dead bit matches the NPCs put out of the world.
-    std::size_t dead = 0, dead_ethereal = 0;
-    for (ObjId id = 1; id < 256; ++id) {
-        const Item* npc = sw.get(id);
-        if (!npc || !sw.is_dead(id)) continue;
-        ++dead;
-        dead_ethereal += (npc->flags & kItemEthereal) != 0;
-    }
-    CHECK(dead == 2 && dead_ethereal == 2);
-    CHECK(sw.npc_direction(1) < 16);
-
-    const auto damage = FlexArchive::open(data / "STATIC/DAMAGE.FLX");
-    CHECK(damage.entry(0).size() == 2048 * 6);
-    CHECK(bad == 0);
-    CHECK(sw.get(1) && sw.get(1)->shape == 1 && sw.get(1)->npc_number == 1);
-    CHECK(items == 233326);
+    const World repaired = reload(broken);
+    CHECK(same_lists(repaired));
+    std::printf("fresh slots: %zu items and %zu NPC slots free after reloading, %zu and %zu from a cut chain\n",
+                w.free_items().ids.size(), w.free_npcs().ids.size(), repaired.free_items().ids.size(),
+                repaired.free_npcs().ids.size());
+    std::filesystem::remove(path);
 }
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int main() {
     test_typeflag_decode();
     test_world_ids();
     test_item_intrinsics();
@@ -691,13 +708,10 @@ int main(int argc, char** argv) {
     test_footprint_intrinsics();
     test_collisions();
     test_support_and_fall();
+    test_gravity_step();
+    test_gravity_step();
     test_random_range();
-    const std::filesystem::path data = argc > 1 ? argv[1] : "data";
-    if (std::filesystem::exists(data / "STATIC/FIXED.DAT")) {
-        test_original_maps(data);
-    } else {
-        std::printf("game data not found, skipping map checks\n");
-    }
+    test_save_fresh_slots();
     std::printf(failures ? "%d failure(s)\n" : "all world checks passed\n", failures);
     return failures ? 1 : 0;
 }

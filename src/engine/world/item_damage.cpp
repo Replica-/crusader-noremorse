@@ -71,9 +71,11 @@ bool damage_item(Kernel& kernel, World& world, const AnimDat& anims, ObjId id, i
 }
 
 // @orig 10A8:275F
-void hit_item(Kernel& kernel, World& world, const AnimDat& anims, ObjId id, int damage, int fire_type) {
+void got_hit(Kernel& kernel, World& world, const AnimDat& anims, ObjId id, ObjId other, std::uint16_t force) {
     const Item* item = world.get(id);
     if (!item) return;
+    // Damage only comes with the hitter 0x4000: the force's low byte.
+    const int damage = other == kHitByDamage ? (force & 0xFF) : 0;
     const auto record = world.damage_record(item->shape);
     if (!record.empty() && !(record[0] & 0x10)) {
         if (damage_item(kernel, world, anims, id, damage) && world.hooks().fail_processes) world.hooks().fail_processes(id);
@@ -91,11 +93,17 @@ void hit_item(Kernel& kernel, World& world, const AnimDat& anims, ObjId id, int 
     const bool has_event = world.hooks().has_event && world.hooks().has_event(id, 6);
     if (!has_event) return;  // CRUSADER_1130_1090: nothing
     if (world.hooks().start_event_args) {
-        const std::uint8_t args[4] = {0x00, 0x40, static_cast<std::uint8_t>(damage), static_cast<std::uint8_t>(fire_type)};
+        const std::uint8_t args[4] = {static_cast<std::uint8_t>(other), static_cast<std::uint8_t>(other >> 8),
+                                      static_cast<std::uint8_t>(force), static_cast<std::uint8_t>(force >> 8)};
         world.hooks().start_event_args(id, 6, args);
     }
     item = world.get(id);
     if (item && (item->z & 0xFF) != 0xFE) damage_item(kernel, world, anims, id, damage);
+}
+
+// @orig 10A8:275F
+void hit_item(Kernel& kernel, World& world, const AnimDat& anims, ObjId id, int damage, int fire_type) {
+    got_hit(kernel, world, anims, id, kHitByDamage, static_cast<std::uint16_t>((fire_type & 0xFF) << 8 | (damage & 0xFF)));
 }
 
 // @orig 1150:0891

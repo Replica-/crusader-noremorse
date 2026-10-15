@@ -78,6 +78,10 @@ struct RenderStats {
     std::vector<std::pair<const Item*, const Item*>> cycle_samples;
 };
 
+// Ordering constraint between two items: true when `a` must be drawn before
+// `b`, false for the reverse, nullopt when they do not cover each other.
+std::optional<bool> draw_before(const DrawItem& a, const DrawItem& b);
+
 // Top-left corner of the view in projected coordinates (pixels).
 struct View {
     int left = 0, top = 0;
@@ -91,8 +95,9 @@ std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes,
 std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes, const Camera& camera, int w,
                                          int h, RenderStats* stats = nullptr);
 
+// Items of translucent shapes are blended through `xform` (opaque without it).
 // `after` runs right after each item is drawn (overlays drawn with it).
-void draw_display_list(Surface8& screen, const std::vector<DrawItem>& list,
+void draw_display_list(Surface8& screen, const std::vector<DrawItem>& list, const XformTable* xform = nullptr,
                        const std::function<void(Surface8&, const DrawItem&)>& after = {});
 
 // Indices (in draw order) of the items with an opaque pixel at screen (x, y).

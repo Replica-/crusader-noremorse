@@ -72,9 +72,28 @@ std::uint16_t bios_flags(Uint16 mod) {
     return f;
 }
 
+// Keypad characters as in the original's tables (key_event_to_ascii,
+// 11D0:0013, DS:2F4C..31E3): * - + always; the digits with Num Lock, Shift or
+// Caps Lock, none otherwise (the keys move then); '.' (0x53) none.
+// @orig 11D0:0013
+std::uint8_t keypad_ascii(SDL_Keycode key, std::uint16_t flags) {
+    switch (key) {
+    case SDLK_KP_MULTIPLY: return '*';
+    case SDLK_KP_MINUS: return '-';
+    case SDLK_KP_PLUS: return '+';
+    case SDLK_KP_DIVIDE: return '/';
+    default: break;
+    }
+    if (!(flags & (kNumLock | kCapsLock | kLeftShift | kRightShift))) return 0;
+    if (key >= SDLK_KP_1 && key <= SDLK_KP_9) return static_cast<std::uint8_t>('1' + (key - SDLK_KP_1));
+    if (key == SDLK_KP_0) return '0';
+    return 0;
+}
+
 // Character for the key in the user's layout. Text entry in the game only
 // needs printable ASCII; accents and dead keys are out of scope here.
 std::uint8_t ascii_for(SDL_Keycode key, std::uint16_t flags) {
+    if (std::uint8_t c = keypad_ascii(key, flags)) return c;
     if (key == SDLK_RETURN || key == SDLK_KP_ENTER) return '\r';
     if (key == SDLK_BACKSPACE) return 8;
     if (key == SDLK_TAB) return '\t';

@@ -89,6 +89,10 @@ std::vector<std::uint16_t> register_world_intrinsics(UCMachine& m, World& w) {
     });
     // UCMachine::I_true (1050:00C1): character 13 of "GAME COMPILE=1" (DS:0908) is '1'.
     bind({0x02C}, [](UCMachine&, UCProcess&, Args) -> std::uint32_t { return 1; });
+    // Violence (1050:00A1): character 9 of "VIOLENCE=1" (DS:090C) is '1' in
+    // this build. Gates the blood under the bodies (NPCDEATH) and the bodies'
+    // reaction to shots (D_GUARD... gotHit).
+    bind({0x06D}, [](UCMachine&, UCProcess&, Args) -> std::uint32_t { return 1; });
     bind({0x029}, [&s](UCMachine&, UCProcess&, Args) -> std::uint32_t { return s.difficulty; });
     bind({0x01B}, [&s](UCMachine&, UCProcess&, Args) -> std::uint32_t { return s.controlled_npc; });
     // Ultima8Engine::I_setAvatarInStasis (10F0:369E). Not reproduced: a
@@ -132,6 +136,12 @@ std::vector<std::uint16_t> register_world_intrinsics(UCMachine& m, World& w) {
     // view (vtable +0x2C) and puts it on the screen (+0x30) at once. The port
     // draws the view at every frame: nothing to do.
     bind({0x064}, [](UCMachine&, UCProcess&, Args) -> std::uint32_t { return 0; });
+    // CameraProcess::I_setCenterOn(item) (1188:1AA5): the item the view
+    // follows (DAT_2C50); 0 = none, the view stays where it is.
+    bind({0x043}, [&w](UCMachine&, UCProcess&, Args a) -> std::uint32_t {
+        w.state.camera_target = arg16(a, 0);
+        return 0;
+    });
     // Kernel::I_getNumProcesses(item, type), Kernel::I_resetRef(item, type):
     // resetRef fails the game-level (level 1) processes of the item and type.
     bind({0x0EF}, [](UCMachine& machine, UCProcess&, Args a) -> std::uint32_t {

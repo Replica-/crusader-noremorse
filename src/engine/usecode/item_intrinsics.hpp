@@ -11,6 +11,9 @@
 
 namespace crusader {
 
+// Item::I_destroy: removes the item (and what it holds) with the original's side effects.
+void destroy_item(Kernel& kernel, World& world, ObjId id);
+
 // Binds the item intrinsics to `world`. Returns the intrinsic numbers bound.
 std::vector<std::uint16_t> register_item_intrinsics(UCMachine& machine, World& world);
 

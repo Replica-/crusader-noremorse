@@ -1,10 +1,9 @@
 #pragma once
 // The load / save screen (segment 1008, FUN_1008_0088), opened by the main
-// menu's "load" (mode 1) and "save" (mode 0) buttons. Only loading is
-// reproduced: saving needs the save writer (milestone 7).
+// menu's "load" (mode 1) and "save" (mode 0) buttons, F8 and F9.
 //
 // Layout: the screen is cleared; background GUMPS.FLX shapes 64 + 5 * mode ..
-// 67 + 5 * mode (load: 69..72, 208 x 174 each) at (111, 66), (319, 66),
+// 67 + 5 * mode (load: 69..72, save: 64..67, 208 x 174 each) at (111, 66), (319, 66),
 // (111, 240), (319, 240) (FUN_1008_05a6: a 417 x 348 area centred on the
 // screen). Eleven slots (FUN_1008_0758), slot i at (183, 109 + 27 i): shape 68
 // frame 0 (314 x 17); the selected one (DS:0098, 0 at start-up, kept between
@@ -19,8 +18,22 @@
 // Keys (FUN_1008_0312): up / '8' select the previous slot (not before 0), down
 // / '2' the next (not after 10), Enter chooses the selected slot, Escape closes
 // with result 0. Mouse (FUN_1008_0aea): a button press on a slot selects and
-// chooses it. Choosing a slot with an empty name does nothing (FUN_1008_0b63);
-// otherwise the slot goes to DS:0C94 and the screen closes with result 1.
+// chooses it. Loading: choosing a slot with an empty name does nothing
+// (FUN_1008_0b63); otherwise the slot goes to DS:0C94 and the screen closes
+// with result 1.
+//
+// Saving: choosing a slot edits its name (FUN_1008_0b63, FUN_1008_089c),
+// starting from the name it has, with '_' drawn after the last character;
+// the mouse does nothing meanwhile. Escape leaves the name as it was; Enter,
+// with at least one character, gives the name (CRUSYS_1058_0528) and closes
+// with result 1 (the caller saves; FUN_1008_041a first checks the free disk
+// space, see Game). Backspace removes the last character. A character is
+// added if it is a letter, a digit or one of < space : ; . ? ! , / " ' (codes
+// below 0x100), the name has fewer than 25, and the name with '_' still fits
+// in the slot less 4 pixels; letters become capitals. The original also
+// turns QWERTY into AZERTY (FUN_1008_0000) because its BIOS gave QWERTY
+// codes; the port's codes already follow the player's layout, so it does not.
+// Not reproduced: the mouse cursor hidden while a name is edited.
 
 #include "core/font.hpp"
 #include "core/surface.hpp"
@@ -52,8 +65,11 @@ public:
     // CRUSYS_1058_000d: the names of SAVEGAME.1 .. SAVEGAME.13.
     static Names read_names(const std::filesystem::path& savegame_dir);
 
+    enum class Mode { kSave = 0, kLoad = 1 };
+    static constexpr std::size_t kMaxNameLength = 25;
+
     // `selected` is DS:0098, kept by the caller.
-    LoadScreen(ShapeCache& gumps, const FontSet& fonts, const Names& names, int& selected);
+    LoadScreen(ShapeCache& gumps, const FontSet& fonts, const Names& names, int& selected, Mode mode = Mode::kLoad);
 
     void draw(Surface8& screen) const;
     void key(std::uint16_t code);
@@ -62,10 +78,15 @@ public:
     // Set once closed: 0 (cancelled) or 1 (slot chosen, see slot()).
     std::optional<int> result() const { return result_; }
     int slot() const { return *selected_; }  // DS:0C94 when result() is 1
+    Mode mode() const { return mode_; }
+    // Saving: the name being edited (editing()), then the name given.
+    bool editing() const { return editing_; }
+    const std::string& name() const { return name_; }
     const Rect& slot_rect(int i) const { return slots_[i]; }
 
 private:
     void choose(int i);
+    void edit_key(std::uint16_t code);
 
     ShapeCache* gumps_;
     const FontSet* fonts_;
@@ -73,6 +94,10 @@ private:
     int* selected_;
     std::array<Rect, kSlots> slots_{};
     std::optional<int> result_;
+    Mode mode_;
+    bool editing_ = false;
+    std::string name_;
 };
+
 
 }  // namespace crusader

@@ -2,6 +2,8 @@
 
 #include "core/flex.hpp"
 
+#include <algorithm>
+
 namespace crusader {
 
 // @orig ?: TYPEFLAG.DAT reader
@@ -18,6 +20,7 @@ ShapeInfo ShapeInfo::decode(const std::uint8_t* d) {
     s.anim_speed = static_cast<std::uint8_t>(d[5] >> 4);
     s.weight = d[7];
     s.volume = d[8];
+    std::copy(d, d + s.bytes.size(), s.bytes.begin());
     return s;
 }
 

@@ -1,5 +1,6 @@
 #include "core/game_config.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -48,6 +49,18 @@ GameConfig GameConfig::parse(std::string_view text) {
         else if (key == "mousespeed") c.mouse_speed = number(value);
         else if (key == "bigvideo") c.big_video = value == "true";
         else if (key == "subtitles") c.subtitles = value == "true";
+        else if (key == "noweasel") c.no_weasel = value == "true";
+        else if (key == "padaim") c.pad.aim = std::clamp(number(value), 1, PadSettings::kAimLevels);
+        else if (key == "paddeadzone") c.pad.dead_zone = std::clamp(number(value), 0, PadSettings::kDeadZoneLevels - 1);
+        else if (key == "padmap") {
+            std::string_view rest = value;
+            for (int& b : c.pad.buttons) {
+                if (rest.empty()) break;
+                const auto comma = rest.find(',');
+                b = std::clamp(number(rest.substr(0, comma)), kPadDefaultRole, static_cast<int>(kPadActionCount) - 1);
+                rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+            }
+        }
     }
     return c;
 }
@@ -68,6 +81,23 @@ std::string GameConfig::text() const {
     // Written only when set (DS:0179 != 0).
     if (subtitles) out.set("subtitles", "true");
     else out.erase("subtitles");
+    // Written only when set (DS:0178 != 0).
+    if (no_weasel) out.set("noweasel", "true");
+    else out.erase("noweasel");
+    // The controller settings: only when they differ from the defaults.
+    // ("padbuttons" was an earlier format, dropped.)
+    out.erase("padbuttons");
+    if (pad.is_default()) {
+        out.erase("padmap");
+        out.erase("padaim");
+        out.erase("paddeadzone");
+    } else {
+        std::string buttons;
+        for (const int b : pad.buttons) buttons += (buttons.empty() ? "" : ",") + std::to_string(b);
+        out.set("padmap", buttons);
+        out.set("padaim", std::to_string(pad.aim));
+        out.set("paddeadzone", std::to_string(pad.dead_zone));
+    }
     std::string s;
     for (const std::string& line : out.lines_) s += line + "\r\n";
     return s;

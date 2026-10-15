@@ -13,15 +13,17 @@ void Process::sleep(std::uint32_t ticks) {
     sleep_until_ = kernel_->ticks() + ticks;
 }
 
-// @orig 11E8:0F2F
-bool Process::add_wait_operand(Pid other) {
+// @orig 11E8:0F2F 11D8:1327
+bool Process::add_wait_operand(Pid other, bool share_owner) {
     Process* target = kernel_ ? kernel_->get(other) : nullptr;
     if (!target || target->terminated() || target == this) {
         return false;
     }
     wait_expr_.push_back({WaitToken::Kind::Pending, other});
     target->waiters_.push_back(pid_);
-    // Like the original, a process without an owner inherits its partner's.
+    // Like the original, a process without an owner inherits its partner's
+    // (Process_wait_for; not KERNEL_11d8_1327, the usecode's implies).
+    if (!share_owner) return true;
     if (owner_ == 0) {
         owner_ = target->owner_;
     } else if (target->owner_ == 0) {
@@ -30,10 +32,10 @@ bool Process::add_wait_operand(Pid other) {
     return true;
 }
 
-// @orig 11E8:0F2F
-void Process::wait_for(Pid other) {
+// @orig 11E8:0F2F 11D8:1327
+void Process::wait_for(Pid other, bool share_owner) {
     const bool had_operand = !wait_expr_.empty();
-    if (add_wait_operand(other) && had_operand) {
+    if (add_wait_operand(other, share_owner) && had_operand) {
         wait_expr_.push_back({WaitToken::Kind::And, 0});
     }
 }

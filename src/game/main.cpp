@@ -1,7 +1,7 @@
 // crusader: runs the game from a saved game (milestone 1: the world runs, the
 // camera moves with the arrow keys).
 //
-//   crusader [data] [--save N | --new-game] [--movie NAME | --movie-overlay NAME] [--frames N [--scroll DX DY] [--walk] [--fire] [--use ID] [--menu | --menu-load | --menu-credits | --menu-options | --menu-new] --png out.png [--wav out.wav]]
+//   crusader [data] [--save N | --new-game] [--movie NAME | --movie-overlay NAME] [--frames N [--scroll DX DY] [--walk] [--fire] [--use ID] [--menu | --menu-load | --menu-credits | --menu-options | --menu-gamepad | --menu-new] --png out.png [--wav out.wav]]
 //
 // With --png, runs N frames of 1/60 s without a window, moving the camera by
 // (DX, DY) usecode units per frame or making the player walk, and writes the
@@ -20,6 +20,7 @@
 #include "engine/world/inventory.hpp"
 #include "game/game.hpp"
 #include "platform/sdl_audio.hpp"
+#include "platform/sdl_gamepad.hpp"
 #include "platform/sdl_input.hpp"
 #include "platform/sdl_presenter.hpp"
 
@@ -90,9 +91,10 @@ int main(int argc, char** argv) {
     SDL_SetMainReady();
     std::filesystem::path data = "data";
     int save = 1, frames = 0;
-    bool new_game = false;
+    bool new_game = false, fullscreen = false;
+    double gamma = 1.0;
     std::int32_t scroll_x = 0, scroll_y = 0;
-    bool walk = false, fire = false, menu = false, menu_load = false, menu_credits = false, menu_options = false,
+    bool walk = false, fire = false, menu = false, menu_load = false, menu_credits = false, menu_options = false, menu_gamepad = false,
          menu_new = false;
     std::string png, wav, movie;
     int use = 0;
@@ -107,6 +109,8 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--png") == 0 && i + 1 < argc) png = argv[++i];
         else if (std::strcmp(argv[i], "--wav") == 0 && i + 1 < argc) wav = argv[++i];
         else if (std::strcmp(argv[i], "--new-game") == 0) new_game = true;
+        else if (std::strcmp(argv[i], "--fullscreen") == 0) fullscreen = true;
+        else if (std::strcmp(argv[i], "--gamma") == 0 && i + 1 < argc) gamma = std::stod(argv[++i]);
         else if (std::strcmp(argv[i], "--movie") == 0 && i + 1 < argc) movie = argv[++i];
         else if (std::strcmp(argv[i], "--movie-overlay") == 0 && i + 1 < argc) {
             movie = argv[++i];
@@ -119,6 +123,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--menu-load") == 0) menu = menu_load = true;
         else if (std::strcmp(argv[i], "--menu-credits") == 0) menu = menu_credits = true;
         else if (std::strcmp(argv[i], "--menu-options") == 0) menu = menu_options = true;
+        else if (std::strcmp(argv[i], "--menu-gamepad") == 0) menu = menu_options = menu_gamepad = true;
         else if (std::strcmp(argv[i], "--menu-new") == 0) menu = menu_new = true;
         else if (std::strcmp(argv[i], "--scroll") == 0 && i + 2 < argc) {
             scroll_x = std::stoi(argv[++i]);
@@ -129,6 +134,7 @@ int main(int argc, char** argv) {
 
     try {
         Game game(data);
+        game.set_port_version(CRUSADER_VERSION);
         if (new_game) game.new_game(0);
         else game.load_save(save);
         if (!movie.empty()) game.play_movie(movie, movie_kind);
@@ -173,6 +179,11 @@ int main(int argc, char** argv) {
                 game.key(0x1C, false, true, 0, 0x0D);
                 game.key(0x1C, false, false, 0);
             }
+            if (menu_gamepad) {  // then the "manette" button, clicked
+                game.mouse_move(440, 330);
+                game.mouse_button(1, true, 440, 330);
+                game.mouse_button(1, false, 440, 330);
+            }
             if (menu_new) {  // Enter on "new game": the difficulty screen
                 game.key(0x1C, false, true, 0, 0x0D);
                 game.key(0x1C, false, false, 0);
@@ -189,7 +200,8 @@ int main(int argc, char** argv) {
 
         // The options screen saves its settings, as the original does.
         game.set_config_file(data / "CRUSADER.CFG");
-        SdlPresenter presenter("crusader", Game::kScreenWidth, Game::kScreenHeight, 2);
+        SdlPresenter presenter("crusader", Game::kScreenWidth, Game::kScreenHeight, 2, fullscreen);
+        presenter.set_gamma(gamma);
         std::unique_ptr<SdlAudio> audio;
         if (game.audio()) {
             audio = std::make_unique<SdlAudio>(game.audio()->mixer);
@@ -200,6 +212,9 @@ int main(int argc, char** argv) {
         // (world_mouse.hpp): SDL's relative mode gives the same motion
         // without warping the system pointer.
         bool relative_mouse = false;
+        Gamepad gamepad;
+        gamepad.init();
+        gamepad.set_settings(&game.config().pad);
         std::uint64_t last = SDL_GetPerformanceCounter();
         const double freq = static_cast<double>(SDL_GetPerformanceFrequency());
         double fps = 0;
@@ -208,6 +223,7 @@ int main(int argc, char** argv) {
             SDL_Event ev;
             while (SDL_PollEvent(&ev)) {
                 if (ev.type == SDL_QUIT) running = false;
+                if (gamepad.feed(ev)) continue;
                 if (auto k = translate_key(ev)) game.key(k->scancode, k->extended, k->pressed, k->flags, k->ascii);
                 if (auto m = translate_mouse(ev)) {
                     if (relative_mouse) {
@@ -223,6 +239,15 @@ int main(int argc, char** argv) {
             const double seconds = static_cast<double>(now - last) / freq;
             last = now;
             fps = fps * 0.95 + (seconds > 0 ? 0.05 / seconds : 0);
+
+            // The controller: A/B confirm/cancel in menus, its stick moves the mouse.
+            gamepad.set_menu(!game.mouse_in_play());
+            gamepad.set_capture(game.waiting_for_pad());
+            for (int b : gamepad.take_captured()) game.pad_button(b);
+            for (const KeyEvent& k : gamepad.take_keys()) game.key(k.scancode, k.extended, k.pressed, k.flags, k.ascii);
+            if (int dx, dy; (gamepad.mouse_motion(seconds, &dx, &dy), dx || dy)) {
+                game.mouse_move(game.cursor().x() + dx, game.cursor().y() + dy);
+            }
 
             game.update(static_cast<std::uint32_t>(seconds * 1'000'000));
             if (game.quit_requested()) running = false;

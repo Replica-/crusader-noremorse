@@ -1,0 +1,257 @@
+#include "platform/sdl_gamepad.hpp"
+
+#include <SDL.h>
+
+#include <algorithm>
+#include <cmath>
+
+namespace crusader {
+
+namespace {
+
+constexpr int kStickOn = 16000;   // left stick: digital threshold, with hysteresis
+constexpr int kStickOff = 10000;
+constexpr int kTriggerOn = 16000;
+constexpr int kTriggerOff = 8000;
+
+constexpr std::uint8_t kArrows[4] = {0x48, 0x50, 0x4B, 0x4D};  // up, down, left, right (E0)
+
+}  // namespace
+
+Gamepad::~Gamepad() {
+    if (controller_) SDL_GameControllerClose(reinterpret_cast<SDL_GameController*>(controller_));
+}
+
+void Gamepad::init() {
+    if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) return;
+    for (int i = 0; i < SDL_NumJoysticks() && !controller_; ++i) open(i);
+}
+
+void Gamepad::open(int device_index) {
+    if (controller_ || !SDL_IsGameController(device_index)) return;
+    SDL_GameController* c = SDL_GameControllerOpen(device_index);
+    if (!c) return;
+    controller_ = reinterpret_cast<_SDL_GameController*>(c);
+    instance_ = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(c));
+}
+
+void Gamepad::release_all() {
+    for (int s = kPadFirstDirection; s < kPadButtonCount; ++s) {
+        if (active_[s]) direction(s, false);
+    }
+    trigger(0, false);
+    trigger(1, false);
+    for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b) button(b, false);
+    right_x_ = right_y_ = 0;
+}
+
+bool Gamepad::feed(const SDL_Event& ev) {
+    switch (ev.type) {
+        case SDL_CONTROLLERDEVICEADDED:
+            open(ev.cdevice.which);
+            return true;
+        case SDL_CONTROLLERDEVICEREMOVED:
+            if (controller_ && ev.cdevice.which == instance_) {
+                release_all();
+                SDL_GameControllerClose(reinterpret_cast<SDL_GameController*>(controller_));
+                controller_ = nullptr;
+                instance_ = -1;
+            }
+            return true;
+        case SDL_CONTROLLERBUTTONDOWN:
+        case SDL_CONTROLLERBUTTONUP:
+            if (controller_ && ev.cbutton.which != instance_) return true;
+            button(ev.cbutton.button, ev.type == SDL_CONTROLLERBUTTONDOWN);
+            return true;
+        case SDL_CONTROLLERAXISMOTION:
+            if (controller_ && ev.caxis.which != instance_) return true;
+            axis(ev.caxis.axis, ev.caxis.value);
+            return true;
+        default:
+            return false;
+    }
+}
+
+void Gamepad::press_key(std::uint8_t scancode, bool extended, bool pressed, std::uint8_t ascii) {
+    // The BIOS shift flags follow the modifier keys, as the keyboard ISR keeps them.
+    std::uint16_t mod = 0;
+    if (!extended) {
+        if (scancode == kScCtrl) mod = kLeftCtrl | kCtrl;
+        else if (scancode == kScAlt) mod = kLeftAlt | kAlt;
+        else if (scancode == kScShift) mod = kLeftShift;
+    }
+    if (pressed) flags_ |= mod;
+    else flags_ = static_cast<std::uint16_t>(flags_ & ~mod);
+
+    KeyEvent k;
+    k.scancode = scancode;
+    k.extended = extended;
+    k.pressed = pressed;
+    k.flags = flags_;
+    k.ascii = pressed ? ascii : 0;
+    keys_.push_back(k);
+}
+
+// The d-pad and left stick directions left on their role are the arrow keys
+// (an arrow is down while either is). Held back while an input is captured.
+void Gamepad::refresh_arrows() {
+    auto role = [&](int slot) { return active_[slot] && has_role(slot); };
+    for (int d = 0; d < 4; ++d) {
+        const bool down = !capture_ && (role(kPadDpadUp + d) || role(kPadLeftStickUp + d));
+        if (down == arrow_down_[d]) continue;
+        arrow_down_[d] = down;
+        press_key(kArrows[d], true, down);
+    }
+}
+
+// A direction input crossed its threshold: its action, if it has one, goes
+// down or up like a button's.
+void Gamepad::direction(int slot, bool on) {
+    active_[slot] = on;
+    refresh_arrows();
+    press_slot(slot, on);
+}
+
+// In menus the directions always act as the arrows and the mouse, so that
+// no setting makes them unusable.
+bool Gamepad::has_role(int slot) const { return menu_ || settings_->buttons[slot] == kPadDefaultRole; }
+
+void Gamepad::set_menu(bool menu) {
+    if (menu_ == menu) return;
+    menu_ = menu;
+    refresh_arrows();
+}
+
+void Gamepad::set_capture(bool on) {
+    capture_ = on;
+    refresh_arrows();
+}
+
+void Gamepad::trigger(int index, bool on) {
+    if (triggers_[index] == on) return;
+    triggers_[index] = on;
+    press_slot(index == 0 ? kPadLeftTrigger : kPadRightTrigger, on);
+}
+
+// A configurable button went down or up. The action is the one set for it,
+// except in menus where A, B and Start are fixed (Enter, Esc, Esc), so that
+// a bad setting never locks the player out.
+void Gamepad::press_slot(int slot, bool pressed) {
+    if (pressed && capture_) {
+        captured_.push_back(slot);
+        return;
+    }
+    if (pressed) {
+        if (sent_[slot]) return;
+        int action = settings_->buttons[slot];
+        if (menu_) {
+            if (slot == kPadA) action = kPadConfirm;
+            else if (slot == kPadB || slot == kPadStart) action = kPadMenu;
+        }
+        if (menu_ && slot >= kPadFirstDirection) return;
+        if (action < 0 || action >= kPadActionCount) return;  // the default role, or nothing
+        const PadAction& a = kPadActions[action];
+        if (a.scancode == 0) return;
+        sent_[slot] = &a;
+        if (a.modifier) press_key(a.modifier, false, true);
+        press_key(a.scancode, a.extended, true, a.ascii);
+    } else if (sent_[slot]) {
+        // The key sent at the press is the one released, even if a menu opened meanwhile.
+        const PadAction& a = *sent_[slot];
+        press_key(a.scancode, a.extended, false);
+        if (a.modifier) press_key(a.modifier, false, false);
+        sent_[slot] = nullptr;
+    }
+}
+
+void Gamepad::button(int b, bool pressed) {
+    if (b < 0 || b >= 32 || held_[b] == pressed) return;
+    held_[b] = pressed;
+    switch (b) {
+        case SDL_CONTROLLER_BUTTON_DPAD_UP: direction(kPadDpadUp, pressed); break;
+        case SDL_CONTROLLER_BUTTON_DPAD_DOWN: direction(kPadDpadDown, pressed); break;
+        case SDL_CONTROLLER_BUTTON_DPAD_LEFT: direction(kPadDpadLeft, pressed); break;
+        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: direction(kPadDpadRight, pressed); break;
+        case SDL_CONTROLLER_BUTTON_A: press_slot(kPadA, pressed); break;
+        case SDL_CONTROLLER_BUTTON_B: press_slot(kPadB, pressed); break;
+        case SDL_CONTROLLER_BUTTON_X: press_slot(kPadX, pressed); break;
+        case SDL_CONTROLLER_BUTTON_Y: press_slot(kPadY, pressed); break;
+        case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: press_slot(kPadLeftBumper, pressed); break;
+        case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: press_slot(kPadRightBumper, pressed); break;
+        case SDL_CONTROLLER_BUTTON_LEFTSTICK: press_slot(kPadLeftStick, pressed); break;
+        case SDL_CONTROLLER_BUTTON_RIGHTSTICK: press_slot(kPadRightStick, pressed); break;
+        case SDL_CONTROLLER_BUTTON_START: press_slot(kPadStart, pressed); break;
+        case SDL_CONTROLLER_BUTTON_BACK: press_slot(kPadBack, pressed); break;
+        default: break;
+    }
+}
+
+// The two directions of a stick axis, on past kStickOn and off below kStickOff.
+void Gamepad::stick(int first_slot, Dir negative, Dir positive, int value) {
+    const bool n = active_[first_slot + negative], p = active_[first_slot + positive];
+    const bool now_n = value < 0 && (n ? value < -kStickOff : value < -kStickOn);
+    const bool now_p = value > 0 && (p ? value > kStickOff : value > kStickOn);
+    if (now_n != n) direction(first_slot + negative, now_n);
+    if (now_p != p) direction(first_slot + positive, now_p);
+}
+
+void Gamepad::axis(int a, int value) {
+    switch (a) {
+        case SDL_CONTROLLER_AXIS_LEFTX: stick(kPadLeftStickUp, kLeft, kRight, value); break;
+        case SDL_CONTROLLER_AXIS_LEFTY: stick(kPadLeftStickUp, kUp, kDown, value); break;
+        case SDL_CONTROLLER_AXIS_RIGHTX:
+            right_x_ = value;
+            stick(kPadRightStickUp, kLeft, kRight, value);
+            break;
+        case SDL_CONTROLLER_AXIS_RIGHTY:
+            right_y_ = value;
+            stick(kPadRightStickUp, kUp, kDown, value);
+            break;
+        case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
+            trigger(0, triggers_[0] ? value > kTriggerOff : value > kTriggerOn);
+            break;
+        case SDL_CONTROLLER_AXIS_TRIGGERRIGHT:
+            trigger(1, triggers_[1] ? value > kTriggerOff : value > kTriggerOn);
+            break;
+        default: break;
+    }
+}
+
+std::vector<int> Gamepad::take_captured() {
+    std::vector<int> out;
+    out.swap(captured_);
+    return out;
+}
+
+std::vector<KeyEvent> Gamepad::take_keys() {
+    std::vector<KeyEvent> out;
+    out.swap(keys_);
+    return out;
+}
+
+void Gamepad::mouse_motion(double seconds, int* dx, int* dy) {
+    // Dead zone on the stick's length, then a quadratic response: fine aim
+    // near the centre, full speed at the edge.
+    const double dead_zone = PadSettings::kDeadZones[std::clamp(settings_->dead_zone, 0, PadSettings::kDeadZoneLevels - 1)];
+    const double max_speed = PadSettings::kAimSpeeds[std::clamp(settings_->aim, 1, PadSettings::kAimLevels) - 1];
+    auto speed = [&](int v, int other) {
+        const double len = std::hypot(static_cast<double>(v), static_cast<double>(other));
+        if (len <= dead_zone) return 0.0;
+        const double t = std::min(1.0, (len - dead_zone) / (32767.0 - dead_zone));
+        return (v / len) * t * t * max_speed;
+    };
+    // A direction bound to an action no longer moves the mouse.
+    auto moves = [&](int slot) { return has_role(slot); };
+    double sx = speed(right_x_, right_y_), sy = speed(right_y_, right_x_);
+    if ((sx < 0 && !moves(kPadRightStickLeft)) || (sx > 0 && !moves(kPadRightStickRight))) sx = 0;
+    if ((sy < 0 && !moves(kPadRightStickUp)) || (sy > 0 && !moves(kPadRightStickDown))) sy = 0;
+    rem_x_ += sx * seconds;
+    rem_y_ += sy * seconds;
+    *dx = static_cast<int>(rem_x_);
+    *dy = static_cast<int>(rem_y_);
+    rem_x_ -= *dx;
+    rem_y_ -= *dy;
+    if (right_x_ == 0 && right_y_ == 0) rem_x_ = rem_y_ = 0;
+}
+
+}  // namespace crusader

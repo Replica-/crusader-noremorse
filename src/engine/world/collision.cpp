@@ -1,5 +1,7 @@
 #include "engine/world/collision.hpp"
 
+#include "engine/world/inventory.hpp"
+
 #include <algorithm>
 #include <cstdlib>
 
@@ -175,17 +177,21 @@ SweepResult sweep(const World& world, std::uint16_t shape, ObjId mover, const Wo
     s.best_dy = s.dy;
     s.best_dz = s.dz;
     s.result.end = end;
+    s.result.delta = {s.dx, s.dy, s.dz};
+    s.result.done = s.result.delta;
     if (start.z > kMaxZ) return s.result;
 
     // Out of the map: clipped, not ok.
     if (end.x < 0) {
         s.result.end.x = s.dx < 0 ? 0 : 0x7FFF;
         s.result.axes |= 1;
+        s.result.off_map = true;
         s.ok = false;
     }
     if (end.y < 0) {
         s.result.end.y = s.dy < 0 ? 0 : 0x7FFF;
         s.result.axes |= 2;
+        s.result.off_map = true;
         s.ok = false;
     }
     if (end.z < 0 || end.z > kMaxZ) {
@@ -207,6 +213,7 @@ SweepResult sweep(const World& world, std::uint16_t shape, ObjId mover, const Wo
     if (!footprint_in(end)) {
         s.result.end = start;
         s.result.axes |= 3;
+        s.result.off_map = true;
         return s.result;
     }
 
@@ -233,6 +240,7 @@ SweepResult sweep(const World& world, std::uint16_t shape, ObjId mover, const Wo
 
     if (s.result.blocker != 0) {
         s.result.end = {start.x + s.best_dx, start.y + s.best_dy, std::clamp(start.z + s.best_dz, 0, kMaxZ)};
+        s.result.done = {s.best_dx, s.best_dy, s.best_dz};
     }
     s.result.ok = s.ok && (!s.need_ground || (s.result.supported && !s.any_ground_below));
     return s.result;
@@ -297,12 +305,14 @@ SweepResult try_move(const World& world, ObjId mover, const World::Point& start,
     if (!m) return {};
     if (start.z != end.z) return sweep(world, m->shape, mover, start, end, flags);
 
-    // Level move: the ground may be up to 9 below; follow it down.
+    // Level move: the ground may be up to 9 below; follow it down, straight
+    // down from the end point (the second sweep starts at param_4). From the
+    // start, a step down would cross the step being left.
     SweepResult r = sweep(world, m->shape, mover, start, end, flags | kSweepGroundSlack);
     if (r.ok) {
         if (r.ground_gap != 0) {
             const World::Point lower{end.x, end.y, end.z - r.ground_gap};
-            SweepResult down = sweep(world, m->shape, mover, start, lower, flags);
+            SweepResult down = sweep(world, m->shape, mover, end, lower, flags);
             if (down.ok) return down;
         }
         return r;
@@ -319,6 +329,70 @@ SweepResult try_move(const World& world, ObjId mover, const World::Point& start,
         }
     }
     return r;
+}
+
+namespace {
+
+// SHAPHAND_1088_0000: a moving stack meets one of the same shape (families 2
+// and 9; 9 needs the same frame too). Their quantities go to the mover, up
+// to 666, and the other keeps the rest or goes.
+// @orig 1088:0000
+void merge_stacks(World& world, ObjId mover, ObjId other) {
+    const Item* a = world.get(mover);
+    const Item* b = world.get(other);
+    if (!a || !b || a->shape != b->shape) return;
+    const std::uint8_t family = world.family_of(a->shape);
+    if (family != 2 && family != 9) return;
+    if (family == 9 && a->frame != b->frame) return;
+    constexpr int kMaxStack = 666;
+    const int total = a->quality + b->quality;
+    if (total <= kMaxStack) {
+        set_quality_and_combine(world, mover, static_cast<std::uint16_t>(total));
+        world.destroy(other);
+    } else {
+        set_quality_and_combine(world, mover, kMaxStack);
+        set_quality_and_combine(world, other, static_cast<std::uint16_t>(total - kMaxStack));
+    }
+}
+
+// The two contact events (REFSTORE.C 0379, processes 0x20B and 0x20C).
+// @orig 10F8:0379 10A8:2718
+void send_contact(World& world, ObjId mover, ObjId other, std::uint16_t force) {
+    // ITEM.C 2718: event 5 ("hit") of the mover, with the other's id and the force.
+    if (world.hooks().start_event_args && world.get(mover)) {
+        const std::uint8_t args[4] = {static_cast<std::uint8_t>(other), static_cast<std::uint8_t>(other >> 8),
+                                      static_cast<std::uint8_t>(force), static_cast<std::uint8_t>(force >> 8)};
+        world.hooks().start_event_args(mover, 5, args);
+    }
+    if (world.hooks().got_hit && world.get(other)) world.hooks().got_hit(other, mover, force);
+}
+
+}  // namespace
+
+// @orig 10E8:123A
+void finish_move(World& world, ObjId mover, const SweepResult& r) {
+    if (mover == 0) return;
+    world.move_item(mover, r.end.x, r.end.y, r.end.z);
+    // Touched before the stop, on one axis at least.
+    auto touched = [&r](const SweepHit& h) {
+        return std::abs(h.dx) <= std::abs(r.done.x) || std::abs(h.dy) <= std::abs(r.done.y) ||
+               std::abs(h.dz) <= std::abs(r.done.z);
+    };
+    if (r.blocker != 0) {
+        const Item* m = world.get(mover);
+        const Item* b = world.get(r.blocker);
+        const std::uint8_t family = m ? world.family_of(m->shape) : 0;
+        if (m && b && (family == 2 || family == 9) && m->shape == b->shape) {
+            merge_stacks(world, mover, r.blocker);
+        } else {
+            const std::int32_t ax = std::abs(r.delta.x >> 2), ay = std::abs(r.delta.y >> 2), az = std::abs(r.delta.z);
+            const auto force = static_cast<std::uint16_t>((ax + ay + az + std::max({ax, ay, az})) >> 1);
+            send_contact(world, mover, r.blocker, force);
+        }
+    }
+    for (auto it = r.hits.rbegin(); it != r.hits.rend(); ++it) {
+        if (it->item != r.blocker && touched(*it)) send_contact(world, mover, it->item, 0);
+    }
 }
 
 }  // namespace crusader

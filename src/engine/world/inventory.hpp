@@ -41,6 +41,20 @@ void set_quality_and_combine(World& world, ObjId item, std::uint16_t quality);
 
 bool add_item_cru(World& world, ObjId item, bool show);
 
+// NPC_10f0_395e: the first of the player's 30 equipment slots holding
+// `shape`, 0 if none.
+ObjId carried(const World& world, std::uint16_t shape);
+
+// WORLD_13e8_00c8 (only for Weasel's shop): whether the player could take an
+// item of `shape` (the original is given an item and reads its shape and
+// family): the credits 0x4ED while those carried stay below 60000, or with a
+// free item slot; a weapon with a free weapon slot; an ammunition while the
+// one carried is below 20, or with a free ammunition slot; for families 12
+// and 13, always the keycard 0x111 and the batteries 0x3A2..0x3A4, else while
+// the one carried is a shield 0x52E..0x530, or below 20 (0x560) or 10, or
+// with a free item slot. Never for the other families.
+bool may_add_item(const World& world, std::uint16_t shape);
+
 // Item::I_use (10A8:2667): usecode event 1 ("use") of the item's class, when
 // the class has it. Refused for a dead NPC, and for an NPC in combat other
 // than the player. may_use says whether the event may start.

@@ -80,6 +80,7 @@ add_library(crusader_engine
   src/engine/world/actor_create.cpp
   src/engine/world/pathfind.cpp
   src/engine/world/player_commands.cpp
+  src/engine/world/item_anim.cpp
   src/engine/world/item_damage.cpp
   src/engine/world/chargers.cpp
   src/engine/world/inventory.cpp
@@ -97,6 +98,7 @@ add_library(crusader_engine
   src/engine/ui/pickup_area.cpp
   src/engine/ui/computer_gump.cpp
   src/engine/ui/keypad_gump.cpp
+  src/engine/ui/weasel_gump.cpp
   src/engine/ui/mouse_cursor.cpp
   src/engine/ui/main_menu.cpp
   src/engine/ui/load_screen.cpp
@@ -106,6 +108,7 @@ add_library(crusader_engine
   src/engine/ui/shape_dialog.cpp
   src/engine/ui/help_screen.cpp
   src/engine/ui/credits.cpp
+  src/engine/ui/gamepad_screen.cpp
   src/engine/ui/movie_player.cpp
   src/engine/world/render.cpp)
 target_link_libraries(crusader_engine PUBLIC crusader_core)
@@ -114,6 +117,7 @@ target_link_libraries(crusader_engine PUBLIC crusader_core)
 add_library(crusader_platform
   src/platform/sdl_presenter.cpp
   src/platform/sdl_input.cpp
+  src/platform/sdl_gamepad.cpp
   src/platform/sdl_audio.cpp)
 target_link_libraries(crusader_platform PUBLIC crusader_engine ${SDL2_TARGET})
 
@@ -134,6 +138,9 @@ target_link_libraries(shapeview PRIVATE crusader_platform)
 add_executable(mapview src/tools/mapview.cpp)
 target_link_libraries(mapview PRIVATE crusader_engine crusader_platform)
 
+add_executable(sortcheck src/tools/sortcheck.cpp)
+target_link_libraries(sortcheck PRIVATE crusader_engine)
+
 add_executable(ucsmoke src/tools/ucsmoke.cpp)
 target_link_libraries(ucsmoke PRIVATE crusader_engine)
 
@@ -147,9 +154,22 @@ add_executable(shapedump src/tools/shapedump.cpp)
 target_link_libraries(shapedump PRIVATE crusader_core)
 
 enable_testing()
+# tests/: no game data needed, run by the GitHub CI.
+# e2e/: end-to-end tests on the original game data and on saved games, none of
+# which is in the repository. They are registered only with
+# CRUSADER_GAME_DATA_TESTS=ON, the default when the game data is found.
+set(CRUSADER_DATA_DIR "${CMAKE_SOURCE_DIR}/data" CACHE PATH "Original game data used by the e2e tests")
+set(CRUSADER_TEST_SAVES_DIR "${CMAKE_SOURCE_DIR}/private/e2e/saves" CACHE PATH "Saved games used by the e2e tests")
+if(EXISTS "${CRUSADER_DATA_DIR}/STATIC")
+    set(CRUSADER_HAVE_GAME_DATA ON)
+else()
+    set(CRUSADER_HAVE_GAME_DATA OFF)
+endif()
+option(CRUSADER_GAME_DATA_TESTS "Register the end-to-end tests (e2e/) that need the game data" ${CRUSADER_HAVE_GAME_DATA})
+
 add_executable(core_tests tests/core_tests.cpp)
 target_link_libraries(core_tests PRIVATE crusader_core)
-add_test(NAME core_tests COMMAND core_tests ${CMAKE_SOURCE_DIR}/data)
+add_test(NAME core_tests COMMAND core_tests)
 
 add_executable(kernel_tests tests/kernel_tests.cpp)
 target_link_libraries(kernel_tests PRIVATE crusader_engine)
@@ -165,27 +185,36 @@ add_test(NAME usecode_tests COMMAND usecode_tests)
 
 add_executable(world_tests tests/world_tests.cpp)
 target_link_libraries(world_tests PRIVATE crusader_engine)
-add_test(NAME world_tests COMMAND world_tests ${CMAKE_SOURCE_DIR}/data)
-
-add_executable(game_tests tests/game_tests.cpp)
-target_link_libraries(game_tests PRIVATE crusader_game)
-add_test(NAME game_tests COMMAND game_tests ${CMAKE_SOURCE_DIR}/data)
+add_test(NAME world_tests COMMAND world_tests)
 
 add_executable(audio_tests tests/audio_tests.cpp)
 target_link_libraries(audio_tests PRIVATE crusader_engine)
-add_test(NAME audio_tests COMMAND audio_tests ${CMAKE_SOURCE_DIR}/data)
+add_test(NAME audio_tests COMMAND audio_tests)
 
-# Every C++ function names the original routine it rewrites (tools/orig_map.py).
-# The differential checks run original routines in an emulator (Unicorn).
-find_package(Python3 COMPONENTS Interpreter)
-if(Python3_FOUND AND EXISTS ${CMAKE_SOURCE_DIR}/tools/orig_map.py)
-    add_test(NAME orig_map COMMAND Python3::Interpreter -I ${CMAKE_SOURCE_DIR}/tools/orig_map.py --check)
-    execute_process(COMMAND ${Python3_EXECUTABLE} -c "import unicorn" RESULT_VARIABLE NO_UNICORN
-                    OUTPUT_QUIET ERROR_QUIET)
-    if(NO_UNICORN EQUAL 0 AND EXISTS ${CMAKE_SOURCE_DIR}/tools/diffcheck/run.py)
-        add_test(NAME diffcheck COMMAND Python3::Interpreter -I ${CMAKE_SOURCE_DIR}/tools/diffcheck/run.py
-                 --exe $<TARGET_FILE:diffcheck> --data ${CMAKE_SOURCE_DIR}/data)
-    else()
-        message(STATUS "Python module unicorn missing: differential checks not registered")
-    endif()
+add_executable(core_data_tests e2e/core_data_tests.cpp)
+target_link_libraries(core_data_tests PRIVATE crusader_core)
+
+add_executable(world_data_tests e2e/world_data_tests.cpp)
+target_link_libraries(world_data_tests PRIVATE crusader_engine)
+target_include_directories(world_data_tests PRIVATE e2e)
+target_compile_definitions(world_data_tests PRIVATE CRUSADER_TEST_SAVES="${CRUSADER_TEST_SAVES_DIR}")
+
+add_executable(audio_data_tests e2e/audio_data_tests.cpp)
+target_link_libraries(audio_data_tests PRIVATE crusader_engine)
+
+add_executable(game_tests e2e/game_tests.cpp)
+target_link_libraries(game_tests PRIVATE crusader_game)
+target_include_directories(game_tests PRIVATE e2e)
+target_compile_definitions(game_tests PRIVATE CRUSADER_TEST_SAVES="${CRUSADER_TEST_SAVES_DIR}")
+
+if(CRUSADER_GAME_DATA_TESTS)
+    foreach(t core_data_tests world_data_tests audio_data_tests game_tests)
+        add_test(NAME ${t} COMMAND ${t} ${CRUSADER_DATA_DIR})
+    endforeach()
+endif()
+
+# Optional private workspace (decompilation material and analysis tools, not in
+# this repository): it adds its own checks against the original executable.
+if(EXISTS ${CMAKE_SOURCE_DIR}/private/CMakeLists.txt)
+    add_subdirectory(private)
 endif()

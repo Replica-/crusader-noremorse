@@ -5,7 +5,8 @@ name: Release
 #   feat:                   -> minor
 #   BREAKING CHANGE / "!"   -> minor while 0.x, major from 1.0.0 (see .releaserc.json)
 #   docs:, chore:, ci:...   -> no release
-# When a release is due, Linux and Windows binaries are built, tested and
+# When a release is due, Linux and Windows binaries are built and tested, the
+# PortMaster (aarch64 handhelds) binary is cross-built, and all of them are
 # attached to the GitHub release created for the new vX.Y.Z tag.
 
 on:
@@ -51,21 +52,45 @@ jobs:
         include:
           - { name: linux-x64, os: ubuntu-22.04 }
           - { name: windows-x64, os: windows-latest }
+          - { name: portmaster-aarch64, os: ubuntu-22.04 }
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - name: Install SDL2 (Linux)
-        if: runner.os == 'Linux'
+        if: matrix.name == 'linux-x64'
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
       - name: Configure
+        if: matrix.name != 'portmaster-aarch64'
         shell: bash
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCRUSADER_VERSION="$VERSION"
       - name: Build
+        if: matrix.name != 'portmaster-aarch64'
         run: cmake --build build --config Release --parallel
       - name: Test
+        if: matrix.name != 'portmaster-aarch64'
         run: ctest --test-dir build -C Release --output-on-failure
+      - name: Cross-build (PortMaster)
+        if: matrix.name == 'portmaster-aarch64'
+        run: |
+          pip install ziglang ninja
+          python3 tools/portmaster/build.py --out build-portmaster --version "$VERSION"
+      - name: Package (PortMaster)
+        if: matrix.name == 'portmaster-aarch64'
+        shell: bash
+        run: |
+          set -eu
+          pkg="crusader-${VERSION}-${{ matrix.name }}"
+          mkdir -p "dist/$pkg/ports/crusader" "dist/$pkg/ROMS/Ports"
+          cp build-portmaster/crusader tools/portmaster/crusader.gptk "dist/$pkg/ports/crusader/"
+          cp tools/portmaster/Crusader.sh "dist/$pkg/ROMS/Ports/"
+          cp tools/portmaster/README.md "dist/$pkg/README-portmaster.md"
+          cp README.md "dist/$pkg/README.md"
+          cd dist
+          (cd "$pkg" && zip -qr "../$pkg.zip" .)
+          rm -rf "$pkg"
       - name: Package
+        if: matrix.name != 'portmaster-aarch64'
         shell: bash
         run: |
           set -eu

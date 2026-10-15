@@ -55,13 +55,42 @@ public:
     static constexpr int kScreenHeight = 480;
     static constexpr int kQuickSave = 13;  // SAVEGAME.13, slot 12 (F4 / F5)
 
-    explicit Game(const std::filesystem::path& data);
+    // `saves`: where the saved games are read and written, data/SAVEGAME
+    // when empty (the tests use a copy of the original saves).
+    explicit Game(const std::filesystem::path& data, const std::filesystem::path& saves = {});
     Game(const Game&) = delete;
     Game& operator=(const Game&) = delete;
 
     // Loads SAVEGAME/SAVEGAME.<slot>, puts the camera on the player and shows
     // the status bar (end of GAMEPAL_1028_0000).
     void load_save(int slot);
+    // Same, from any file (the tests keep saves under names telling their bug).
+    void load_save_file(const std::filesystem::path& path);
+
+    // Game_save (CRUSYS_1058_0115): writes SAVEGAME/SAVEGAME.<slot> under
+    // the name of that slot (save_names(), entry 9). Only the entries the
+    // port holds are written: 9, 90, 91, the item table and its lists (0,
+    // 1), the NPC table (10), the player block (20), the tracked items (50
+    // to 52), the usecode globals (60) and the music (70, 71). The sprite
+    // manager (30 to 33), the YAMM memory (40, 41) and the kernel's processes
+    // (100 and up) are not, so the original cannot load these saves yet.
+    void save_game(int slot);
+    // CRUSYS_1058_0528: the name of save slot `slot` (1-based), at most 31
+    // characters; the save screen sets it before saving.
+    void set_save_name(int slot, const std::string& name);
+    const LoadScreen::Names& save_names() const { return save_names_; }
+    // The end of the save screen (FUN_1008_041a): the name, the disk space
+    // check, then save_game.
+    void save_named(int slot, const std::string& name);
+    // save_game, a failure shown in the message box; false then.
+    bool save_or_report(int slot);
+
+    // Port only: where the saved games are read and written (data/SAVEGAME
+    // by default); the slot names are read again from there.
+    void set_save_dir(const std::filesystem::path& dir);
+
+
+
 
     // A new game (GAMEPAL_1028_0000, menu result 0): everything is cleared,
     // the usecode globals come from USECODE/UNKDS.DAT (FLAG_1410_0051), the
@@ -96,6 +125,10 @@ public:
     void mouse_button(bool pressed, int x, int y) { mouse_button(1, pressed, x, y); }
     void mouse_button(int button, bool pressed, int x, int y);
     const MouseCursor& cursor() const { return cursor_; }
+    // Controller screen (options): it waits for a button press to bind, which
+    // the platform gives with pad_button() instead of sending its key.
+    bool waiting_for_pad() const;
+    void pad_button(int button);
     // In play (no menu, screen, message box or movie), the game view puts the
     // mouse back at (320, 200) after each move: only relative motion counts.
     bool mouse_in_play() const { return !modal() && !movie_; }
@@ -106,6 +139,12 @@ public:
     // the next update (CRUSYS_1058_02f1).
     void open_menu();
     const MainMenu* menu() const { return menu_.get(); }
+
+    // Game::I_playCredits (intrinsic 0x095, 13E8:003F), the end of the game:
+    // at the next update the music stops, the credits run, then the movies
+    // of the start-up (T01, T02) and the start-up menu, with no game to go
+    // back to (see play_end_credits in game.cpp).
+    void play_credits() { end_credits_pending_ = true; }
 
     // The engine's message box (message_gump.hpp, the WorldHooks::show_message
     // of the world): the game freezes as for the menu until a key, or a click
@@ -136,6 +175,10 @@ public:
     // (-1 cancelled, else the value entered) as the call's result. Nothing
     // (result 0) when a screen is already open.
     void show_keypad(std::int16_t code, Pid pid);
+    // WeaselGump::I_showWeaselGump (weasel_gump.hpp): Weasel's shop for
+    // `level`, in the menu mode, until it is closed; its movies are played
+    // as cutscenes. Nothing when a screen is already open.
+    void show_weasel(int level);
     bool quit_requested() const { return quit_; }
 
     World& world() { return *world_; }
@@ -163,6 +206,15 @@ public:
     // Replaces it, the sound settings applied (tests).
     void set_config(GameConfig config);
     void set_config_file(std::filesystem::path path) { config_file_ = std::move(path); }
+    // The two lines at the bottom of the main menu: the port's version (from
+    // the build; empty hides the line) and the version of the game data
+    // detected in CRUSADER.EXE ("CRUSADER:  No Remorse Vx.yy"), with its language.
+    void set_port_version(std::string version) { port_version_ = std::move(version); }
+    const std::string& port_version() const { return port_version_; }
+    // "" when CRUSADER.EXE is missing or has no version string.
+    const std::string& data_version() const { return data_version_; }
+    // "FR" or "US", "" when not recognised.
+    const std::string& data_language() const { return data_language_; }
     // Frames that fired a weapon (each calls Item::I_fireWeapon).
     int shots_fired() const { return shots_fired_; }
 
@@ -193,8 +245,16 @@ private:
     void follow_menu_screen();
     void apply_status_bar_mouse_range();
     void run_credits(std::uint32_t ticks_before);
+    void play_end_credits();
+    void open_menu(bool no_game);
+    void start_movie(const std::string& name, MovieKind kind, Surface8 screen);
+    void play_weasel_movie(const std::string& name);
+    void next_start_up_movie();
     // Without an audio device, mixes the time that passed (see set_audio_device).
     void mix_elapsed(std::uint32_t elapsed_us);
+    // The game process's pass (1038:01B1) and the animation of the scenery
+    // it asks for (DS:2C52), unless a modal screen pauses the game.
+    void animate_scenery();
     // The game view and the status bar, without the cursor.
     void render_view(Surface8& screen, RenderStats* stats = nullptr);
     void update_movie(std::uint32_t elapsed_us);
@@ -225,6 +285,10 @@ private:
     Palette difficulty_palette_;
     MouseCursor cursor_;
     std::filesystem::path data_;
+    std::string port_version_;
+    std::string data_version_;  // "1.08"
+    std::string data_language_;
+    std::filesystem::path save_dir_;  // data_/SAVEGAME unless set_save_dir
     GameConfig config_;
     std::filesystem::path config_file_;
     std::unique_ptr<Audio> audio_;  // kept across loads, as the sound driver
@@ -253,6 +317,14 @@ private:
     // Player field +0xC2: the movie resumes the colour cycling when it ends
     // (DS:5FFE clear when it started).
     bool movie_resumes_cycle_ = true;
+    // A movie of Weasel's shop: the game palette and the colour cycling come
+    // back after it (13E0:0CD8).
+    bool weasel_movie_ = false;
+    bool weasel_intro_played_ = false;  // DS:5ECF
+    // The game process's pass count (type 0x245, +0x40 / +0x44) and its value
+    // at the last animation pass of the scenery (DS:2D3B), item_anim.hpp.
+    std::uint32_t game_passes_ = 0;
+    std::uint32_t animated_at_ = 0;
     // Sounds of the last movies: the mixer may still read the last one for a
     // buffer after it is stopped.
     std::deque<std::vector<std::int8_t>> movie_sounds_;
@@ -265,6 +337,9 @@ private:
     HelpScreen::Pictures help_pictures_;
     int pending_load_ = 0;             // save to load at the next update (1-based)
     int pending_new_game_ = 0;         // difficulty of a new game to start at the next update
+    bool end_credits_pending_ = false; // Game::I_playCredits: its process has not run yet
+    bool end_credits_ = false;         // the credits running are the end of the game's
+    std::vector<std::string> next_movies_;  // Game_start: movies to play after the current one
     std::unique_ptr<MessageGump> message_;
     Process* message_process_ = nullptr;  // modal placeholder, owned by the kernel
     std::unique_ptr<ModalGump> screen_;

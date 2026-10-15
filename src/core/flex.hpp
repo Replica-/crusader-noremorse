@@ -32,6 +32,27 @@ private:
     std::string comment_;
 };
 
+// Builds a Flex archive the way the saved games are laid out: entries in the
+// order they are added after the index, a comment of 0x1A bytes, then the
+// entry count and a 1 (at 0x58).
+class FlexWriter {
+public:
+    explicit FlexWriter(std::size_t count) : index_(count) {}
+    void add(std::size_t i, std::span<const std::uint8_t> bytes);
+    std::vector<std::uint8_t> bytes() const;
+    // Written to `path`.tmp then renamed over `path`.
+    void write(const std::filesystem::path& path) const;
+
+private:
+    struct Slot {
+        std::uint32_t offset = 0;
+        std::uint32_t size = 0;
+    };
+    std::vector<Slot> index_;
+    std::vector<std::uint8_t> data_;
+};
+
 std::vector<std::uint8_t> read_file(const std::filesystem::path& path);
+
 
 }  // namespace crusader

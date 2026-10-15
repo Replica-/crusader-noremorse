@@ -3,13 +3,18 @@
 // usecode faults, unbound intrinsics. Lot 6.3 of the roadmap: which items of
 // the scenery still lack an engine part.
 //
-// Usage: useprobe [data_dir] [save] [--shape S] [--frames N]
+// Usage: useprobe [data_dir] [save] [--shape S] [--frames N] [--hit D [--hits N]]
+//
+// With --hit, each item is shot instead (Item_I_receiveHit with D damage of
+// fire type 2, from the player; --hits N times, 10 frames apart), whether
+// or not its class has "use".
 //
 // Each item gets a fresh load of the save; only items in the fast area whose
 // usecode class has a "use" event are tried (one per shape and frame unless
 // --shape is given).
 
 #include "engine/world/inventory.hpp"
+#include "engine/world/projectile.hpp"
 #include "game/game.hpp"
 
 #include <cstdio>
@@ -29,10 +34,14 @@ int main(int argc, char** argv) {
     int frames = 300;
     int only_shape = -1;
     bool verbose = false;
+    int hit = -1;
+    int hits = 1;
     std::vector<std::string> positional;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--shape") == 0 && i + 1 < argc) only_shape = std::stoi(argv[++i], nullptr, 0);
         else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) frames = std::stoi(argv[++i]);
+        else if (std::strcmp(argv[i], "--hit") == 0 && i + 1 < argc) hit = std::stoi(argv[++i]);
+        else if (std::strcmp(argv[i], "--hits") == 0 && i + 1 < argc) hits = std::stoi(argv[++i]);
         else if (std::strcmp(argv[i], "--verbose") == 0) verbose = true;
         else positional.emplace_back(argv[i]);
     }
@@ -49,7 +58,7 @@ int main(int argc, char** argv) {
         game.world().for_each([&](const Item& i) {
             if (i.parent || is_npc_id(i.id) || !(i.flags & kItemFastArea)) return;
             if (only_shape >= 0 && i.shape != only_shape) return;
-            if (!uc.has_class(i.shape) || i.shape >= uc.class_count() || !uc.event_offset(i.shape, 1)) return;
+            if (hit < 0 && (!uc.has_class(i.shape) || i.shape >= uc.class_count() || !uc.event_offset(i.shape, 1))) return;
             if (only_shape < 0 && !seen.insert({i.shape, i.frame}).second) return;
             targets.push_back({i.id, i.shape, i.frame});
         });
@@ -86,7 +95,12 @@ int main(int argc, char** argv) {
             });
             std::printf("      item q %04X\n", used->quality);
         }
-        use_item(w, t.id);
+        if (hit < 0) use_item(w, t.id);
+        for (int k = 0; hit >= 0 && k < hits && w.get(t.id); ++k) {
+            apply_damage(game.kernel(), w, game.animations(), t.id, 1, 0, hit, 2);
+            if (verbose && w.get(t.id)) std::printf("      hit %d: npc %u flags %04X\n", k, w.get(t.id)->npc_number, w.get(t.id)->flags);
+            for (int f = 0; f < 10; ++f) game.update(1'000'000 / 60);
+        }
         for (int f = 0; f < frames; ++f) game.update(1'000'000 / 60);
         const Item* it = w.get(t.id);
         std::string what = !it ? "gone" : (it->shape != t.shape || it->frame != t.frame)

@@ -130,7 +130,12 @@ void UCMachine::fault(UCProcess& p, std::string message) {
 void UCMachine::execute(UCProcess& p) {
     std::uint32_t count = 0;
     bool yield = false;
-    while (!yield && !p.terminated() && !p.waiting() && !p.sleeping() && !kernel_.slice_interrupted()) {
+    // A process blocked on entry does not run. One that blocks itself with
+    // `implies` keeps running: the original's loop ends only on suspend, ret
+    // and the like (local_36), never on the wait state, so the pop_temp and
+    // suspend that follow an implies run in the same slice.
+    if (p.waiting() || p.sleeping()) return;
+    while (!yield && !p.terminated() && !kernel_.slice_interrupted()) {
         if (++count > budget_) {
             break;  // runaway loop: give other processes a chance
         }
@@ -176,7 +181,7 @@ bool UCMachine::step(UCProcess& p, bool& yield) {
             st.add_sp(n);
             break;
         }
-        case 0x08: p.own_result_ = st.pop4(); break;
+        case 0x08: p.set_wake_result(st.pop4()); break;  // same register as 0x6D
         case 0x09: {
             const auto d = in.s8();
             const auto size = in.u8();
@@ -506,7 +511,7 @@ bool UCMachine::step(UCProcess& p, bool& yield) {
         // ---- control flow
         case 0x50:
             if (p.ret()) {
-                p.terminate(p.own_result_);
+                p.terminate(p.wake_result());
                 yield = true;
             }
             return true;
@@ -527,7 +532,9 @@ bool UCMachine::step(UCProcess& p, bool& yield) {
             const Pid waiter = st.pop2();
             st.push2(target);
             if (Process* w = kernel_.get(waiter)) {
-                w->wait_for(target);  // no-op if the target is already gone
+                // KERNEL_11d8_1327: no owner passed on, unlike Process_wait_for.
+                // A no-op if the target is already gone.
+                w->wait_for(target, false);
             }
             break;
         }
@@ -549,6 +556,12 @@ bool UCMachine::step(UCProcess& p, bool& yield) {
             UCProcess& ref = *child;
             p.temp_ = kernel_.add(std::move(child));
             execute(ref);  // a spawned process runs at once until it first yields
+            // Already over: the pid pushed is 0 and its result goes where
+            // push_proc_result (0x6D) reads it, as no wake-up will bring it.
+            if (ref.terminated()) {
+                p.temp_ = 0;
+                p.set_wake_result(ref.result());
+            }
             return !p.failed();
         }
         case 0x59: st.push2(p.pid()); break;

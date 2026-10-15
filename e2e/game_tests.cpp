@@ -7,10 +7,12 @@
 #include "engine/palette_fader.hpp"
 #include "engine/ui/computer_gump.hpp"
 #include "engine/ui/keypad_gump.hpp"
+#include "engine/ui/weasel_gump.hpp"
 #include "engine/ui/gump_keys.hpp"
 #include "engine/world/actor_anim.hpp"
 #include "engine/world/actor_create.hpp"
 #include "engine/world/aim_mode.hpp"
+#include "engine/usecode/item_intrinsics.hpp"
 #include "engine/usecode/world_intrinsics.hpp"
 #include "engine/world/activity.hpp"
 #include "engine/world/attack.hpp"
@@ -25,6 +27,7 @@
 #include "engine/world/projectile.hpp"
 #include "engine/world/teleport.hpp"
 #include "game/game.hpp"
+#include "test_saves.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -32,6 +35,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <set>
 #include <tuple>
 
@@ -66,7 +70,7 @@ std::multiset<Key> glob_items(const World& w, std::size_t& outside) {
 }
 
 void test_load_and_run(const std::filesystem::path& data) {
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(1);
     const Item* player = game.world().get(1);
     CHECK(player && game.world().state.camera_x == player->x && game.world().state.camera_y == player->y);
@@ -85,7 +89,7 @@ void test_load_and_run(const std::filesystem::path& data) {
 void test_player_walks(const std::filesystem::path& data) {
     // Keys as the keyboard interrupt sees them: E0-extended arrows.
     constexpr std::uint8_t kUp = 0x48, kRight = 0x4D;
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(1);
     World& w = game.world();
     auto run = [&](int frames) {
@@ -145,7 +149,7 @@ void test_player_walks(const std::filesystem::path& data) {
 void test_camera_follows(const std::filesystem::path& data) {
     // ITEMCACH.C 1D29: the view stays put while the player is inside the
     // margins, then jumps to bring him back to (320, 280) or to a side.
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(1);
     World& w = game.world();
     const Item& p = *w.get(1);
@@ -177,7 +181,7 @@ void test_camera_follows(const std::filesystem::path& data) {
 }
 
 void test_camera_sweep(const std::filesystem::path& data) {
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(1);
     World& w = game.world();
     const GameState start = w.state;
@@ -222,7 +226,7 @@ void test_camera_sweep(const std::filesystem::path& data) {
 // Milestone 3: the status bar of SAVEGAME.13 (weapon with ammunition, an item
 // in quantity, little energy).
 void test_status_bar(const std::filesystem::path& data) {
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(13);
     const World& w = game.world();
     const StatusBar& bar = game.status_bar();
@@ -298,7 +302,7 @@ void test_keys_and_cursor(const std::filesystem::path& data) {
 }
 
 void test_menu(const std::filesystem::path& data) {
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(1);
     for (int i = 0; i < 60; ++i) game.update(kFrameUs);
     CHECK(game.cursor().bottom() == 439 && !game.cursor().visible());
@@ -361,15 +365,25 @@ void press(Game& game, std::uint8_t scancode, bool extended, std::uint8_t ascii 
 
 // Milestone 3: "load game" from the menu.
 void test_load_from_menu(const std::filesystem::path& data) {
-    const auto names = LoadScreen::read_names(data / "SAVEGAME");
+    // The original saves only, whatever the player saved since.
+    const auto dir = std::filesystem::temp_directory_path() / "crusader_load_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    for (const int n : {1, 2, 3, 4, 5, 6, 7, 13}) {
+        const std::string name = "SAVEGAME." + std::to_string(n);
+        std::filesystem::copy_file(test_saves(data) / name, dir / name);
+    }
+    const auto names = LoadScreen::read_names(dir);
     CHECK(names[0] == "SEB" && names[1] == "SEB2" && names[5] == "MISSION2" && names[7].empty() &&
           names[12].empty());
 
-    Game reference(data);
+    Game reference(data, test_saves(data));
+    reference.set_save_dir(dir);
     reference.load_save(2);
     const Item* expected = reference.world().get(1);
 
-    Game game(data);
+    Game game(data, test_saves(data));
+    game.set_save_dir(dir);
     game.load_save(1);
     game.update(kFrameUs);
     press(game, 0x01, false, 0x1B);  // Escape: menu, button 0 selected
@@ -401,6 +415,7 @@ void test_load_from_menu(const std::filesystem::path& data) {
     const Item* player = game.world().get(1);
     CHECK(player && expected && player->x == expected->x && player->y == expected->y && player->z == expected->z);
     CHECK(game.world().state.status_bar_visible && game.machine().faults().empty());
+    std::filesystem::remove_all(dir);
 }
 
 // Milestone 6: a new game from the fixed data (GAMEPAL_1028_0000), the
@@ -408,16 +423,16 @@ void test_load_from_menu(const std::filesystem::path& data) {
 void test_new_game(const std::filesystem::path& data) {
     // Globals of a saved game: entry 60.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
-        const auto save = FlexArchive::open(data / "SAVEGAME/SAVEGAME.13");
+        const auto save = FlexArchive::open(test_saves(data) / "SAVEGAME.13");
         const auto entry = save.entry(60);
         const auto& g = game.machine().globals();
         CHECK(entry.size() == 0x42 && std::equal(entry.begin(), entry.end(), g.begin()));
         CHECK(game.world().current_map() == 5 && game.world().state.keycards != 0);
     }
 
-    Game game(data);
+    Game game(data, test_saves(data));
     game.new_game(0);
     World& w = game.world();
     std::ifstream in(data / "USECODE/UNKDS.DAT", std::ios::binary);
@@ -492,7 +507,7 @@ void test_new_game(const std::filesystem::path& data) {
     // first, DIFF.PAL); Escape goes back, the level is kept; a click on
     // level 1 starts a new game at that level.
     {
-        Game g(data);
+        Game g(data, test_saves(data));
         g.load_save(1);
         press(g, 0x01, false, 0x1B);
         CHECK(g.menu() && g.menu()->selected() == MainMenu::kNewGame);
@@ -520,10 +535,57 @@ void test_new_game(const std::filesystem::path& data) {
         CHECK(g.world().state.difficulty == 1 && g.world().current_map() == 1 && g.world().get(1)->x == 6399);
     }
 
-    // Map 1's items are gone: the lowest ids are map 3's first records.
+    // Map 1's items are gone and map 3's took their slots, from the head of
+    // the free list (the last ones freed): every item slot is either used or
+    // free, none lost.
     const auto records2 = read_fixed_map(FlexArchive::open(data / "STATIC/FIXED.DAT"), 3);
-    first = w.get(kFirstItemId + 2);
-    CHECK(first && first->shape == records2[0].shape && first->x == records2[0].x && first->y == records2[0].y);
+    std::size_t items_used = 0;
+    bool record_found = false;
+    w.for_each([&](const Item& i) {
+        if (!is_npc_id(i.id)) ++items_used;
+        if (i.shape == records2[0].shape && i.x == records2[0].x && i.y == records2[0].y) record_found = true;
+    });
+    CHECK(record_found);
+    CHECK(items_used + w.free_items().ids.size() == kItemSlots - kFirstItemId);
+
+    CHECK(game.machine().faults().empty());
+}
+
+// Bug: back at the rebel base after mission 1, Escape crashed the game.
+// The map switch (MainActor::I_switchMap, GAMEPAL_1028_03f6) failed every
+// process, the Controller included, which the game still sent the keys to.
+// The original keeps it (first table slots) and resets it (1138:3181).
+// Save TEST16: in front of the exit teleporter of mission 1, which plays
+// R01 and switches to map 40, whose egg plays H01 then 2b: all skipped
+// with Escape, as reported.
+void test_back_to_base(const std::filesystem::path& data) {
+    Game game(data, test_saves(data));
+    game.load_save_file(test_saves(data) / "fin-mission1-echap-videos-base.sav");
+    World& w = game.world();
+    const Process* controller = game.kernel().find_process(0, CombatControl::kType);
+    CHECK(controller == &game.combat());
+    // In line with the teleporter, then up (towards -x) onto it.
+    w.move_item(1, 15611, 18036, 96);
+    game.key(0x48, true, true, 0);
+    int frame = 0;
+    for (; frame < 600 && !game.movie(); ++frame) game.update(kFrameUs);
+    game.key(0x48, true, false, 0);
+    CHECK(game.movie());
+    int movies = 0;
+    bool in_movie = false;
+    for (int i = 0; i < 6000; ++i) {
+        if (game.movie() && !in_movie) ++movies;
+        in_movie = game.movie() != nullptr;
+        game.key(0x01, false, in_movie, 0, 0x1B);
+        game.update(kFrameUs);
+    }
+    std::printf("back to base: map %d, %d movie(s) skipped\n", w.current_map(), movies);
+    CHECK(w.current_map() == 40 && movies == 3 && !game.movie());
+    CHECK(game.kernel().find_process(0, CombatControl::kType) == controller && controller == &game.combat());
+    CHECK(!w.state.aim.active && w.state.aim.target == 0);
+    // Escape opens the menu, the keys going through the Controller first.
+    press(game, 0x01, false, 0x1B);
+    CHECK(game.menu());
     CHECK(game.machine().faults().empty());
 }
 
@@ -565,7 +627,7 @@ void test_movies(const std::filesystem::path& data) {
 
     // From SAVEGAME.1, small movie with subtitles: the game is frozen, the
     // screen fades to grey (40 Hz), then 15 frames a second.
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(1);
     GameConfig config = game.config();
     config.big_video = false;
@@ -622,7 +684,7 @@ void test_movies(const std::filesystem::path& data) {
 // Milestone 3: palette fades (FADE.C), one step per tick at 60 Hz.
 void test_options(const std::filesystem::path& data) {
     using O = OptionsScreen;
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(1);
     // A CRUSADER.CFG as installed (the data's may have been changed by
     // playing): no volume keys (defaults), "bigvideo=true".
@@ -699,13 +761,102 @@ void test_options(const std::filesystem::path& data) {
     // The focus stays on "quit" for the next time.
     press(game, 0x1C, false, 0x0D);
     CHECK(game.menu()->options() && game.menu()->options()->focus() == O::kQuitLine);
+
+    // The controller screen (port addition): left of "quit", Enter opens it.
+    press(game, 0x4B, true);
+    o = game.menu()->options();
+    CHECK(o->focus() == O::kPadLine && !o->pressed(O::kQuit) && !o->gamepad());
+    game.render(screen);
+    CHECK(screen.row(o->pad_button().y0)[o->pad_button().x0 + 5] == 0x0C);  // outlined
+    press(game, 0x4D, true);  // right: back to "quit"
+    CHECK(o->focus() == O::kQuitLine && o->pressed(O::kQuit));
+    press(game, 0x4B, true);
+    press(game, 0x1C, false, 0x0D);
+    const GamepadScreen* pad = o->gamepad();
+    using G = GamepadScreen;
+    CHECK(pad != nullptr && pad->focus() == 0 && !pad->waiting());
+    if (pad) {
+        // Left column: the actions; right: their button. Row 0 is "fire", on A.
+        CHECK(G::action_of(0) == kPadFire && game.config().pad.button_of(kPadFire) == kPadRightTrigger);
+        CHECK(!game.waiting_for_pad());
+        // Enter: wait for a button. B is bound to jump; pressing B for "fire"
+        // moves fire to B, leaves RT and jump unbound.
+        press(game, 0x1C, false, 0x0D);
+        CHECK(pad->waiting() && game.waiting_for_pad());
+        game.render(screen);
+        press(game, 0x4D, true);  // other keys do nothing while waiting
+        press(game, 0x50, true);
+        CHECK(pad->waiting() && pad->focus() == 0);
+        game.pad_button(kPadB);
+        CHECK(!pad->waiting() && !game.waiting_for_pad());
+        const PadSettings& ps = game.config().pad;
+        CHECK(ps.button_of(kPadFire) == kPadB && ps.buttons[kPadRightTrigger] == kPadNone && ps.button_of(kPadJump) < 0);
+        // Escape cancels the wait without closing; a click elsewhere too; ten seconds as well.
+        press(game, 0x1C, false, 0x0D);
+        press(game, 0x01, false, 0x1B);
+        CHECK(!pad->waiting() && game.menu()->options()->gamepad());
+        press(game, 0x1C, false, 0x0D);
+        game.pad_button(kPadX);  // while waiting: fire -> X
+        CHECK(ps.button_of(kPadFire) == kPadX && ps.buttons[kPadB] == kPadNone);
+        press(game, 0x1C, false, 0x0D);
+        for (int i = 0; i < 620; ++i) game.update(kFrameUs);
+        CHECK(!pad->waiting());
+        game.pad_button(kPadY);  // not waiting: ignored
+        CHECK(ps.button_of(kPadFire) == kPadX);
+        // Delete unbinds the focused action.
+        press(game, 0x53, true);
+        CHECK(ps.button_of(kPadFire) < 0);
+        // The mouse: a click on a value binds, on a label only focuses.
+        const auto v = pad->value_rect(2);
+        game.mouse_button(true, v.x0 + 5, v.y0 + 5);
+        game.mouse_button(false, v.x0 + 5, v.y0 + 5);
+        CHECK(pad->focus() == 2 && pad->waiting());
+        game.pad_button(kPadRightStick);
+        CHECK(ps.button_of(G::action_of(2)) == kPadRightStick);
+        const auto label = pad->row_rect(3);
+        game.mouse_button(true, label.x0 + 5, label.y0 + 5);
+        game.mouse_button(false, label.x0 + 5, label.y0 + 5);
+        CHECK(pad->focus() == 3 && !pad->waiting());
+        // The stick rows: right at the end of the scale stops there.
+        while (pad->focus() < G::kAimRow) press(game, 0x50, true);
+        for (int i = 0; i < 6; ++i) press(game, 0x4D, true);
+        CHECK(ps.aim == PadSettings::kAimLevels);
+        const auto dz = pad->value_rect(G::kDeadZoneRow);
+        game.mouse_button(true, dz.x0 + 5, dz.y0 + 5);
+        game.mouse_button(false, dz.x0 + 5, dz.y0 + 5);
+        CHECK(ps.dead_zone == PadSettings::kDefaultDeadZone - 1);
+        game.render(screen);
+        CHECK(screen.row(pad->row_rect(G::kDeadZoneRow).y0)[pad->row_rect(G::kDeadZoneRow).x0 + 5] == 0x0C);
+        // "Par defaut" resets everything; "retour" closes the screen, not the options.
+        const auto reset = pad->row_rect(G::kDefaultRow);
+        game.mouse_button(true, reset.x0 + 5, reset.y0 + 5);
+        game.mouse_button(false, reset.x0 + 5, reset.y0 + 5);
+        CHECK(ps.is_default());
+        press(game, 0x50, true);
+        press(game, 0x1C, false, 0x0D);
+        CHECK(game.menu()->options() && !game.menu()->options()->gamepad());
+        // Reopened on the row it was left on; bound again, saved with the options.
+        press(game, 0x1C, false, 0x0D);
+        const G* again = game.menu()->options()->gamepad();
+        CHECK(again && again->focus() == G::kBackRow);
+        const auto a = again->value_rect(0);
+        game.mouse_button(true, a.x0 + 5, a.y0 + 5);
+        game.mouse_button(false, a.x0 + 5, a.y0 + 5);
+        game.pad_button(kPadLeftBumper);
+        CHECK(game.config().pad.button_of(kPadFire) == kPadLeftBumper && game.config().pad.buttons[kPadLeftBumper] == kPadFire);
+        press(game, 0x01, false, 0x1B);  // Escape closes the controller screen only
+        CHECK(game.menu()->options() && !game.menu()->options()->gamepad());
+    }
     press(game, 0x01, false, 0x1B);
     CHECK(game.menu() && !game.menu()->options());
+    const GameConfig with_pad = GameConfig::load(cfg);
+    CHECK(with_pad.pad.buttons[kPadLeftBumper] == kPadFire && !with_pad.pad.is_default());
+    std::filesystem::remove(cfg);
     CHECK(game.machine().faults().empty());
 }
 
 void test_fades(const std::filesystem::path& data) {
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(1);
     GameState& s = game.world().state;
 
@@ -780,7 +931,7 @@ void test_credits(const std::filesystem::path& data) {
     const auto cd = CreditsData::load(data / "STATIC");
     CHECK(cd.background.width == 640 && cd.background.height == 480 && cd.script.size() == 3601);
 
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(1);
     press(game, 0x01, false, 0x1B);  // menu
     press(game, 0x4D, true);         // right: options
@@ -842,7 +993,7 @@ std::uint16_t last_action(Game& game) {
 
 void test_firing(const std::filesystem::path& data) {
     // Action remapping for the shotgun (record +0xC = 0, overlay 0x33B).
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(13);
     World& w = game.world();
     Item* weapon = w.get(w.active_weapon(1));
@@ -899,8 +1050,123 @@ void test_firing(const std::filesystem::path& data) {
 }
 
 // Milestone 6.2: the inventory keys of World_on_key (player_commands.hpp).
+// SAVEGAME.13: the trigger pad 3516 lies on the lift platform 3519 (ELEVPLAT)
+// west of the player. Stepping on the platform sends the contact events
+// (10E8:123A) to both; the pad (TRIGPAD) only reacts once the player stands
+// completely on it, then its TRIGGER sends the lift up to z 88 (top 96).
+// Walking off on the way up, the player falls into the shaft onto a death
+// floor (DEATHFL3), whose event 6 kills him and plays the fall on a double.
+// The player starts on the platform's northern edge (test_ledge_step).
+// Stepping down while walking (10E8:162F), SAVEGAME.13: walking west from the
+// start, the player steps down from the walkway (z 16) to z 8 on the floor
+// 3074, whose strip under him is 4 units wide: only the north quarters of his
+// footprint rest on it (support 9), the south ones on the floor 8 below, in
+// the 9-unit slack of a walk. He walks on without tripping. The step down
+// starts at the end of the step: from its start, it crossed the walkway and
+// left him 8 above the strip, where he stumbled (action 0x3B) and slid into
+// the lift shaft. The same made the player trip down stairs (TEST9) and off
+// the joints of the gratings (TEST5).
+void test_ledge_step(const std::filesystem::path& data) {
+    Game game(data, test_saves(data));
+    game.load_save(13);
+    World& w = game.world();
+    if (auto r = w.npc_record(1); !r.empty()) r[npc::kDirection] = 12;
+    game.key(0x48, true, true, 0);
+    bool on_strip = false, stumbled = false, fell = false;
+    for (int f = 0; f < 120 && !w.is_dead(1); ++f) {
+        game.update(kFrameUs);
+        const Item& p = *w.get(1);
+        if (p.z == 8 && p.y == 5675) on_strip = on_strip || support_mask(w, p.shape, p.x, p.y, p.z, false, 1) == 9;
+        stumbled = stumbled || w.npc_word(1, npc::kLastAnim) == 0x3B;
+        fell = fell || game.kernel().find_process(1, GravityProcess::kType) != nullptr;
+    }
+    game.key(0x48, true, false, 0);
+    std::printf("ledge step: on the strip %d, stumbled %d, fell %d, dead %d\n", on_strip, stumbled, fell, w.is_dead(1));
+    CHECK(on_strip && !stumbled && !fell && !w.is_dead(1));
+}
+
+// The same step down on the user's saves (docs/bugs.md): down the stairs of
+// TEST9 (steps of 8, z 32 to 0) and east over the gratings of TEST5, whose
+// joints stand 8 above the plates (z 88 / 96). The player walks down each
+// step without falling or stumbling.
+void test_walk_down_steps(const std::filesystem::path& data) {
+    struct Case { const char* save; int dir; int frames; int end_z; };
+    for (const Case c : {Case{"escalier-chute-en-descendant.sav", 4, 120, 0},
+                         Case{"grilles-marche-entre-dalles.sav", 4, 140, -1}}) {
+        Game game(data, test_saves(data));
+        game.load_save_file(test_saves(data) / c.save);
+        World& w = game.world();
+        for (int i = 0; i < 10; ++i) game.update(kFrameUs);
+        w.npc_record(1)[npc::kDirection] = static_cast<std::uint8_t>(c.dir);
+        for (int i = 0; i < 10; ++i) game.update(kFrameUs);
+        const int start_z = w.get(1)->z;
+        game.key(0x48, true, true, 0);
+        bool stumbled = false, fell = false;
+        int downs = 0, last_z = start_z;
+        for (int f = 0; f < c.frames; ++f) {
+            game.update(kFrameUs);
+            const int z = w.get(1)->z;
+            if (z < last_z) ++downs;
+            last_z = z;
+            stumbled = stumbled || w.npc_word(1, npc::kLastAnim) == 0x3B;
+            fell = fell || game.kernel().find_process(1, GravityProcess::kType) != nullptr;
+        }
+        game.key(0x48, true, false, 0);
+        std::printf("walk down steps (%s): z %d -> %d, %d steps down, stumbled %d, fell %d\n", c.save, start_z,
+                    w.get(1)->z, downs, stumbled, fell);
+        CHECK(downs >= 2 && !stumbled && !fell);
+        if (c.end_z >= 0) CHECK(w.get(1)->z == c.end_z);
+    }
+}
+
+void test_floor_pad(const std::filesystem::path& data) {
+    constexpr ObjId kPad = 3516, kLift = 3519;
+    constexpr std::uint8_t kUp = 0x48;
+    auto walk = [](Game& game, int dir, int frames) {
+        if (auto r = game.world().npc_record(1); !r.empty()) r[npc::kDirection] = static_cast<std::uint8_t>(dir);
+        game.key(kUp, true, true, 0);
+        for (int f = 0; f < frames; ++f) game.update(kFrameUs);
+        game.key(kUp, true, false, 0);
+    };
+    {
+        Game game(data, test_saves(data));
+        game.load_save(13);
+        World& w = game.world();
+        CHECK(w.get(kPad) && w.get(kLift) && w.get(kLift)->z == 1);
+        if (!w.get(kPad) || !w.get(kLift)) return;
+        w.move_item(1, 5233, 5675, 9);  // on the platform, 28 units of 48 over it
+        for (int f = 0; f < 30; ++f) game.update(kFrameUs);
+        const Item& p = *w.get(1);
+        std::printf("floor pad: player at (%d, %d, %d), pad frame %u\n", p.x, p.y, p.z, w.get(kPad)->frame);
+        CHECK(p.z == 9 && w.get(kPad)->frame == 0);  // not completely on the pad
+        for (int f = 0; f < 30; ++f) game.update(kFrameUs);
+        walk(game, 8, 10);  // a step south, onto the pad
+        CHECK(w.get(kPad)->frame == 1);
+        for (int f = 0; f < 600; ++f) game.update(kFrameUs);
+        std::printf("floor pad: lift at z %d, player at z %d\n", w.get(kLift)->z, w.get(1)->z);
+        CHECK(w.get(kLift)->z == 88 && w.get(1)->z == 96 && !w.is_dead(1));
+        CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+    }
+    {
+        Game game(data, test_saves(data));
+        game.load_save(13);
+        World& w = game.world();
+        w.move_item(1, 5233, 5675, 9);
+        for (int f = 0; f < 60; ++f) game.update(kFrameUs);
+        walk(game, 8, 60);  // keeps walking: off the platform on its way up
+        bool double_seen = false;
+        for (int f = 0; f < 300; ++f) {
+            game.update(kFrameUs);
+            w.for_each([&](const Item& i) { double_seen = double_seen || i.shape == 0x580; });
+        }
+        std::printf("floor pad: fell, dead %d, double %d\n", w.is_dead(1), double_seen);
+        CHECK(w.is_dead(1) && double_seen);
+        CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+    }
+}
+
 void test_inventory_keys(const std::filesystem::path& data) {
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(13);
     World& w = game.world();
     settle(game);
@@ -1030,7 +1296,7 @@ void test_inventory_keys(const std::filesystem::path& data) {
 void test_item_selection(const std::filesystem::path& data) {
     {
         // SAVEGAME.1: one selectable item next to the player.
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(1);
         World& w = game.world();
         settle(game);
@@ -1043,7 +1309,7 @@ void test_item_selection(const std::filesystem::path& data) {
         press(game, 0x01, false, 0x1B);  // Escape ends the mode, the menu stays closed
         CHECK(!sel.active && !game.menu());
     }
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(13);
     World& w = game.world();
     settle(game);
@@ -1098,7 +1364,7 @@ void test_item_selection(const std::filesystem::path& data) {
 
 // Milestone 6.2: R and the message box (message_gump.hpp).
 void test_message_box(const std::filesystem::path& data) {
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(1);
     World& w = game.world();
     settle(game);
@@ -1157,7 +1423,7 @@ void test_message_box(const std::filesystem::path& data) {
 
 // Milestone 6.2: the function keys of the game view (World_on_key).
 void test_function_keys(const std::filesystem::path& data) {
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(1);
     World& w = game.world();
     settle(game);
@@ -1232,10 +1498,14 @@ void test_function_keys(const std::filesystem::path& data) {
     CHECK(!game.screen() && game.palette() == w.state.game_palette);
 
     // F8: the load screen; Escape closes it, a slot chosen loads that game.
+    // The colour cycling is paused meanwhile: MISC.PAL stays as it is.
     press(game, 0x42, false);
-    CHECK(game.screen() && !game.screen()->over_view());
+    CHECK(game.screen() && !game.screen()->over_view() && w.state.cycle_paused);
+    const Palette load_palette = game.palette();
+    for (int i = 0; i < 30; ++i) game.update(kFrameUs);
+    CHECK(game.palette() == load_palette);
     press(game, 0x01, false, 0x1B);
-    CHECK(!game.screen());
+    CHECK(!game.screen() && !w.state.cycle_paused);
 
     // In the item selection mode the function keys do nothing.
     press(game, 0x1F, false, 's');
@@ -1263,7 +1533,7 @@ void test_function_keys(const std::filesystem::path& data) {
 // as their scripts start them, with their sounds.
 // Milestone 6.2: the mouse in play (world_mouse.hpp).
 void test_mouse_in_play(const std::filesystem::path& data) {
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(1);
     World& w = game.world();
     settle(game);
@@ -1413,7 +1683,7 @@ void test_scenery_use(const std::filesystem::path& data) {
     };
     {
         // CHEST_NS 3169, marker 3156 (map 0x3E, npc 0x60): a new 0x33E.
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(1);
         World& w = game.world();
         CHECK(!carried(w, 0x33E) && w.get(3156));
@@ -1433,7 +1703,7 @@ void test_scenery_use(const std::filesystem::path& data) {
     {
         // CHEST_EW 3160, two markers of 0x33D: combined with the ammunition
         // the player carries.
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(1);
         World& w = game.world();
         const std::uint16_t ammo = carried(w, 0x33D)->quality;
@@ -1450,7 +1720,7 @@ void test_scenery_use(const std::filesystem::path& data) {
     }
     {
         // D_MAINT 8389 holds credits (0x4ED 8388): searched once.
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(1);
         World& w = game.world();
         const std::uint16_t credits = carried(w, 0x4ED)->quality;
@@ -1474,7 +1744,7 @@ void test_computer(const std::filesystem::path& data) {
     CHECK(ComputerGump::wrap("abcdefghijklmnopqrstuvwxyz") == "abcdefghijklmnopqrstuvwxyz");
     // MONITEW 5449 (save 2): a message through TEXTFILE, its code from
     // numToStr (0x0FF).
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(2);
     World& w = game.world();
     use_item(w, 5449);
@@ -1538,7 +1808,7 @@ void test_keypad(const std::filesystem::path& data) {
 
     // Escape: -1, the script only clears its busy flag (0x1000).
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(2);
         const KeypadGump* keypad = open(game);
         CHECK(keypad != nullptr);
@@ -1559,7 +1829,7 @@ void test_keypad(const std::filesystem::path& data) {
     }
     // The buttons: 1 then enter, the wrong code.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(2);
         const KeypadGump* keypad = open(game);
         CHECK(keypad != nullptr);
@@ -1587,7 +1857,7 @@ void test_keypad(const std::filesystem::path& data) {
     }
     // The keys: 962 then Enter, the door's code.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(2);
         CHECK(open(game) != nullptr);
         press(game, 0x0A, '9');
@@ -1632,7 +1902,7 @@ void test_monitor(const std::filesystem::path& data) {
 
     // The robot.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(7);
         World& w = game.world();
         CHECK(w.npc_record(kRobot)[npc::kEggQuality] == 0xFE);
@@ -1657,7 +1927,7 @@ void test_monitor(const std::filesystem::path& data) {
     }
     // No NPC to control: a key held ends the view.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(7);
         World& w = game.world();
         w.npc_record(kRobot)[npc::kEggQuality] = 0;
@@ -1682,7 +1952,7 @@ void test_monitor(const std::filesystem::path& data) {
 void test_security_camera(const std::filesystem::path& data) {
     constexpr ObjId kCamera = 6082;
     for (const bool in_view : {false, true}) {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(2);
         World& w = game.world();
         const Item* cam = w.get(kCamera);
@@ -1704,8 +1974,47 @@ void test_security_camera(const std::filesystem::path& data) {
         CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
     }
 }
+// Switch 4595 of SAVEGAME.3 turns off the energy walls of quality 9: TRIGGER
+// sends them event 0x13 (Item::I_avatarStoleSomething, their switch-off
+// sound 0x3D) and turns them into markers 0x476 keeping the shape; used
+// again, it turns them back on.
+void test_energy_walls(const std::filesystem::path& data) {
+    constexpr ObjId kSwitch = 4595;
+    constexpr ObjId kWalls[] = {4593, 4598, 4623, 4644};
+    Game game(data, test_saves(data));
+    game.load_save(3);
+    World& w = game.world();
+    for (ObjId id : kWalls) {
+        CHECK(w.get(id) && w.get(id)->shape == 0x564 && w.get(id)->frame == 1);
+        if (!w.get(id)) return;
+    }
+    use_item(w, kSwitch);
+    bool sound = false;
+    for (int f = 0; f < 300; ++f) {
+        game.update(kFrameUs);
+        sound = sound || game.audio()->sources.is_playing(0x3D, kWalls[0]);
+    }
+    const Item* wall = w.get(kWalls[0]);
+    if (!wall) return;
+    std::printf("energy walls: off -> %04X:%u status %04X npc %02X map %02X, sound %d\n", wall->shape, wall->frame,
+                wall->flags, wall->npc_number, wall->map_number, sound);
+    CHECK(sound);
+    for (ObjId id : kWalls) CHECK(w.get(id)->shape == 0x476 && (w.get(id)->flags & 0x10));
+    // Turned back on, each marker is replaced by a new wall (FREE function
+    // 0x863: create, copy the qualities, unequip, destroy the marker).
+    use_item(w, kSwitch);
+    for (int f = 0; f < 300; ++f) game.update(kFrameUs);
+    int walls = 0, markers = 0;
+    w.for_each([&](const Item& i) {
+        walls += i.shape == 0x564 && i.frame == 1 && i.quality == 9 && !(i.flags & 0x10);
+        markers += i.shape == 0x476 && i.quality == 9;
+    });
+    std::printf("energy walls: on again -> %d walls, %d markers\n", walls, markers);
+    CHECK(walls == 4 && markers == 0);
+    CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+}
 void test_stations(const std::filesystem::path& data) {
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(1);
     World& w = game.world();
     Audio* audio = game.audio();
@@ -1736,7 +2045,7 @@ void test_stations(const std::filesystem::path& data) {
 // The player dropped from 48 units lands hard (1040:04BC): action 0x3B and
 // a grunt.
 void test_hard_landing(const std::filesystem::path& data) {
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(13);
     World& w = game.world();
     settle(game);
@@ -1752,6 +2061,40 @@ void test_hard_landing(const std::filesystem::path& data) {
     }
     std::printf("landing: z %d -> %d, stumbled %d, grunt %d\n", ground + 48, w.get(1)->z & 0xFF, stumbled, grunt);
     CHECK((w.get(1)->z & 0xFF) == ground && stumbled && grunt);
+}
+
+// Jalon 2: a step blocked by an obstacle (ANIMPRIM.C 1908). A box (0x81) is
+// put on the walkway of SAVEGAME.13, south of the player. Walking into it
+// ends the walk at the box; a roll (0x18, unstoppable: action flag 0x08)
+// plays its remaining frames in place.
+void test_blocked_step(const std::filesystem::path& data) {
+    for (const std::uint16_t action : {std::uint16_t{1}, std::uint16_t{0x18}}) {
+        Game game(data, test_saves(data));
+        game.load_save(13);
+        World& w = game.world();
+        settle(game);
+        const Item* player = w.get(1);
+        const int x0 = player->x, y0 = player->y + 64, z0 = player->z & 0xFF;
+        w.move_item(1, x0, y0, z0);
+        const ObjId box = w.create(0x81, 0);
+        w.pop_to_coords(x0, y0 + 96, z0);
+        // The roll goes sideways, 4 directions clockwise of the facing.
+        const int facing = action == 1 ? 8 : 4;
+        w.npc_record(1)[npc::kDirection] = static_cast<std::uint8_t>(facing);
+        do_anim(game.kernel(), w, game.animations(), 1, action, facing);
+        int frames = 0, last_frame = 0;
+        for (; frames < 300 && game.kernel().count_processes(1, ActorAnimProcess::kType) != 0; ++frames) {
+            game.update(kFrameUs);
+            last_frame = w.npc_record(1)[npc::kAnimFrame];
+        }
+        const AnimAction* a = game.animations().action(player->shape, action);
+        std::printf("blocked step: action 0x%X from y %d to %d (box at %d), frame %d of %zu, %d frames\n", action, y0,
+                    player->y, w.get(box)->y, last_frame, a ? a->frame_count() : 0, frames);
+        CHECK(player->x == x0 && player->y > y0 && player->y < w.get(box)->y && (player->z & 0xFF) == z0);
+        if (action == 1) CHECK(last_frame < 8);
+        else CHECK(a && last_frame == static_cast<int>(a->frame_count()) - 1);
+        CHECK(game.machine().faults().empty());
+    }
 }
 
 // Milestone 4: a pistol shot (fire type 11) at an NPC placed in front of the player.
@@ -1778,7 +2121,7 @@ Pid fire_from_muzzle(Game& game, ObjId shooter, int dir, int fire_type, bool aim
 }
 
 void test_shot_kills(const std::filesystem::path& data) {
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(13);
     World& w = game.world();
     const Item* player = w.get(1);
@@ -1798,9 +2141,22 @@ void test_shot_kills(const std::filesystem::path& data) {
 
     fire_from_muzzle(game, 1, dir, 11, false);
     CHECK(projectiles(game) == 1);
+    // A human's death cry (or a cry of pain if it lives), at the victim. The
+    // scripts of this map keep the one-shot voices busy (see test_firing):
+    // the cry is checked meanwhile.
+    bool cry = false;
+    const auto listen = [&] {
+        for (int sfx : {0x88, 0x8C, 0x8F, 0xD8, 0x10}) cry = cry || game.audio()->sources.is_playing(sfx, victim);
+    };
     int frames = 0;
-    for (; frames < 300 && projectiles(game) != 0; ++frames) game.update(kFrameUs);
-    for (int i = 0; i < 10; ++i) game.update(kFrameUs);  // the death animation starts
+    for (; frames < 300 && projectiles(game) != 0; ++frames) {
+        game.update(kFrameUs);
+        listen();
+    }
+    for (int i = 0; i < 10; ++i) {
+        game.update(kFrameUs);  // the death animation starts
+        listen();
+    }
     const auto r = w.npc_record(victim);
     const std::uint16_t last = static_cast<std::uint16_t>(r[npc::kLastAnim] | r[npc::kLastAnim + 1] << 8);
     std::printf("shot: victim %u (shape %u) hp %d -> %u, dead %d, last action 0x%X, %d frames\n", victim,
@@ -1809,18 +2165,68 @@ void test_shot_kills(const std::filesystem::path& data) {
     CHECK(w.npc_hp(victim) < hp);
     // 14..20 damage, x5 at difficulty 1: at least 70.
     CHECK(hp > 70 || (w.is_dead(victim) && w.npc_hp(victim) == 0 && (last == 0x12 || last == 0x14)));
-    // A human's death cry (or a cry of pain if it lives), at the victim.
     const std::uint16_t shape = w.get(victim)->shape;
     const bool robot = shape == 0x4C8 || shape == 0x338 || shape == 0x45D || shape == 0x2CB || shape == 0x4E6 ||
                        shape == 0x383 || shape == 0x385;
-    bool cry = false;
-    for (int sfx : {0x88, 0x8C, 0x8F, 0xD8, 0x10}) cry = cry || game.audio()->sources.is_playing(sfx, victim);
     std::printf("shot: victim's cry %d\n", cry);
     CHECK(robot || cry);
     std::size_t sprites_after = 0;
     w.for_each([&](const Item& i) { sprites_after += i.shape == kProjectileShape; });
     std::printf("shot: items of shape 0x1D9 before %zu, after %zu\n", sprites_before, sprites_after);
     CHECK(sprites_after == sprites_before);
+
+    CHECK(game.machine().faults().empty());
+}
+
+// The last frame of an NPC's death (frame flag 0x4000) sends usecode event
+// 0x0E (calledFromAnim, 10A8:2B01): the GUARD class starts NPCDEATH.
+void test_death_called_from_anim(const std::filesystem::path& data) {
+    Game game(data, test_saves(data));
+    game.load_save(13);
+    for (int i = 0; i < 5; ++i) game.update(kFrameUs);
+    World& w = game.world();
+    // A guard put beside the player, where it stands on something.
+    const ObjId victim = 2;
+    const Item* player = w.get(1);
+    CHECK(w.get(victim) && w.get(victim)->shape == 0x2FD && !w.is_dead(victim));
+    bool placed = false;
+    World::Point at{};
+    for (int dir = 0; dir < 16 && !placed; dir += 2) {
+        at = {player->x + kDirectionDx[dir] * 96, player->y + kDirectionDy[dir] * 96, player->z};
+        w.move_item(victim, at.x, at.y, at.z);
+        placed = (support_mask(w, 0x2FD, at.x, at.y, at.z, true, victim) & 0x10) &&
+                 position_free(w, 0x2FD, at, nullptr, victim);
+    }
+    CHECK(placed);
+    std::set<ObjId> ids_before;
+    w.for_each([&](const Item& i) { ids_before.insert(i.id); });
+    apply_damage(game.kernel(), w, game.animations(), victim, 1, w.npc_direction(victim), 250, 1);
+    CHECK(w.is_dead(victim));
+    for (int i = 0; i < 600; ++i) game.update(kFrameUs);
+
+    // NPCDEATH: the guard is set aside (Item::I_push), a body D_GUARD (0x339)
+    // lies in its place; it does not block the way.
+    const Item* body = nullptr;
+    w.for_each([&](const Item& i) {
+        if (!ids_before.count(i.id) && i.shape == 0x339) body = &i;
+    });
+    std::printf("death: guard %s, body %u at (%d, %d, %d), placed at (%d, %d, %d)\n",
+                w.get(victim) ? "still in the world" : "set aside", body ? body->id : 0, body ? body->x : -1,
+                body ? body->y : -1, body ? body->z : -1, at.x, at.y, at.z);
+    CHECK(!w.get(victim) && body);
+    if (body) {
+        const ShapeInfo* info = w.shape_info(body->shape);
+        CHECK(info && !info->is(ShapeInfo::kSolid));
+        CHECK(position_free(w, 1, {body->x, body->y, body->z}, nullptr, 1));
+    }
+    // With VIOLENCE (intrinsic 0x06D), a human leaves BLOOD (0x4B8): frames
+    // 0..9 or 10..19 at random, played to the end.
+    const Item* blood = nullptr;
+    w.for_each([&](const Item& i) {
+        if (!ids_before.count(i.id) && i.shape == 0x4B8) blood = &i;
+    });
+    std::printf("death: blood %u frame %d\n", blood ? blood->id : 0, blood ? blood->frame : -1);
+    CHECK(blood && (blood->frame == 9 || blood->frame == 19));
     CHECK(game.machine().faults().empty());
 }
 
@@ -1828,7 +2234,7 @@ void test_shot_kills(const std::filesystem::path& data) {
 // the direction of the shot is found and aimed at; a straight shot would pass
 // beside it.
 void test_aiming(const std::filesystem::path& data) {
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(13);
     for (int i = 0; i < 5; ++i) game.update(kFrameUs);
     World& w = game.world();
@@ -1899,7 +2305,7 @@ void test_aiming(const std::filesystem::path& data) {
 // Milestone 6: the aiming mode and target designation (aim_mode.hpp), on
 // SAVEGAME.13.
 void test_aim_mode(const std::filesystem::path& data) {
-    Game game(data);
+    Game game(data, test_saves(data));
     game.load_save(13);
     auto run = [&](int frames) {
         for (int i = 0; i < frames; ++i) game.update(kFrameUs);
@@ -1961,7 +2367,9 @@ void test_aim_mode(const std::filesystem::path& data) {
 
     // 3. A target in that direction is marked within a second (DumbTimer).
     const int dir = 5;
-    w.move_item(victim, player->x + kDirectionDx[dir] * 128, player->y + kDirectionDy[dir] * 128, player->z);
+    // Still on the floor: farther, the ground ends and it would fall (support
+    // is checked at every ground frame, even standing).
+    w.move_item(victim, player->x + kDirectionDx[dir] * 40, player->y + kDirectionDy[dir] * 40, player->z);
     CHECK(find_target(w, 1, dir, true) == victim);
     run(70);
     const Item* v = w.get(victim);
@@ -2004,6 +2412,102 @@ void test_aim_mode(const std::filesystem::path& data) {
     CHECK(game.machine().faults().empty());
 }
 
+// A shot towards the crosshair flies level with the muzzle, upstairs too:
+// Item::I_fireWeapon passes the shooter's z + the muzzle offset to
+// SPRITE_1140_0e88 (docs/bugs.md: "tirer sur les caisses", the shot went
+// into the floor at z 96). SAVEGAME.3: the player stands at z 96.
+void test_crosshair_shot_height(const std::filesystem::path& data) {
+    Game game(data, test_saves(data));
+    game.load_save(3);
+    for (int i = 0; i < 5; ++i) game.update(kFrameUs);
+    World& w = game.world();
+    const Item* player = w.get(1);
+    CHECK((player->z & 0xFF) == 96);
+    for (ObjId id : w.tracked())
+        if (id != 0) w.set_broken(*w.get(id));  // nothing to aim at
+    const int dir = w.npc_direction(1);
+    do_anim(game.kernel(), w, game.animations(), 1, 4, kDirCurrent);
+    CHECK(w.state.aim.active);
+    const Pid pid = fire_from_muzzle(game, 1, dir, 11, true);
+    const auto* p = dynamic_cast<const ProjectileProcess*>(game.kernel().get(pid));
+    CHECK(p != nullptr);
+    if (!p) return;
+    std::printf("crosshair shot upstairs: from z %d towards z %d (player z %d)\n", p->position().z, p->target().z,
+                player->z & 0xFF);
+    CHECK(p->position().z > 96);
+    CHECK(std::abs(p->target().z - p->position().z) <= 8);  // spread: Chebyshev 200 / 10 / 3
+    CHECK(game.machine().faults().empty());
+}
+
+// ActorAnim_init (1158:016F): the controlled NPC is in combat while it plays
+// a combat action, which shows its weapon (WPNOVLAY.DAT).
+void test_player_combat_flag(const std::filesystem::path& data) {
+    Game game(data, test_saves(data));
+    game.load_save(3);
+    for (int i = 0; i < 5; ++i) game.update(kFrameUs);
+    World& w = game.world();
+    w.npc_record(1)[npc::kCombatFlags] &= static_cast<std::uint8_t>(~0x08);
+    do_anim(game.kernel(), w, game.animations(), 1, 4, kDirCurrent);
+    for (int i = 0; i < 10; ++i) game.update(kFrameUs);
+    CHECK(in_combat(w, 1));
+    do_anim(game.kernel(), w, game.animations(), 1, 0, kDirCurrent);
+    for (int i = 0; i < 10; ++i) game.update(kFrameUs);
+    CHECK(!in_combat(w, 1));
+    CHECK(game.machine().faults().empty());
+}
+
+// ITEM.C 2970: before a move, what rests on the mover falls and what it rests
+// on gets event 9 ("release"). Telepad 3319 of SAVEGAME.1 (TELEPAD) clears
+// the "teleporting" flag in it once nobody stands on it any more.
+void test_leave_surface(const std::filesystem::path& data) {
+    Game game(data, test_saves(data));
+    game.load_save(1);
+    World& w = game.world();
+    auto run = [&](int frames) {
+        for (int i = 0; i < frames; ++i) game.update(kFrameUs);
+    };
+    run(5);
+    const Item& pad = *w.get(3319);
+    CHECK(pad.shape == 0x1DB);
+    const ShapeInfo* pi = w.shape_info(pad.shape);
+    const ShapeInfo* ai = w.shape_info(w.get(1)->shape);
+    const std::int32_t px = pad.x - (pi->footpad_x - ai->footpad_x) * 8;
+    const std::int32_t py = pad.y - (pi->footpad_y - ai->footpad_y) * 8;
+    w.move_item(1, px, py, pad.z + pi->footpad_z * 8);
+    w.state.crusader_teleporting = true;
+    run(30);
+    CHECK(w.state.crusader_teleporting);  // standing still: no release
+
+    // A step on the pad: released, but the player is still on it.
+    do_anim(game.kernel(), w, game.animations(), 1, 1, 2);
+    run(4);
+    const bool kept = w.state.crusader_teleporting;
+    for (int i = 0; i < 90; ++i) {
+        if (!actor_busy(game.kernel(), 1)) do_anim(game.kernel(), w, game.animations(), 1, 1, 2);
+        game.update(kFrameUs);
+    }
+    const Item& p = *w.get(1);
+    std::printf("leave surface: player (%d, %d) -> (%d, %d), flag on the pad %d, after %d\n", px, py, p.x, p.y, kept,
+                w.state.crusader_teleporting);
+    CHECK(kept);
+    CHECK(!w.state.crusader_teleporting);
+
+    // An item put on the player's head falls when the player moves.
+    ObjId loose = 0;
+    w.for_each([&](const Item& i) {
+        const ShapeInfo* info = w.shape_info(i.shape);
+        if (!loose && !is_npc_id(i.id) && (i.flags & kItemFastArea) && !(i.flags & kItemContained) && info &&
+            !info->is(ShapeInfo::kFixed) && info->weight != 0 && info->family != 4 && info->family != 8) {
+            loose = i.id;
+        }
+    });
+    CHECK(loose != 0);
+    w.move_item(loose, p.x, p.y, p.z + ai->footpad_z * 8);
+    leave_surface(game.kernel(), w, 1);
+    CHECK(game.kernel().find_process(loose, GravityProcess::kType) != nullptr);
+    CHECK(game.machine().faults().empty());
+}
+
 // Milestone 4: enemies fight back (ATTACK.C), on SAVEGAME.13.
 std::vector<ObjId> attackers(Game& game) {
     std::vector<ObjId> ids;
@@ -2018,7 +2522,7 @@ void test_enemies(const std::filesystem::path& data) {
     // 80 direction steps in front of the player, it enters the fast area, gets its
     // attack process, turns to the player and fires.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         const Item* player = w.get(1);
@@ -2047,7 +2551,7 @@ void test_enemies(const std::filesystem::path& data) {
     // player, it takes its default activity 2 (5: combat) and targets the
     // player.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         w.state.difficulty = 0;  // no x5: the NPC survives the hit
@@ -2068,7 +2572,7 @@ void test_enemies(const std::filesystem::path& data) {
     // screen: it walks towards the player (path finder), stops when it can
     // shoot, and fires.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         const Item* player = w.get(1);
@@ -2095,7 +2599,7 @@ void test_enemies(const std::filesystem::path& data) {
     // Item 2427 (0x2A5, 10 hit points) explodes with splash damage and shows
     // its next frame.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         w.state.difficulty = 0;  // damage as given
@@ -2143,7 +2647,7 @@ void test_enemies(const std::filesystem::path& data) {
     // 6. Weapon overlay: the player of SAVEGAME.13 (in combat, shotgun, last
     // action 0x19) is drawn with a piece of shape 0x33B (class 4).
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         const WeaponOverlay overlay = WeaponOverlay::load(data / "STATIC/WPNOVLAY.DAT");
@@ -2163,7 +2667,7 @@ void test_enemies(const std::filesystem::path& data) {
     // 7. Guided missile (fire type 9) shot by NPC 2 two directions off: it
     // turns towards the player (its target) and hits.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         const Item* player = w.get(1);
@@ -2189,7 +2693,7 @@ void test_enemies(const std::filesystem::path& data) {
     // 8. Ricochet (fire type 5) off a shape with TYPEFLAG byte 1 bit 2
     // (0x2E) put east of the player: the flight turns back west.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         const Item* player = w.get(1);
@@ -2211,24 +2715,29 @@ void test_enemies(const std::filesystem::path& data) {
     // 0x58F; explosive (type 4, 250) -> blown apart, shape 0x576; electric
     // (type 15) -> shape 0x59C.
     for (const auto [type, shape] : {std::pair{6, 0x58F}, std::pair{4, 0x576}, std::pair{15, 0x59C}}) {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         const Item* player = w.get(1);
         w.move_item(2, player->x + 128, player->y, player->z);
         apply_damage(game.kernel(), w, game.animations(), 2, 1, 12, 250, type);
-        for (int f = 0; f < 600 && game.kernel().count_processes(2, ActorAnimProcess::kType) != 0; ++f)
+        // The shape as long as the NPC lies there: at the end of the death
+        // NPCDEATH sets it aside (test_death_called_from_anim).
+        std::uint16_t seen = w.get(2)->shape;
+        for (int f = 0; f < 600 && game.kernel().count_processes(2, ActorAnimProcess::kType) != 0; ++f) {
             game.update(kFrameUs);
-        std::printf("death: type %d -> shape 0x%X, dead %d, last action 0x%X\n", type, w.get(2)->shape, w.is_dead(2),
+            if (const Item* it = w.get(2)) seen = it->shape;
+        }
+        std::printf("death: type %d -> shape 0x%X, dead %d, last action 0x%X\n", type, seen, w.is_dead(2),
                     w.npc_word(2, npc::kLastAnim));
-        CHECK(w.is_dead(2) && w.get(2)->shape == shape);
+        CHECK(w.is_dead(2) && seen == shape);
         CHECK(game.machine().faults().empty());
     }
     // 10. An explosive hit (type 4) throws an item with a weight (a pistol,
     // shape 0x32E) along the hit's direction (east, 4): its gravity process
     // gets vx = 2 x 10..25, vy = 0.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         const Item* player = w.get(1);
@@ -2242,12 +2751,14 @@ void test_enemies(const std::filesystem::path& data) {
     // 11. Activities outside combat: NPC 8 loiters (activity 2), NPC 5 walks
     // straight on (activity 3, facing east), both east of the player.
     for (const auto [id, facing] : {std::pair{ObjId{8}, -1}, std::pair{ObjId{5}, 4}}) {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         const Item* player = w.get(1);
         if (facing >= 0) w.npc_record(id)[npc::kDirection] = static_cast<std::uint8_t>(facing);
-        if (facing < 0) w.move_item(id, player->x + 160, player->y + 96, player->z);
+        // The player stands on a walkway (z 16) running south over a shaft
+        // with a death floor; NPC 8 loiters on it.
+        if (facing < 0) w.move_item(id, player->x + 48, player->y + 192, player->z);
         else w.move_item(id, player->x + 256, player->y - 40, player->z);
         const Item* npc = w.get(id);
         const int x0 = npc->x, y0 = npc->y;
@@ -2262,7 +2773,7 @@ void test_enemies(const std::filesystem::path& data) {
     }
     // 12. A guard (activity 8) facing the player sees it and attacks (5).
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         const Item* player = w.get(1);
@@ -2281,7 +2792,7 @@ void test_enemies(const std::filesystem::path& data) {
     // spawner east of the player, facing 4, with its default activities,
     // hit points and an active weapon.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         const Item* player = w.get(1);
@@ -2312,7 +2823,7 @@ void test_enemies(const std::filesystem::path& data) {
     // makes its NPC once: type of shape 765 (template inside the egg),
     // default activity 0 = 8 (guard), facing 2.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         const Item* player = w.get(1);
@@ -2348,7 +2859,7 @@ void test_enemies(const std::filesystem::path& data) {
     // commands (an arrow key moves it, not the player), the camera follows
     // it; then the player gets them back.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         const Item* player = w.get(1);
@@ -2376,7 +2887,7 @@ void test_enemies(const std::filesystem::path& data) {
     // shield flashes (action 0x21) and loses the damage; a hit during the
     // flash does nothing; with the shield empty, hits hurt.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         w.state.difficulty = 0;
@@ -2400,7 +2911,7 @@ void test_enemies(const std::filesystem::path& data) {
     // 11: cost 80, types 7) takes 80 energy instead of hit points; without
     // enough energy it hurts. Immortality (+0x13 bit 1) stops everything.
     {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(13);
         World& w = game.world();
         auto r = w.npc_record(1);
@@ -2424,7 +2935,7 @@ void test_enemies(const std::filesystem::path& data) {
 // alarm lights and boxes on the map change frame with it.
 void test_alert(const std::filesystem::path& data) {
     for (int save = 1; save <= 13; ++save) {
-        Game game(data);
+        Game game(data, test_saves(data));
         game.load_save(save);
         World& w = game.world();
         ObjId box = 0;
@@ -2464,12 +2975,886 @@ void test_alert(const std::filesystem::path& data) {
     CHECK(!"no save with an alarm box");
 }
 
+// Wall lasers (LAZERNS, 0x19B): "equip" (event 0x0A) with 1 starts their
+// loop (event 0x20), which fires south (direction 8) through
+// Item::I_fireWeapon (intrinsic 0x01E) every (5 - difficulty) x 20 ticks.
+void test_wall_lasers(const std::filesystem::path& data) {
+    Game game(data, test_saves(data));
+    game.load_save(13);
+    World& w = game.world();
+    ObjId laser = 0;
+    w.for_each([&](const Item& i) {
+        if (!laser && i.shape == 0x19B && i.frame < 4 && !i.parent) laser = i.id;
+    });
+    CHECK(laser != 0);
+    if (!laser) return;
+    const std::uint8_t one[] = {1, 0, 0, 0};
+    CHECK(game.machine().start_event(0x19B, 0x0A, laser, one) != 0);
+    // A shot is a projectile process that was not there on the frame before.
+    std::set<Pid> previous;
+    int shots = 0;
+    bool southwards = true;
+    const Item* l = w.get(laser);
+    const std::uint32_t start = game.kernel().ticks();
+    for (int f = 0; f < 900; ++f) {
+        game.update(kFrameUs);
+        std::set<Pid> now;
+        game.kernel().for_each_process([&](const Process& p) {
+            if (p.type() != ProjectileProcess::kType) return;
+            now.insert(p.pid());
+            shots += !previous.count(p.pid());
+            const auto& shot = static_cast<const ProjectileProcess&>(p);
+            if (shot.target().y <= l->y) southwards = false;
+        });
+        previous = std::move(now);
+    }
+    std::printf("lasers: laser %u (frame %u) fired %d shots in %u ticks, difficulty %d\n", laser, l->frame, shots,
+                game.kernel().ticks() - start, w.state.difficulty);
+    CHECK(shots >= 2 && southwards);
+    CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+}
+
+// Explosive barrels (BARRELUP 0xAA, SAVEGAME.3): their gotHit spawns BARREL,
+// which counts the damage in the npc number byte (ITEM_0574, a process that
+// ends at once: spawn hands its result over, INTER_1418_038b 0x57) and at 100
+// explodes through Item::I_explode (0x017), which takes any item.
+void test_barrels(const std::filesystem::path& data) {
+    constexpr ObjId kBarrel = 5070;
+    Game game(data, test_saves(data));
+    game.load_save(3);
+    World& w = game.world();
+    const Item* barrel = w.get(kBarrel);
+    CHECK(barrel && barrel->shape == 0xAA);
+    if (!barrel) return;
+    const World::Point at = w.location(*barrel);
+    const auto run = [&](int frames) {
+        for (int f = 0; f < frames; ++f) game.update(kFrameUs);
+    };
+    // Difficulty 3: 30 damage of fire type 2, kept in the byte.
+    w.state.difficulty = 3;
+    apply_damage(game.kernel(), w, game.animations(), kBarrel, 1, 0, 30, 2);
+    run(10);
+    std::printf("barrels: after a hit, damage byte %u\n", w.get(kBarrel) ? w.get(kBarrel)->npc_number : 0);
+    CHECK(w.get(kBarrel) && w.get(kBarrel)->npc_number == 30);
+    for (int k = 0; k < 10 && w.get(kBarrel) && w.get(kBarrel)->shape == 0xAA; ++k) {
+        apply_damage(game.kernel(), w, game.animations(), kBarrel, 1, 0, 30, 2);
+        run(10);
+    }
+    run(60);
+    int fires = 0, debris = 0;
+    w.for_each([&](const Item& i) {
+        const bool here = std::abs(i.x - at.x) < 64 && std::abs(i.y - at.y) < 64;
+        fires += here && i.shape == 0x509;
+        debris += here && i.shape == 0x22B;
+    });
+    const Item* left = w.get(kBarrel);
+    std::printf("barrels: barrel %s, fires %d, debris %d\n", left ? "left" : "gone", fires, debris);
+    CHECK((!left || left->shape != 0xAA) && fires >= 1);
+    CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+
+    // The energy station RECHAGNS 5689 of SAVEGAME.2 counts its damage the
+    // same way; at 100 it blows up (ITEM_05D6) with its twin, its pad and
+    // its panels (frames + 4 and + 1).
+    Game station_game(data, test_saves(data));
+    station_game.load_save(2);
+    World& sw = station_game.world();
+    sw.state.difficulty = 3;
+    for (int k = 0; k < 4; ++k) {
+        apply_damage(station_game.kernel(), sw, station_game.animations(), 5689, 1, 0, 30, 2);
+        for (int f = 0; f < 10; ++f) station_game.update(kFrameUs);
+    }
+    for (int f = 0; f < 120; ++f) station_game.update(kFrameUs);
+    std::printf("barrels: station frames %u, %u, pad %u\n", sw.get(5689)->frame, sw.get(5691)->frame,
+                sw.get(5693)->frame);
+    CHECK(sw.get(5689)->frame == 4 && sw.get(5691)->frame == 5 && sw.get(5693)->frame == 1);
+    CHECK(station_game.machine().faults().empty() && station_game.machine().unbound_intrinsic_calls().empty());
+}
+
+// Floor mine FLORMINE 6035 (SAVEGAME.2): walked onto, its gotHit (contact
+// of the move) finds the player on it (Item::I_isOn), explodes and breaks.
+void test_mines(const std::filesystem::path& data) {
+    constexpr ObjId kMine = 6035;
+    Game game(data, test_saves(data));
+    game.load_save(2);
+    World& w = game.world();
+    const Item* mine = w.get(kMine);
+    CHECK(mine && mine->shape == 0x29F && mine->frame == 0);
+    if (!mine) return;
+    w.move_item(1, mine->x + 96, mine->y, mine->z);
+    const int hp = w.npc_hp(1);
+    if (auto r = w.npc_record(1); !r.empty()) r[npc::kDirection] = 12;  // west
+    game.key(0x48, true, true, 0);
+    for (int f = 0; f < 90; ++f) game.update(kFrameUs);
+    game.key(0x48, true, false, 0);
+    for (int f = 0; f < 60; ++f) game.update(kFrameUs);
+    std::printf("mines: mine frame %u status %04X, player hit points %d -> %u\n", mine->frame, mine->flags, hp,
+                w.npc_hp(1));
+    CHECK(mine->frame >= 2 && (mine->flags & 0x40) && w.npc_hp(1) < hp);
+    CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+}
+
+// The station pads of SAVEGAME.2, walked onto from the south: RECHFLNS 5693
+// (energy) and SICBFLNS 5514 (health). Their gotHit, a contact of the move
+// from the player whose centre is on the pad, holds him in stasis, places
+// him, then starts BatteryChargerProcess (0x0EE) or CruHealerProcess (0x0F6).
+void test_station_pads(const std::filesystem::path& data) {
+    for (const ObjId pad_id : {ObjId{5693}, ObjId{5514}}) {
+        Game game(data, test_saves(data));
+        game.load_save(2);
+        World& w = game.world();
+        const Item* pad = w.get(pad_id);
+        CHECK(pad != nullptr);
+        if (!pad) return;
+        const ShapeInfo* info = w.shape_info(pad->shape);
+        const ShapeInfo* me = w.shape_info(w.get(1)->shape);
+        if (auto r = w.npc_record(1); !r.empty()) {
+            r[0] = 50;  // hit points
+            r[1] = 0;
+            r[npc::kDirection] = 0;  // north
+        }
+        w.npc_record(1)[0x57] = 0;  // energy
+        w.npc_record(1)[0x58] = 0;
+        w.move_item(1, pad->x - info->footpad_x * 8 + me->footpad_x * 8, pad->y + 100, pad->z);
+        game.key(0x48, true, true, 0);
+        int stasis_frames = 0;
+        for (int f = 0; f < 600; ++f) {
+            if (f == 60) game.key(0x48, true, false, 0);
+            game.update(kFrameUs);
+            stasis_frames += w.state.avatar_in_stasis;
+        }
+        std::printf("station pads: %04X, hit points 50 -> %u, energy 0 -> %u, %d frames in stasis\n", pad->shape,
+                    w.npc_hp(1), w.npc_mana(1), stasis_frames);
+        if (pad_id == 5693) CHECK(w.npc_mana(1) == 2500 && w.npc_hp(1) == 50);
+        else CHECK(w.npc_hp(1) == 150 && w.npc_mana(1) == 0);
+        CHECK(stasis_frames > 0 && !w.state.avatar_in_stasis);
+        CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+    }
+}
+
+// Wall guns (WALLGUN 0xA1A). The search for a target (WALLGUN_0A5F) is a
+// spawned process whose result decides the attack: it often ends at once,
+// so spawn must hand that result over.
+// - Mission 1 (new game), GATGUNEW 2080 sleeps in mode 6 until a trigger
+//   sends equip(mode); with mode 0 it sweeps, sees the player 200 units
+//   north and shoots him.
+// - SAVEGAME.13, GATGUNEW 3369 (mode 0): the save keeps its status bit 4
+//   (its process runs) but not the process, which the load restarts.
+void test_turrets(const std::filesystem::path& data) {
+    const auto count_shots = [](Game& game, int frames) {
+        std::set<Pid> previous;
+        int shots = 0;
+        for (int f = 0; f < frames; ++f) {
+            game.update(kFrameUs);
+            std::set<Pid> now;
+            game.kernel().for_each_process([&](const Process& p) {
+                if (p.type() != ProjectileProcess::kType) return;
+                now.insert(p.pid());
+                shots += !previous.count(p.pid());
+            });
+            previous = std::move(now);
+        }
+        return shots;
+    };
+    {
+        Game game(data, test_saves(data));
+        game.new_game(3);
+        game.update(kFrameUs);
+        game.key(0x01, false, true, 0, 0x1B);
+        for (int f = 0; game.movie() && f < 200; ++f) game.update(kFrameUs);
+        game.key(0x01, false, false, 0);
+        for (int f = 0; f < 600; ++f) game.update(kFrameUs);
+        World& w = game.world();
+        constexpr ObjId kGun = 2080;
+        const Item* gun = w.get(kGun);
+        CHECK(gun && gun->shape == 0x113 && gun->npc_number == 6);
+        if (!gun) return;
+        w.move_item(1, gun->x, gun->y - 200, gun->z);
+        CHECK(count_shots(game, 120) == 0);
+        const std::uint8_t mode[] = {0, 0};
+        game.machine().start_event(gun->shape, 0x0A, kGun, mode);
+        const int shots = count_shots(game, 900);
+        std::printf("turrets: mission 1 gun %u, %d shots, player hit points %u\n", kGun, shots, w.npc_hp(1));
+        CHECK(shots >= 5 && w.npc_hp(1) < 150);
+        CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+    }
+    {
+        Game game(data, test_saves(data));
+        game.load_save(13);
+        World& w = game.world();
+        constexpr ObjId kGun = 3369;
+        const Item* gun = w.get(kGun);
+        CHECK(gun && gun->shape == 0x113);
+        if (!gun) return;
+        w.move_item(1, gun->x, gun->y - 200, gun->z);
+        const int hp = w.npc_hp(1);
+        const int shots = count_shots(game, 900);
+        std::printf("turrets: SAVEGAME.13 gun %u, %d shots, player hit points %d -> %u\n", kGun, shots, hp, w.npc_hp(1));
+        CHECK(shots >= 5 && w.npc_hp(1) < hp);
+        // Shot down by the player: gotHit -> WALLGUN_3C01 -> WALLGUN_3A77,
+        // whose damage count (ITEM_0574, threshold 100) ends without a
+        // pop_res of its own; its result is the 1 the child left in the
+        // shared result register. Broken frame 27, two pieces hurled.
+        int hits = 0;
+        for (; hits < 40 && w.get(kGun) && w.get(kGun)->frame != 27; ++hits) {
+            apply_damage(game.kernel(), w, game.animations(), kGun, 1, 0, 5, 2);
+            for (int f = 0; f < 10; ++f) game.update(kFrameUs);
+        }
+        std::printf("turrets: SAVEGAME.13 gun %u broken after %d hits\n", kGun, hits);
+        CHECK(w.get(kGun) && w.get(kGun)->frame == 27 && hits >= 2);
+        CHECK(count_shots(game, 300) == 0);
+        CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+    }
+}
+
+// Mission 1's surveillance monitors (new game), whose camera goes far from
+// the player: the monitor leaves the fast area and its processes are failed
+// (10A8:2DAD). The script of event 0x21 has no owner (set_info 0) and must
+// keep none: implies (KERNEL_11d8_1327) does not pass the waiter's owner on,
+// unlike Process_wait_for, or the view stayed black with the player in
+// stasis.
+// - 5459 (SURCAMNS, quality low 0xEE): the simple view in grey, until a key
+//   is held; then the camera, the status bar and the player are back.
+// - 2136 (SURCAMEW, 0xFA): the control of NPC 8 near the egg (event 0x22),
+//   until Escape gives it back.
+void test_monitors(const std::filesystem::path& data) {
+    const auto start = [](Game& game) {
+        game.new_game(3);
+        game.update(kFrameUs);
+        game.key(0x01, false, true, 0, 0x1B);
+        for (int f = 0; game.movie() && f < 200; ++f) game.update(kFrameUs);
+        game.key(0x01, false, false, 0);
+        for (int f = 0; f < 600; ++f) game.update(kFrameUs);
+    };
+    const auto run = [](Game& game, int frames) {
+        for (int f = 0; f < frames; ++f) game.update(kFrameUs);
+    };
+    // Uses the monitor and closes its texts.
+    const auto watch = [&](Game& game, ObjId monitor) {
+        World& w = game.world();
+        const Item* m = w.get(monitor);
+        w.move_item(1, m->x + 64, m->y + 64, m->z);
+        run(game, 30);
+        use_item(w, monitor);
+        run(game, 60);
+        for (int k = 0; k < 20 && game.screen(); ++k) {
+            press(game, 0x01, false, 0x1B);
+            run(game, 30);
+        }
+        run(game, 240);
+    };
+    const auto grey = [](const Game& game) {
+        const Palette& p = game.palette();
+        return p.colors[200].r != 0 && p.colors[200].r == p.colors[200].g && p.colors[200].g == p.colors[200].b;
+    };
+    const auto restored = [](Game& game) {
+        const World& w = game.world();
+        return w.state.controlled_npc == 1 && !w.state.avatar_in_stasis && !w.state.cru_stasis &&
+               w.state.status_bar_visible && w.state.camera_x == w.get(1)->x && w.state.camera_y == w.get(1)->y;
+    };
+    {
+        Game game(data, test_saves(data));
+        start(game);
+        World& w = game.world();
+        watch(game, 5459);
+        std::printf("monitors: 5459 camera %+d, %+d from the player, stasis %d, grey %d\n",
+                    w.state.camera_x - w.get(1)->x, w.state.camera_y - w.get(1)->y, w.state.avatar_in_stasis, grey(game));
+        CHECK(w.state.avatar_in_stasis && grey(game) && !w.state.status_bar_visible && w.state.camera_y - w.get(1)->y > 5000);
+        game.key(0x48, true, true, 0, 0);
+        run(game, 10);
+        game.key(0x48, true, false, 0, 0);
+        run(game, 120);
+        CHECK(restored(game) && !grey(game));
+        CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+    }
+    {
+        Game game(data, test_saves(data));
+        start(game);
+        World& w = game.world();
+        watch(game, 2136);
+        std::printf("monitors: 2136 controlled NPC %u (shape %04X), grey %d\n", w.state.controlled_npc,
+                    w.get(w.state.controlled_npc)->shape, grey(game));
+        CHECK(w.state.controlled_npc == 8 && grey(game));
+        press(game, 0x01, false, 0x1B);
+        run(game, 120);
+        CHECK(restored(game) && !game.menu());
+        CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+    }
+}
+
+// Animated scenery (DLIST_1198_162B): the valve 4600 of SAVEGAME.3 lets out
+// steam (STEAM2 0x511, TYPEFLAG animation type 3, speed 3), which cycles its
+// frames while on screen, one step every third pass of the game process.
+void test_scenery_animation(const std::filesystem::path& data) {
+    Game game(data, test_saves(data));
+    game.load_save(3);
+    World& w = game.world();
+    constexpr ObjId kValve = 4600;
+    const Item* valve = w.get(kValve);
+    CHECK(valve && valve->shape == 0x30);
+    if (!valve) return;
+    w.move_item(1, valve->x + 64, valve->y + 64, valve->z);
+    for (int f = 0; f < 10; ++f) game.update(kFrameUs);
+    use_item(w, kValve);
+    for (int f = 0; f < 300; ++f) game.update(kFrameUs);
+    ObjId steam = 0;
+    w.for_each([&](const Item& i) {
+        if (i.shape == 0x511 && !i.parent && w.is_partly_on_screen(i)) steam = i.id;
+    });
+    CHECK(steam != 0);
+    if (!steam) return;
+    std::set<int> frames;
+    int changes = 0, last = w.get(steam)->frame;
+    for (int f = 0; f < 60; ++f) {
+        game.update(kFrameUs);
+        const int now = w.get(steam)->frame;
+        frames.insert(now);
+        changes += now != last;
+        last = now;
+    }
+    std::printf("scenery animation: steam %u, %zu frames, %d changes in 60 passes\n", steam, frames.size(), changes);
+    CHECK(frames.size() > 2 && changes >= 15 && changes <= 21);
+    CHECK(game.machine().faults().empty());
+}
+
+// The valve 6689 of SAVEGAME.1 shuts off the steam 6533 (STEAM2 0x511):
+// STEAMBOX_0327 swaps it for 0x512 (status 0x1000) and, at its last frame,
+// for the marker 0x3A9 frame 1. A game saved in between loses that process;
+// loading finishes the swap, and the valve opens the steam again.
+void test_steam_valve_save(const std::filesystem::path& data) {
+    const auto dir = std::filesystem::temp_directory_path() / "crusader_steam_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    std::filesystem::copy_file(test_saves(data) / "SAVEGAME.1", dir / "SAVEGAME.1");
+    constexpr ObjId kValve = 6689;
+    constexpr std::int32_t kJetX = 27887, kJetY = 28255;
+    auto jet = [&](World& w) {
+        const Item* found = nullptr;
+        w.for_each([&](const Item& i) {
+            if (!i.parent && i.x == kJetX && i.y == kJetY && (i.quality & 0xFF) == 0x1C) found = &i;
+        });
+        return found;
+    };
+    Game game(data, test_saves(data));
+    game.set_save_dir(dir);
+    game.load_save(1);
+    World& w = game.world();
+    CHECK(w.get(kValve) && w.get(kValve)->shape == 0x30 && jet(w) && jet(w)->shape == 0x511);
+    if (!w.get(kValve) || !jet(w)) return;
+    w.move_item(1, 27879, 28689, 0);
+    for (int f = 0; f < 10; ++f) game.update(kFrameUs);
+    use_item(w, kValve);
+    for (int f = 0; f < 300 && jet(w) && jet(w)->shape != 0x512; ++f) game.update(kFrameUs);
+    // The steam starts shutting while the valve is still turning (frame 2);
+    // save once the valve is fully shut, the steam still closing. A valve
+    // saved half turned would, used again, shut a bit more.
+    for (int f = 0; f < 120 && jet(w) && jet(w)->shape == 0x512 && w.get(kValve)->frame != 4; ++f)
+        game.update(kFrameUs);
+    const Item* closing = jet(w);
+    CHECK(closing && closing->shape == 0x512 && (closing->flags & 0x1000) && w.get(kValve)->frame == 4);
+    game.save_game(2);
+
+    Game again(data, test_saves(data));
+    again.set_save_dir(dir);
+    again.load_save(2);
+    World& v = again.world();
+    const Item* marker = jet(v);
+    CHECK(marker && marker->shape == 0x3A9 && marker->frame == 1 && !(marker->flags & 0x1000));
+    for (int f = 0; f < 10; ++f) again.update(kFrameUs);
+    use_item(v, kValve);
+    for (int f = 0; f < 400; ++f) again.update(kFrameUs);
+    const Item* reopened = jet(v);
+    std::printf("steam valve: saved while closing, reloaded as 0x%03X frame %u, reopened as 0x%03X\n",
+                marker ? marker->shape : 0, marker ? marker->frame : 0, reopened ? reopened->shape : 0);
+    CHECK(reopened && reopened->shape == 0x511);
+    CHECK(game.machine().faults().empty() && again.machine().faults().empty());
+    std::filesystem::remove_all(dir);
+}
+
+// Laser barrier L_NS-16 6406 of mission 1 (new game): crossed, its gotHit
+// (contact of the move, the item is not solid) sees the controlled NPC,
+// spawns LAZER and its TRIGGER; LAZER's NPC_0A1D zaps the player
+// (Item::I_receiveHit, fire type 7).
+void test_laser_barrier(const std::filesystem::path& data) {
+    Game game(data, test_saves(data));
+    game.new_game(3);
+    game.update(kFrameUs);
+    game.key(0x01, false, true, 0, 0x1B);
+    for (int f = 0; game.movie() && f < 200; ++f) game.update(kFrameUs);
+    game.key(0x01, false, false, 0);
+    for (int f = 0; f < 600; ++f) game.update(kFrameUs);
+    World& w = game.world();
+    constexpr ObjId kLaser = 6406;
+    const Item* laser = w.get(kLaser);
+    CHECK(laser && laser->shape == 0x1CF && laser->frame == 0);
+    if (!laser) return;
+    const ShapeInfo* info = w.shape_info(laser->shape);
+    w.move_item(1, laser->x - info->footpad_x * 8 + 24, laser->y + 80, laser->z);
+    if (auto r = w.npc_record(1); !r.empty()) r[npc::kDirection] = 0;  // north, across the beam
+    const int hp = w.npc_hp(1);
+    game.key(0x48, true, true, 0);
+    for (int f = 0; f < 150; ++f) game.update(kFrameUs);
+    game.key(0x48, true, false, 0);
+    for (int f = 0; f < 30; ++f) game.update(kFrameUs);
+    std::printf("laser barrier: player %+d past the beam, hit points %d -> %u\n", laser->y - w.get(1)->y, hp,
+                w.npc_hp(1));
+    CHECK(w.get(1)->y <= laser->y && w.npc_hp(1) < hp);
+    CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+}
+
+// Aiming while kneeling (SAVEGAME.13, shotgun): keypad 5 in the combat
+// stance kneels (0x28). Actor::I_doAnim (10F0:0245) keeps the player
+// kneeling for the actions of DS:135F (after the weapon's remapping) and
+// stands him up for any other (NPC_10f0_221b / 226d: record +0x13 bit 2,
+// footpad height 6 / 10). Turning the crosshair then plays the kneeling
+// stance (0x2E, 0x2F with the shotgun) and the shot is a kneeling one
+// (0x2A, 0x32 with the shotgun); Up stands him up (0x29, then a pose).
+void test_kneeling_aim(const std::filesystem::path& data) {
+    Game game(data, test_saves(data));
+    game.load_save(13);
+    auto run = [&](int frames) {
+        for (int i = 0; i < frames; ++i) game.update(kFrameUs);
+    };
+    auto tap = [&](std::uint8_t scancode, bool extended) {
+        game.key(scancode, extended, true, 0);
+        run(2);
+        game.key(scancode, extended, false, 0);
+        run(2);
+    };
+    run(5);
+    World& w = game.world();
+    const GameState::Aim& aim = w.state.aim;
+    const auto kneeling = [&] { return (w.npc_record(1)[npc::kFlags13] & 0x04) != 0; };
+    const auto height = [&] { return w.shape_info(w.get(1)->shape)->footpad_z; };
+    w.npc_record(1)[npc::kDirection] = 4;
+    do_anim(game.kernel(), w, game.animations(), 1, 4, kDirCurrent);
+    run(30);
+    CHECK(aim.active && !kneeling() && height() == 10);
+    tap(0x4C, false);  // keypad 5
+    run(60);
+    CHECK(last_action(game) == 0x28 && kneeling() && height() == 6);
+    for (int i = 0; i < 12; ++i) tap(0x4D, true);  // right arrow
+    run(40);
+    std::printf("kneeling aim: angle %d, direction %d, last action 0x%X, kneeling %d\n", aim.angle, w.npc_direction(1),
+                last_action(game), kneeling());
+    CHECK(aim.angle == 27 && w.npc_direction(1) == 5 && last_action(game) == 0x2F && kneeling());
+    press(game, 0x39, false, ' ');
+    run(60);
+    CHECK(last_action(game) == 0x32 && game.shots_fired() == 1 && kneeling());
+    tap(0x48, true);  // up arrow
+    run(60);
+    std::printf("kneeling aim: after Up, last action 0x%X, kneeling %d, height %d\n", last_action(game), kneeling(),
+                height());
+    CHECK(!kneeling() && height() == 10);
+    CHECK(game.machine().faults().empty());
+}
+
+// Hazard stripes (shape 0x10C, flat, 32 x 256) on the floor tiles (0xCC,
+// flat, 256 x 256) of SAVEGAME.2: each stripe is drawn after every tile it
+// overlaps, so that the next tile does not cut it (large square flats first,
+// render.cpp).
+void test_floor_stripes(const std::filesystem::path& data) {
+    Game game(data, test_saves(data));
+    game.load_save(2);
+    game.update(kFrameUs);
+    const World& w = game.world();
+    const FlexArchive flex = FlexArchive::open(data / "STATIC/SHAPES.FLX");
+    ShapeCache shapes(flex, ShapeLayout::World);
+    const auto list = build_display_list(w, shapes, View{w.state.view_left, w.state.view_top}, 640, 480);
+    int stripes = 0, checked = 0, wrong = 0;
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        const DrawItem& s = list[i];
+        if (s.item->shape != 0x10C) continue;
+        ++stripes;
+        for (std::size_t j = 0; j < list.size(); ++j) {
+            const DrawItem& t = list[j];
+            if (t.item->shape != 0xCC || t.z != s.z) continue;
+            if (t.x <= s.x_left || s.x <= t.x_left || t.y <= s.y_far || s.y <= t.y_far) continue;
+            ++checked;
+            wrong += j > i;
+        }
+    }
+    std::printf("floor stripes: %d stripes on screen, %d overlaps with tiles, %d drawn under a tile\n", stripes, checked,
+                wrong);
+    CHECK(stripes > 0 && checked > stripes && wrong == 0);
+}
+
+// TEST11 (docs/bugs.md): guard 8 was saved as its death began (dead, action
+// 0x12 on its first frame). The animation processes are not loaded from
+// saves; loading plays the death on, NPCDEATH then lays its body (D_GUARD
+// 0x339). Before, the guard stayed standing, dead, for good.
+void test_saved_death_plays_on(const std::filesystem::path& data) {
+    constexpr ObjId kGuard = 8;
+    const auto file = test_saves(data) / "ordinateur-robot-face-garde-mort-debout.sav";
+    {
+        World saved(load_typeflags(data / "STATIC/TYPEFLAG.DAT"));
+        saved.load_saved_items(FlexArchive::open(file));
+        const Item* g = saved.get(kGuard);
+        CHECK(g && g->frame == 231 && saved.npc_word(kGuard, npc::kLastAnim) == 0x12);
+    }
+    Game game(data, test_saves(data));
+    game.load_save_file(file);
+    World& w = game.world();
+    const Item* guard = w.get(kGuard);
+    CHECK(guard && w.is_dead(kGuard));
+    if (!guard) return;
+    const std::int32_t gx = guard->x, gy = guard->y;
+    for (int f = 0; f < 600; ++f) game.update(kFrameUs);
+    bool body = false;
+    w.for_each([&](const Item& i) {
+        body = body || (i.shape == 0x339 && std::abs(i.x - gx) < 64 && std::abs(i.y - gy) < 64);
+    });
+    std::printf("saved death: guard %s, body %d\n", w.get(kGuard) ? "still standing" : "set aside", body);
+    CHECK(!w.get(kGuard) && body);
+    CHECK(game.machine().faults().empty());
+}
+
+// The force field floor (FFFLOOR 0x135, flat, 64 x 64; frame 0 its outline)
+// of TEST10 (docs/bugs.md, "un piège ne s'affiche pas correctement") lies on
+// floor tiles (0x14, flat, 256 x 256) at the same height: both are large
+// square flats, the larger is drawn first. Before, the tile it lay on was
+// drawn over it and only bits of its outline showed.
+void test_force_field_floor(const std::filesystem::path& data) {
+    Game game(data, test_saves(data));
+    game.load_save_file(test_saves(data) / "piege-sprite-mal-affiche.sav");
+    World& w = game.world();
+    w.move_item(1, 30450, 5500, 96);
+    for (int i = 0; i < 5; ++i) game.update(kFrameUs);
+    const FlexArchive flex = FlexArchive::open(data / "STATIC/SHAPES.FLX");
+    ShapeCache shapes(flex, ShapeLayout::World);
+    const auto list = build_display_list(w, shapes, View{w.state.view_left, w.state.view_top}, 640, 480);
+    int fields = 0, checked = 0, wrong = 0;
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        const DrawItem& f = list[i];
+        if (f.item->shape != 0x135 || f.item->frame != 0) continue;
+        ++fields;
+        for (std::size_t j = 0; j < list.size(); ++j) {
+            const DrawItem& t = list[j];
+            if (t.item->shape != 0x14 || t.z != f.z) continue;
+            if (t.x <= f.x_left || f.x <= t.x_left || t.y <= f.y_far || f.y <= t.y_far) continue;
+            ++checked;
+            wrong += j > i;
+        }
+    }
+    std::printf("force field floor: %d outlines on screen, %d on tiles, %d drawn under their tile\n", fields, checked,
+                wrong);
+    CHECK(fields > 0 && checked >= fields && wrong == 0);
+}
+
+// Lot 6.4: the end of the game, EVENT (class 0x361) equip(88): movie O01,
+// then Game::I_playCredits: the credits, the start-up movies T01 and T02,
+// and the menu with no game to go back to.
+void test_end_credits(const std::filesystem::path& data) {
+    Game game(data, test_saves(data));
+    game.load_save(1);
+    const std::uint8_t ending[] = {88, 0};
+    CHECK(game.machine().start_event(0x361, 0x0A, 1, ending) != 0);
+    // The movies chain: the next one may be on as soon as one is skipped.
+    auto skip_movie = [&](const char* name) {
+        int f = 0;
+        for (; f < 600 && !game.movie(); ++f) game.update(kFrameUs);
+        std::printf("end: movie %s after %d frames\n", name, f);
+        CHECK(game.movie() != nullptr);
+        game.key(0x01, false, true, 0, 0x1B);
+        game.update(kFrameUs);
+        game.key(0x01, false, false, 0);
+    };
+    auto credits = [&] { return game.menu() && const_cast<MainMenu*>(game.menu())->credits(); };
+    skip_movie("O01");
+    for (int f = 0; f < 120 && !credits(); ++f) game.update(kFrameUs);
+    for (int f = 0; f < 30; ++f) game.update(kFrameUs);
+    CHECK(credits() && game.audio()->music.current() == Music::kCredits);
+    CHECK(!game.movie());
+    press(game, 0x39, false, ' ');
+    skip_movie("T01");
+    skip_movie("T02");
+    CHECK(!game.movie());
+    game.update(kFrameUs);
+    CHECK(game.menu() && !credits() && game.audio()->music.current() == Music::kMenu);
+    // No game to go back to: Escape leaves the menu open.
+    press(game, 0x01, false, 0x1B);
+    game.update(kFrameUs);
+    CHECK(game.menu() && !game.menu()->result());
+    CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+}
+
+// Weasel's shop (WeaselGump::I_showWeaselGump, 0x12D): save 5 has the booth
+// (WEA_BOOT 7233) and global 0x1F = 2.
+void test_weasel(const std::filesystem::path& data) {
+    constexpr ObjId kBooth = 7233;
+    Game game(data, test_saves(data));
+    game.load_save(5);
+    World& w = game.world();
+    const auto credits_carried = [&w] { return carried(w, WeaselGump::kCredits) ? w.get(carried(w, 0x4ED))->quality : 0; };
+    const int before = credits_carried();
+    CHECK(game.machine().start_event(0x45B, 0x0A, kBooth) != 0);
+    const auto gump = [&game] { return dynamic_cast<const WeaselGump*>(game.screen()); };
+    int f = 0;
+    for (; f < 900 && !gump(); ++f) game.update(kFrameUs);
+    std::printf("weasel: open after %d frames, level %d\n", f, gump() ? gump()->level() : -1);
+    CHECK(gump() != nullptr);
+    if (!gump()) return;
+    // The first step came at the same pass: the gump stays hidden behind its movie.
+    CHECK(gump()->level() == 2 && gump()->x() == 214 && gump()->y() == 6);
+    CHECK(!game.world().state.status_bar_visible && game.cursor().visible());
+    // A step at each pass, with its movie; Escape skips the movie.
+    const auto skip_movie = [&](const char* name) {
+        int n = 0;
+        for (; n < 10 && !game.movie(); ++n) game.update(kFrameUs);
+        std::printf("weasel: movie %s after %d frames\n", name, n);
+        CHECK(game.movie() != nullptr);
+        game.key(0x01, false, true, 0, 0x1B);
+        for (n = 0; n < 600 && game.movie(); ++n) game.update(kFrameUs);
+        game.key(0x01, false, false, 0);
+        CHECK(!game.movie());
+    };
+    skip_movie("17A");
+    CHECK(gump()->state() == WeaselGump::kBrowsing && gump()->shown());
+    CHECK(gump()->credits() == before && gump()->items().size() == 6 && gump()->current() == 0);
+    CHECK(gump()->button_shown(WeaselGump::kBuy) && gump()->button_shown(WeaselGump::kAmmo) &&
+          !gump()->button_shown(WeaselGump::kWeapons) && !gump()->button_shown(WeaselGump::kYes));
+    std::printf("weasel: credits %d, items", gump()->credits());
+    for (const auto& i : gump()->items()) std::printf(" 0x%X:%u", i.shape, i.price);
+    std::printf("\n");
+    // The last item: previous from the first goes round.
+    press(game, 0x4B, true);
+    CHECK(gump()->current() == 5 && gump()->items()[5].shape == 0x39A);
+    const int owned_before = carried(w, 0x39A) ? w.get(carried(w, 0x39A))->quality : 0;
+    press(game, 0x1C, false, 0x0D);  // buy
+    press(game, 0x39, false, ' ');   // buy again
+    CHECK(gump()->credits() == before - 400 && gump()->cart().size() == 2);
+    // The ammunition: 0x341 and 0x340 left out at level 2.
+    press(game, 0x0F, false, '\t');
+    CHECK(gump()->level() == 1 && gump()->button_shown(WeaselGump::kWeapons) &&
+          !gump()->button_shown(WeaselGump::kAmmo));
+    int ammo = 0;
+    for (const auto& i : gump()->items()) ammo += i.shape != 0;
+    std::printf("weasel: ammunition, %d of %zu items\n", ammo, gump()->items().size());
+    CHECK(ammo == 4);
+    // Exit: back to the weapons, the confirmation with its movie.
+    press(game, 0x01, false, 0x1B);
+    CHECK(gump()->level() == 2 && gump()->state() == WeaselGump::kConfirm);
+    skip_movie("21A/21B");
+    CHECK(gump()->state() == WeaselGump::kConfirm && gump()->button_shown(WeaselGump::kYes) &&
+          !gump()->button_shown(WeaselGump::kBuy));
+    // Refused: the credits back, the cart emptied.
+    press(game, 0x31, false, 'n');
+    CHECK(gump()->credits() == before && gump()->cart().empty() && gump()->state() == WeaselGump::kRefused);
+    skip_movie("21E/21F");
+    CHECK(gump()->state() == WeaselGump::kQuestion);
+    // Yes: browsing again; buy with the mouse on "buy", then confirm.
+    // The weapons read again when leaving: the first item.
+    press(game, 0x18, false, 'o');
+    CHECK(gump()->state() == WeaselGump::kBrowsing && gump()->current() == 0);
+    press(game, 0x4B, true);
+    const auto click = [&](int button) {
+        const WeaselGump::Rect r = gump()->button_rect(button);
+        const int x = (r.x0 + r.x1) / 2, y = (r.y0 + r.y1) / 2;
+        game.mouse_move(x, y);
+        game.mouse_button(true, x, y);
+        game.mouse_button(false, x, y);
+    };
+    click(WeaselGump::kBuy);
+    CHECK(gump()->credits() == before - 200 && gump()->cart().size() == 1);
+    click(WeaselGump::kExit);
+    skip_movie("21A/21B");
+    press(game, 0x15, false, 'y');
+    CHECK(gump()->state() == WeaselGump::kBought);
+    const int owned_after = carried(w, 0x39A) ? w.get(carried(w, 0x39A))->quality : 0;
+    std::printf("weasel: bought, credits %d -> %d, 0x39A %d -> %d\n", before, credits_carried(), owned_before,
+                owned_after);
+    CHECK(credits_carried() == before - 200 && owned_after == owned_before + 1);
+    skip_movie("21C/21D");
+    CHECK(gump()->state() == WeaselGump::kQuestion);
+    // No, after buying: closed at the next step.
+    press(game, 0x31, false, 'n');
+    CHECK(gump() && gump()->state() == WeaselGump::kClosing);
+    game.update(kFrameUs);
+    CHECK(!game.screen() && game.world().state.status_bar_visible);
+    for (int n = 0; n < 300; ++n) game.update(kFrameUs);
+    CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+    // The first movie only once.
+    game.show_weasel(2);
+    skip_movie("18A/18B/18C");
+    CHECK(gump() && gump()->state() == WeaselGump::kBrowsing);
+    press(game, 0x01, false, 0x1B);
+    skip_movie("19C/19D");
+    press(game, 0x01, false, 0x1B);
+    CHECK(!game.screen());
+}
+
+// Milestone 7: saving with F9 (the save screen and its name), F5 (quick
+// save) and the menu's "save game", in a copy of the saves, then loading back.
+void test_save_game(const std::filesystem::path& data) {
+    const auto dir = std::filesystem::temp_directory_path() / "crusader_save_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    for (const char* n : {"SAVEGAME.1", "SAVEGAME.13"}) std::filesystem::copy_file(test_saves(data) / n, dir / n);
+    Game game(data, test_saves(data));
+    game.set_save_dir(dir);
+    CHECK(game.save_names()[0] == "SEB" && game.save_names()[2].empty());
+    game.load_save(1);
+    settle(game);
+    World& w = game.world();
+    auto type = [&](const std::string& text) {
+        for (char c : text) press(game, 0x10, false, static_cast<std::uint8_t>(c));
+    };
+    auto name_of = [](const FlexArchive& f) {
+        const auto e = f.entry(9);
+        return std::string(e.begin(), std::find(e.begin(), e.end(), std::uint8_t{0}));
+    };
+
+    // F9, down twice: slot 2; Enter edits its (empty) name. Lower case
+    // becomes upper case, Backspace removes, Enter saves SAVEGAME.3.
+    press(game, 0x43, false);
+    CHECK(game.screen() && w.state.cycle_paused);
+    press(game, 0x50, true);
+    press(game, 0x50, true);
+    press(game, 0x1C, false, 0x0D);
+    type("sauvx");
+    press(game, 0x0E, false, 8);
+    type("e 1");
+    CHECK(game.screen() && !std::filesystem::exists(dir / "SAVEGAME.3"));
+    press(game, 0x1C, false, 0x0D);
+    CHECK(!game.screen() && !w.state.cycle_paused);
+    CHECK(game.save_names()[2] == "SAUVE 1");
+    CHECK(std::filesystem::exists(dir / "SAVEGAME.3"));
+    if (!std::filesystem::exists(dir / "SAVEGAME.3")) return;
+    {
+        const auto saved = FlexArchive::open(dir / "SAVEGAME.3");
+        CHECK(name_of(saved) == "SAUVE 1");
+        const auto table = w.saved_item_table();
+        CHECK(std::ranges::equal(saved.entry(0), table));
+        CHECK(saved.entry(20).size() == 0x15 && saved.entry(60).size() == 0x42 && saved.entry(52).size() == 200);
+        CHECK(saved.entry(100).empty());  // the kernel is not written
+    }
+    CHECK(LoadScreen::read_names(dir)[2] == "SAUVE 1");
+
+    // Loading it back: the player, the globals, the difficulty and the items.
+    const Item before = *w.get(1);
+    const auto globals = game.machine().globals();
+    const std::size_t items = w.item_count();
+    game.load_save(3);
+    World& w2 = game.world();
+    const Item* player = w2.get(1);
+    CHECK(player && player->x == before.x && player->y == before.y && player->z == before.z &&
+          player->frame == before.frame);
+    CHECK(std::equal(globals.begin(), globals.begin() + 0x42, game.machine().globals().begin()));
+    CHECK(w2.item_count() == items);
+    std::printf("save 3: %zu items, player (%d, %d, %d)\n", w2.item_count(), player ? player->x : 0,
+                player ? player->y : 0, player ? player->z : 0);
+    settle(game);
+
+    // F5, yes: SAVEGAME.13 under its (empty) name, then the notice.
+    const auto quick_before = std::filesystem::last_write_time(dir / "SAVEGAME.13");
+    press(game, 0x3F, false);
+    const auto* ask = dynamic_cast<const ShapeDialog*>(game.screen());
+    CHECK(ask && ask->shape() == ShapeDialog::kQuickSaveQuestion);
+    press(game, 0x15, false, 'y');
+    ask = dynamic_cast<const ShapeDialog*>(game.screen());
+    CHECK(ask && ask->shape() == ShapeDialog::kQuickSaveNotice);
+    press(game, 0x1C, false, 0x0D);
+    CHECK(!game.screen());
+    CHECK(std::filesystem::last_write_time(dir / "SAVEGAME.13") != quick_before);
+    CHECK(name_of(FlexArchive::open(dir / "SAVEGAME.13")).empty());
+
+    // The menu's "save game": the same screen, slot 2 still selected; its
+    // name edited to "SAUVE 2", the menu closes and the game is saved.
+    press(game, 0x01, false, 0x1B);
+    CHECK(game.menu());
+    if (!game.menu()) return;
+    const auto b = game.menu()->button(MainMenu::kSave);
+    game.mouse_button(true, b.x0 + 5, b.y0 + 5);
+    game.mouse_button(false, b.x0 + 5, b.y0 + 5);
+    CHECK(game.menu() && game.menu()->load_screen() &&
+          game.menu()->load_screen()->mode() == LoadScreen::Mode::kSave);
+    press(game, 0x1C, false, 0x0D);
+    CHECK(game.menu() && game.menu()->load_screen() && game.menu()->load_screen()->editing() &&
+          game.menu()->load_screen()->name() == "SAUVE 1");
+    press(game, 0x0E, false, 8);
+    type("2");
+    press(game, 0x1C, false, 0x0D);
+    CHECK(!game.menu());
+    CHECK(name_of(FlexArchive::open(dir / "SAVEGAME.3")) == "SAUVE 2");
+    CHECK(game.machine().faults().empty());
+    std::filesystem::remove_all(dir);
+}
+
+// Item::I_destroy (10A8:1365): what rests on a crate falls when the crate is
+// destroyed. For items carried by crates in the saved games, every crate
+// under the item is destroyed on a fresh load; the item must end lower (an
+// item on several crates stays up while one of them remains).
+void test_crate_destroyed(const std::filesystem::path& data) {
+    constexpr std::uint16_t kCrates[] = {0x432, 0x5A0, 0x08F, 0x59F, 0x2B3, 0x2CA, 0x1FD, 0x1FE};
+    static constexpr std::uint8_t kAll[] = {'$'};
+    auto is_crate = [&](const Item& i) {
+        return i.parent == 0 && std::find(std::begin(kCrates), std::end(kCrates), i.shape) != std::end(kCrates);
+    };
+    int tried = 0, fell = 0, stayed = 0;
+    for (int slot : {1, 2, 3, 4, 5, 6, 7, 8, 9, 13}) {
+        if (!std::filesystem::exists(test_saves(data) / ("SAVEGAME." + std::to_string(slot)))) continue;
+        // Carried item -> the crates under it.
+        std::map<ObjId, std::vector<ObjId>> under;
+        {
+            Game game(data, test_saves(data));
+            game.load_save(slot);
+            World& w = game.world();
+            w.for_each([&](const Item& i) {
+                if (!is_crate(i)) return;
+                for (ObjId above : w.surface_search(i.id, 1, kAll)) {
+                    if (above != i.id) under[above].push_back(i.id);
+                }
+            });
+        }
+        int n = 0;
+        for (const auto& [top, crates] : under) {
+            if (++n > 6) break;
+            Game game(data, test_saves(data));
+            game.load_save(slot);
+            World& w = game.world();
+            const Item* item = w.get(top);
+            if (!item) continue;
+            const int z = item->z;
+            ++tried;
+            for (ObjId crate : crates) destroy_item(game.kernel(), w, crate);
+            for (int f = 0; f < 120; ++f) game.update(kFrameUs);
+            item = w.get(top);
+            if (item && item->z < z) ++fell;
+            else ++stayed;
+            CHECK(game.machine().faults().empty());
+        }
+    }
+    std::printf("crates destroyed: %d carried items tried, %d fell, %d stayed\n", tried, fell, stayed);
+    CHECK(tried > 0 && fell > 0);
+}
+
+// Item::I_create (10A8:11E7): a weapon created by a script (family 10) holds
+// the rounds of a full clip (DTABLE_1120_0180); the NPCs' weapons are made
+// this way, and carried the loot of a dead NPC with them.
+void test_created_weapon_has_a_clip(const std::filesystem::path& data) {
+    Game game(data, test_saves(data));
+    game.load_save(1);
+    World& w = game.world();
+    int checked = 0, empty = 0;
+    for (int i = 1; i < 64; ++i) {
+        const std::uint16_t shape = dtable::weapon_at(i).shape();
+        if (shape == 0 || w.family_of(shape) != 10 || dtable::clip_size(shape) == 0) continue;
+        const ObjId id = w.create(shape, 0);
+        if (id == 0) continue;
+        ++checked;
+        empty += w.get(id)->quality != dtable::clip_size(shape);
+        w.destroy(id);
+    }
+    std::printf("created weapons: %d checked, %d without a full clip\n", checked, empty);
+    CHECK(checked > 0 && empty == 0);
+}
+
 int main(int argc, char** argv) {
     const std::filesystem::path data = argc > 1 ? argv[1] : "data";
-    if (!std::filesystem::exists(data / "SAVEGAME/SAVEGAME.1")) {
+    if (!std::filesystem::exists(data / "STATIC/FIXED.DAT")) {
         std::printf("no game data, skipped\n");
         return 0;
     }
+    if (!have_test_saves(data)) return 1;
     test_load_and_run(data);
     test_alert(data);
     test_player_walks(data);
@@ -2479,6 +3864,10 @@ int main(int argc, char** argv) {
     test_keys_and_cursor(data);
     test_menu(data);
     test_load_from_menu(data);
+    test_save_game(data);
+    test_crate_destroyed(data);
+    test_created_weapon_has_a_clip(data);
+
     test_fades(data);
     test_credits(data);
     test_options(data);
@@ -2489,18 +3878,43 @@ int main(int argc, char** argv) {
     test_keypad(data);
     test_monitor(data);
     test_security_camera(data);
+    test_energy_walls(data);
+    test_floor_pad(data);
+    test_ledge_step(data);
+    test_walk_down_steps(data);
     test_inventory_keys(data);
     test_item_selection(data);
     test_message_box(data);
     test_function_keys(data);
     test_mouse_in_play(data);
     test_hard_landing(data);
+    test_blocked_step(data);
     test_shot_kills(data);
+    test_death_called_from_anim(data);
+    test_wall_lasers(data);
+    test_end_credits(data);
+    test_weasel(data);
+    test_barrels(data);
+    test_mines(data);
+    test_station_pads(data);
+    test_turrets(data);
+    test_monitors(data);
+    test_scenery_animation(data);
+    test_steam_valve_save(data);
+    test_laser_barrier(data);
+    test_kneeling_aim(data);
+    test_floor_stripes(data);
+    test_force_field_floor(data);
+    test_saved_death_plays_on(data);
     test_aiming(data);
     test_aim_mode(data);
+    test_crosshair_shot_height(data);
+    test_player_combat_flag(data);
+    test_leave_surface(data);
     test_enemies(data);
     test_new_game(data);
     test_movies(data);
+    test_back_to_base(data);
     std::printf(failures ? "%d failure(s)\n" : "all game checks passed\n", failures);
     return failures ? 1 : 0;
 }
