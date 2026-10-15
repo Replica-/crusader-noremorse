@@ -75,7 +75,7 @@ def main():
     ap.add_argument("--version", default="0.0.0-dev")
     args = ap.parse_args()
 
-    out = Path(args.out)
+    out = Path(args.out).resolve()
     work = out / "_work"
     work.mkdir(parents=True, exist_ok=True)
     zig = find_zig(args.zig)
