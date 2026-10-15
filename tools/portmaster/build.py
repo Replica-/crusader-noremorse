@@ -44,7 +44,10 @@ def sdl_headers(work):
         urllib.request.urlretrieve(
             f"https://github.com/libsdl-org/SDL/releases/download/release-{SDL_VERSION}/SDL2-{SDL_VERSION}.tar.gz", tgz)
         with tarfile.open(tgz) as t:
-            t.extractall(dest, filter="data")
+            # headers only: the archive holds symlinks (android-project-ant/src)
+            # that the "data" filter rejects
+            members = [m for m in t.getmembers() if "/include/" in m.name and m.isfile()]
+            t.extractall(dest, members=members, filter="data")
         inner = next(dest.iterdir())
         for item in inner.iterdir():
             shutil.move(str(item), dest / item.name)
