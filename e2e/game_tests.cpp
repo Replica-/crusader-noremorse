@@ -3594,6 +3594,8 @@ void test_start_up(const std::filesystem::path& data) {
     CHECK(!game.movie());
     game.update(kFrameUs);
     CHECK(game.menu() && game.audio()->music.current() == Music::kMenu);
+    // The colour cycling stays paused, or it flickers over the menu palette.
+    CHECK(game.world().state.cycle_paused);
     press(game, 0x01, false, 0x1B);
     game.update(kFrameUs);
     CHECK(game.menu() && !game.menu()->result());

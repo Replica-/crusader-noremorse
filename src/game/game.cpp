@@ -695,7 +695,9 @@ void Game::end_movie() {
     }
     keyboard_.reset();
     if (movie_->kind() != MovieKind::kOverlay) world_->state.screen_palette = movie_->kept_palette();
-    if (movie_resumes_cycle_) world_->state.cycle_paused = false;
+    // Not under the start-up menu (open while the movies play): the cycling
+    // would write the game's colours 1..14 over the menu palette.
+    if (movie_resumes_cycle_ && !menu_) world_->state.cycle_paused = false;
     if (weasel_movie_) {
         // 13E0:0CD8: palette_write_hw(DS:058C), DS:6810 +0x40 cleared.
         weasel_movie_ = false;
