@@ -46,14 +46,16 @@
 // (_ASS_SetSoundVolume / _ASS_SetMusicVolume), mouse speed DS:6001 (0..3).
 // The volume and mouse buttons play sound 0x98 even at the end of the range.
 //
-// Port addition: a "manette" button (line 9, left of "quit", a text button in
-// the colours of the quit one) opens the controller screen
-// (gamepad_screen.hpp), which then gets every event until it closes. Left
-// from "quit" and right from the button move between them; Enter opens it.
-// Without fonts the button is absent.
+// Port addition: an "ameliorations" button (line 9, left of "quit", a text
+// button with a "+" icon in the colours of the quit one) opens the
+// enhancements window (enhancements_screen.hpp), which holds the controller
+// screen and gets every event until it closes. Left from "quit" and right
+// from the button move between them; Enter opens it. Without fonts the
+// button is absent.
 
 #include "core/game_config.hpp"
 #include "core/surface.hpp"
+#include "engine/ui/enhancements_screen.hpp"
 #include "engine/ui/gamepad_screen.hpp"
 #include "engine/world/render.hpp"
 
@@ -102,15 +104,16 @@ public:
     // Timer ticks, at every pass of the modal loop: the repeating buttons.
     void update(std::uint32_t ticks);
     // The controller screen waits for a button press to bind (see Gamepad::set_capture).
-    bool waiting_for_pad() const { return pad_ && pad_->waiting(); }
+    bool waiting_for_pad() const { return enh_ && enh_->waiting(); }
     void pad_button(int button) {
-        if (pad_) pad_->pad_button(button);
+        if (enh_) enh_->pad_button(button);
     }
 
     bool closed() const { return closed_; }
     int focus() const { return *focus_; }
-    const GamepadScreen* gamepad() const { return pad_.get(); }
-    Rect pad_button() const { return pad_rect_; }
+    const EnhancementsScreen* enhancements() const { return enh_.get(); }
+    const GamepadScreen* gamepad() const { return enh_ ? enh_->gamepad() : nullptr; }
+    Rect enhancements_button() const { return pad_rect_; }
     int sound_step() const { return sound_step_; }
     int music_step() const { return music_step_; }
     // Whether a two-choice widget is chosen, or another widget drawn pressed
@@ -131,7 +134,7 @@ private:
     static int line_of(Widget w);
 
     void draw_pad_button(Surface8& screen) const;
-    void open_pad();
+    void open_enhancements();
     void act(Widget w);           // Options_key
     void widget_acted(Widget w);  // 13D0:1D81
     const Item* hit(int x, int y) const;
@@ -151,10 +154,10 @@ private:
     std::uint32_t next_repeat_ = 0;
     bool closed_ = false;
     const FontSet* fonts_ = nullptr;
-    Rect pad_rect_{380, 318, 503, 339};
-    bool pad_pressed_ = false;  // the mouse holds the controller button
-    int pad_focus_ = 0;
-    std::unique_ptr<GamepadScreen> pad_;
+    Rect pad_rect_{352, 318, 503, 339};
+    bool pad_pressed_ = false;  // the mouse holds the enhancements button
+    int pad_focus_ = 0;         // the controller screen's row, kept between openings
+    std::unique_ptr<EnhancementsScreen> enh_;
 };
 
 }  // namespace crusader

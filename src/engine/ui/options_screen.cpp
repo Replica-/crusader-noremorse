@@ -154,8 +154,8 @@ void OptionsScreen::draw_shape(Surface8& screen, std::uint16_t shape, int frame,
 
 // @orig 13D0:17C5
 void OptionsScreen::draw(Surface8& screen) const {
-    if (pad_) {
-        pad_->draw(screen);
+    if (enh_) {
+        enh_->draw(screen);
         return;
     }
     screen.clear(0);
@@ -182,24 +182,26 @@ void OptionsScreen::draw(Surface8& screen) const {
     if (fonts_) draw_pad_button(screen);
 }
 
-// The "manette" button: a text button next to "quit", in its colours (frame
-// and text bright when focused or pressed).
-// @orig none: port-only gamepad button
-
+// The "ameliorations" button: a "+" icon and a text button next to "quit", in
+// its colours (frame, icon and text bright when focused or pressed).
+// @orig none: port-only enhancements button
 void OptionsScreen::draw_pad_button(Surface8& screen) const {
     const bool lit = *focus_ == kPadLine || pad_pressed_;
     const std::uint8_t colour = lit ? kFocusColour : kButtonColour;
     const Rect& r = pad_rect_;
-    fill_rect(screen, r.x0, r.y0, r.x1, r.y1, kButtonFill);
-    outline(screen, r.x0, r.y0, r.x1, r.y1, colour);
+    draw_rounded_box(screen, r.x0, r.y0, r.x1, r.y1, kButtonFill, colour);
     TextWriter writer(*fonts_, kButtonFont);
-    const std::string text = tr("MANETTE", "CONTROLLER");
+    const std::string text = tr("AMELIORATIONS", "ENHANCEMENTS");
+    constexpr int kIcon = 11, kGap = 6;
     const int width = writer.measure(text).width;
+    const int total = kIcon + kGap + width;
+    const int left = r.x0 + (r.x1 - r.x0 + 1 - total) / 2;
+    draw_plus_icon(screen, left, r.y0 + (r.y1 - r.y0 + 1 - kIcon) / 2, kIcon, colour);
     // Drawn on a scratch surface and copied in one colour, as the font has its own.
     constexpr int kPad = 4, kAbove = 32, kHeight = 48;
     Surface8 scratch(width + 2 * kPad, kHeight);
     writer.print(scratch, kPad, kAbove, text);
-    const int x = r.x0 + (r.x1 - r.x0 + 1 - width) / 2, y = r.y0 + 14;
+    const int x = left + kIcon + kGap, y = r.y0 + 7;  // font 7 hangs from its top
     for (int sy = 0; sy < kHeight; ++sy) {
         for (int sx = 0; sx < scratch.width; ++sx) {
             const int dx = x - kPad + sx, dy = y - kAbove + sy;
@@ -210,25 +212,25 @@ void OptionsScreen::draw_pad_button(Surface8& screen) const {
     }
 }
 
-void OptionsScreen::open_pad() {
+void OptionsScreen::open_enhancements() {
     if (!fonts_) return;
-    pad_ = std::make_unique<GamepadScreen>(*fonts_, *config_, pad_focus_);
+    enh_ = std::make_unique<EnhancementsScreen>(*fonts_, *config_, pad_focus_);
 }
 
 // @orig 13D0:20B7
 void OptionsScreen::key(std::uint16_t code) {
-    if (pad_) {
-        pad_->key(code);
-        if (pad_->closed()) pad_.reset();
+    if (enh_) {
+        enh_->key(code);
+        if (enh_->closed()) enh_.reset();
         return;
     }
     if (closed_) return;
     int& focus = *focus_;
     if (focus == kPadLine && fonts_) {
-        // The controller button, left of "quit".
+        // The enhancements button, left of "quit".
         switch (code) {
         case gump_key::kEscape: closed_ = true; break;
-        case gump_key::kEnter: open_pad(); break;
+        case gump_key::kEnter: open_enhancements(); break;
         case gump_key::kUp:
         case '8': focus = kQuitLine - 1; break;
         case gump_key::kRight:
@@ -284,9 +286,9 @@ const OptionsScreen::Item* OptionsScreen::hit(int x, int y) const {
 
 // @orig 13D0:0DC0 1310:0371
 void OptionsScreen::mouse_down(int x, int y) {
-    if (pad_) {
-        pad_->mouse_down(x, y);
-        if (pad_->closed()) pad_.reset();
+    if (enh_) {
+        enh_->mouse_down(x, y);
+        if (enh_->closed()) enh_.reset();
         return;
     }
     if (closed_ || captured_ >= 0) return;
@@ -316,7 +318,7 @@ void OptionsScreen::mouse_down(int x, int y) {
 
 // @orig 1310:0151 1310:04CD
 void OptionsScreen::mouse_move(int x, int y) {
-    if (pad_ || closed_) return;
+    if (enh_ || closed_) return;
     if (pad_pressed_) pad_pressed_ = pad_rect_.contains(x, y);
     if (captured_ < 0) return;
     const Item& it = widgets_[captured_];
@@ -327,10 +329,10 @@ void OptionsScreen::mouse_move(int x, int y) {
 
 // @orig 1310:001D 1310:0371
 void OptionsScreen::mouse_up(int x, int y) {
-    if (pad_) return;
+    if (enh_) return;
     if (pad_pressed_) {  // acts at the release inside, like the quit button
         pad_pressed_ = false;
-        if (pad_rect_.contains(x, y)) open_pad();
+        if (pad_rect_.contains(x, y)) open_enhancements();
         return;
     }
     if (closed_ || captured_ < 0) return;
@@ -343,8 +345,8 @@ void OptionsScreen::mouse_up(int x, int y) {
 // @orig 1310:04FD
 void OptionsScreen::update(std::uint32_t ticks) {
     now_ = ticks;
-    if (pad_) {
-        pad_->update(ticks);
+    if (enh_) {
+        enh_->update(ticks);
         return;
     }
     if (closed_ || captured_ < 0 || !inside_) return;

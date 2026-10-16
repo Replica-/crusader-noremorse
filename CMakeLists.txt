@@ -113,6 +113,7 @@ add_library(crusader_engine
   src/engine/ui/help_screen.cpp
   src/engine/ui/credits.cpp
   src/engine/ui/gamepad_screen.cpp
+  src/engine/ui/enhancements_screen.cpp
   src/engine/ui/movie_player.cpp
   src/engine/world/render.cpp)
 target_link_libraries(crusader_engine PUBLIC crusader_core)

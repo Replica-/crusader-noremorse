@@ -767,10 +767,14 @@ void test_options(const std::filesystem::path& data) {
     o = game.menu()->options();
     CHECK(o->focus() == O::kPadLine && !o->pressed(O::kQuit) && !o->gamepad());
     game.render(screen);
-    CHECK(screen.row(o->pad_button().y0)[o->pad_button().x0 + 5] == 0x0C);  // outlined
+    CHECK(screen.row(o->enhancements_button().y0)[o->enhancements_button().x0 + 5] == 0x0C);  // outlined
     press(game, 0x4D, true);  // right: back to "quit"
     CHECK(o->focus() == O::kQuitLine && o->pressed(O::kQuit));
     press(game, 0x4B, true);
+    press(game, 0x1C, false, 0x0D);
+    // The enhancements window holds the controller screen, on its first row.
+    CHECK(o->enhancements() && !o->gamepad());
+    game.render(screen);
     press(game, 0x1C, false, 0x0D);
     const GamepadScreen* pad = o->gamepad();
     using G = GamepadScreen;
@@ -836,6 +840,7 @@ void test_options(const std::filesystem::path& data) {
         press(game, 0x1C, false, 0x0D);
         CHECK(game.menu()->options() && !game.menu()->options()->gamepad());
         // Reopened on the row it was left on; bound again, saved with the options.
+        CHECK(game.menu()->options()->enhancements());
         press(game, 0x1C, false, 0x0D);
         const G* again = game.menu()->options()->gamepad();
         CHECK(again && again->focus() == G::kBackRow);
@@ -845,8 +850,10 @@ void test_options(const std::filesystem::path& data) {
         game.pad_button(kPadLeftBumper);
         CHECK(game.config().pad.button_of(kPadFire) == kPadLeftBumper && game.config().pad.buttons[kPadLeftBumper] == kPadFire);
         press(game, 0x01, false, 0x1B);  // Escape closes the controller screen only
-        CHECK(game.menu()->options() && !game.menu()->options()->gamepad());
+        CHECK(game.menu()->options() && !game.menu()->options()->gamepad() && game.menu()->options()->enhancements());
     }
+    press(game, 0x01, false, 0x1B);  // then the enhancements window
+    CHECK(game.menu()->options() && !game.menu()->options()->enhancements());
     press(game, 0x01, false, 0x1B);
     CHECK(game.menu() && !game.menu()->options());
     const GameConfig with_pad = GameConfig::load(cfg);
