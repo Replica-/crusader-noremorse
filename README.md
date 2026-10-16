@@ -15,11 +15,11 @@ This repository contains **no game files**: you need your own copy of the origin
 - Added an **Enhancements** menu to the Options menu, with:
   - Gamepad remapping
   - A camera that follows the player
+  - Directional movement: the controller's left stick walks the Silencer where it points, as an alternative to the original tank controls
 
 ## Planned improvements
 
 - Release the game on PortMaster.
-- Add directional movement as an alternative to the original tank controls.
 - Support additional versions of *Crusader: No Remorse*, if there is interest.
 - Support higher screen resolutions.
 - Explore the possibility of supporting *Crusader: No Regret*.

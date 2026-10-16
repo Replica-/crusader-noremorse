@@ -35,6 +35,10 @@ public:
     // Port addition, written only when set: "followplayer", the camera keeps
     // the controlled NPC at the centre of the screen.
     bool follow_player = false;
+    // Port addition, written only when set: "directionalmove", the controller's
+    // left stick walks the NPC in the direction it points (the keypad's screen
+    // directions) instead of the original's tank controls.
+    bool directional_move = false;
     // Port addition, written only when changed: "padmap" (comma-separated
     // action numbers, see PadButton), "padaim" and "paddeadzone".
     PadSettings pad;

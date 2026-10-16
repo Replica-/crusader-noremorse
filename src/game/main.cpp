@@ -266,6 +266,7 @@ int main(int argc, char** argv) {
             // The controller: A/B confirm/cancel in menus, its stick moves the mouse.
             gamepad.set_menu(!game.mouse_in_play());
             gamepad.set_capture(game.waiting_for_pad());
+            gamepad.set_directional(game.config().directional_move);
             for (int b : gamepad.take_captured()) game.pad_button(b);
             for (const KeyEvent& k : gamepad.take_keys()) {
                 if (pad_debug) std::printf("[key] pad %02x%s %s\n", k.scancode, k.extended ? " ext" : "", k.pressed ? "down" : "up");

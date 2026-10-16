@@ -25,6 +25,12 @@ bool debug_enabled() {
 
 constexpr std::uint8_t kArrows[4] = {0x48, 0x50, 0x4B, 0x4D};  // up, down, left, right (E0)
 
+// Keypad keys (not extended), by 45 degree sector counter-clockwise from east:
+// right, up-right (PgUp), up, up-left (Home), left, down-left (End), down,
+// down-right (PgDn). AvatarMover::handle_key reads them as screen directions.
+constexpr std::uint8_t kMoveKeys[8] = {0x4D, 0x49, 0x48, 0x47, 0x4B, 0x4F, 0x50, 0x51};
+constexpr double kMoveHold = 30.0;  // degrees from the held sector's axis before the stick changes it
+
 }  // namespace
 
 Gamepad::~Gamepad() {
@@ -65,6 +71,8 @@ void Gamepad::release_all() {
     trigger(1, false);
     for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b) button(b, false);
     right_x_ = right_y_ = 0;
+    left_x_ = left_y_ = 0;
+    update_move();
 }
 
 bool Gamepad::feed(const SDL_Event& ev) {
@@ -165,11 +173,59 @@ void Gamepad::set_menu(bool menu) {
     if (menu_ == menu) return;
     menu_ = menu;
     refresh_arrows();
+    sync_left_stick();
 }
 
 void Gamepad::set_capture(bool on) {
+    if (capture_ == on) return;
     capture_ = on;
     refresh_arrows();
+    sync_left_stick();
+}
+
+void Gamepad::set_directional(bool on) {
+    if (directional_ == on) return;
+    directional_ = on;
+    sync_left_stick();
+}
+
+// The left stick is either four arrow-like directions or one keypad move; when
+// the mode changes, whatever the old one holds goes up and the new one reads the stick.
+void Gamepad::sync_left_stick() {
+    if (directional_active()) {
+        for (int s = kPadLeftStickUp; s <= kPadLeftStickRight; ++s) {
+            if (active_[s]) direction(s, false);
+        }
+        update_move();
+    } else {
+        update_move();  // the stick is back to the digital directions: no move key stays down
+        stick(kPadLeftStickUp, kLeft, kRight, left_x_);
+        stick(kPadLeftStickUp, kUp, kDown, left_y_);
+    }
+}
+
+// The key of the stick's 8-way sector, down while the stick is past its
+// threshold. A new sector goes down before the old one goes up, so the
+// avatar turns on the spot instead of stopping in between.
+void Gamepad::update_move() {
+    int want = -1;
+    if (directional_active()) {
+        const double len = std::hypot(static_cast<double>(left_x_), static_cast<double>(left_y_));
+        if (len > (move_dir_ >= 0 ? kStickOff : kStickOn)) {
+            const double angle = std::atan2(-static_cast<double>(left_y_), static_cast<double>(left_x_)) * 180.0 / 3.14159265358979;
+            want = (static_cast<int>(std::lround(angle / 45.0)) + 8) % 8;
+            if (move_dir_ >= 0) {
+                double off = std::fmod(std::fabs(angle - move_dir_ * 45.0), 360.0);
+                if (off > 180.0) off = 360.0 - off;
+                if (off < kMoveHold) want = move_dir_;
+            }
+        }
+    }
+    if (want == move_dir_) return;
+    const int old = move_dir_;
+    move_dir_ = want;
+    if (want >= 0) press_key(kMoveKeys[want], false, true);
+    if (old >= 0) press_key(kMoveKeys[old], false, false);
 }
 
 void Gamepad::trigger(int index, bool on) {
@@ -195,6 +251,8 @@ void Gamepad::press_slot(int slot, bool pressed) {
         }
         if (menu_ && slot >= kPadFirstDirection) return;
         if (action < 0 || action >= kPadActionCount) return;  // the default role, or nothing
+        // Directional movement: run is Shift held with the move key, not Shift + up.
+        if (action == kPadRun && directional_active()) action = kPadShift;
         const PadAction& a = kPadActions[action];
         if (a.scancode == 0) return;
         sent_[slot] = &a;
@@ -242,8 +300,16 @@ void Gamepad::stick(int first_slot, Dir negative, Dir positive, int value) {
 
 void Gamepad::axis(int a, int value) {
     switch (a) {
-        case SDL_CONTROLLER_AXIS_LEFTX: stick(kPadLeftStickUp, kLeft, kRight, value); break;
-        case SDL_CONTROLLER_AXIS_LEFTY: stick(kPadLeftStickUp, kUp, kDown, value); break;
+        case SDL_CONTROLLER_AXIS_LEFTX:
+            left_x_ = value;
+            if (directional_active()) update_move();
+            else stick(kPadLeftStickUp, kLeft, kRight, value);
+            break;
+        case SDL_CONTROLLER_AXIS_LEFTY:
+            left_y_ = value;
+            if (directional_active()) update_move();
+            else stick(kPadLeftStickUp, kUp, kDown, value);
+            break;
         case SDL_CONTROLLER_AXIS_RIGHTX:
             right_x_ = value;
             stick(kPadRightStickUp, kLeft, kRight, value);
