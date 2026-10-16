@@ -1,7 +1,7 @@
 // crusader: runs the game from a saved game (milestone 1: the world runs, the
 // camera moves with the arrow keys).
 //
-//   crusader [data | game.iso] [--save N | --new-game] [--movie NAME | --movie-overlay NAME] [--frames N [--scroll DX DY] [--walk] [--fire] [--use ID] [--menu | --menu-load | --menu-credits | --menu-options | --menu-gamepad | --menu-new] --png out.png [--wav out.wav]]
+//   crusader [data | game.iso] [--save N | --new-game]  (neither: the start-up movies, then the menu) [--movie NAME | --movie-overlay NAME] [--frames N [--scroll DX DY] [--walk] [--fire] [--use ID] [--menu | --menu-load | --menu-credits | --menu-options | --menu-gamepad | --menu-new] --png out.png [--wav out.wav]]
 //
 // With --png, runs N frames of 1/60 s without a window, moving the camera by
 // (DX, DY) usecode units per frame or making the player walk, and writes the
@@ -93,7 +93,7 @@ int main(int argc, char** argv) {
     SDL_SetMainReady();
     std::filesystem::path data = "data", iso;
     int save = 1, frames = 0;
-    bool new_game = false, fullscreen = false;
+    bool new_game = false, save_given = false, fullscreen = false;
     double gamma = 1.0;
     std::int32_t scroll_x = 0, scroll_y = 0;
     bool walk = false, fire = false, menu = false, menu_load = false, menu_credits = false, menu_options = false, menu_gamepad = false,
@@ -106,7 +106,7 @@ int main(int argc, char** argv) {
             std::printf("crusader %s\n", CRUSADER_VERSION);
             return 0;
         }
-        if (std::strcmp(argv[i], "--save") == 0 && i + 1 < argc) save = std::stoi(argv[++i]);
+        if (std::strcmp(argv[i], "--save") == 0 && i + 1 < argc) save = std::stoi(argv[++i]), save_given = true;
         else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) frames = std::stoi(argv[++i]);
         else if (std::strcmp(argv[i], "--png") == 0 && i + 1 < argc) png = argv[++i];
         else if (std::strcmp(argv[i], "--wav") == 0 && i + 1 < argc) wav = argv[++i];
@@ -145,7 +145,12 @@ int main(int argc, char** argv) {
         }
         Game game(data);
         game.set_port_version(CRUSADER_VERSION);
+        // No game asked for: the start-up, as when the original is launched
+        // (the movies, then the menu). The tools (--png, --movie) keep
+        // loading save 1.
+        const bool start_up = !new_game && !save_given && png.empty() && movie.empty();
         if (new_game) game.new_game(0);
+        else if (start_up) game.start_up();
         else game.load_save(save);
         if (!movie.empty()) game.play_movie(movie, movie_kind);
         Surface8 screen(Game::kScreenWidth, Game::kScreenHeight);

@@ -769,6 +769,17 @@ void Game::run_credits(std::uint32_t ticks_before) {
     }
 }
 
+// @orig 1028:0000
+void Game::start_up() {
+    // As the end of play_end_credits, without the credits: the menu is open
+    // first (no game), the movies play over it on a black screen, and its
+    // music starts once they are over (next_start_up_movie).
+    open_menu(true);
+    end_credits_ = true;
+    next_movies_ = {"T01", "T02"};
+    next_start_up_movie();
+}
+
 // @orig 13E8:0000 1028:0000
 void Game::play_end_credits() {
     // 13E8:0000: the music stopped and its stack emptied (music_reset), no

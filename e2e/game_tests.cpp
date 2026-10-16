@@ -3577,6 +3577,29 @@ void test_end_credits(const std::filesystem::path& data) {
     CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
 }
 
+// Normal launch (Game_start): T01, T02, then the menu with no game, from
+// which "load" leads into a game.
+void test_start_up(const std::filesystem::path& data) {
+    Game game(data, test_saves(data));
+    game.start_up();
+    for (const char* name : {"T01", "T02"}) {
+        int f = 0;
+        for (; f < 600 && !game.movie(); ++f) game.update(kFrameUs);
+        std::printf("start-up: movie %s after %d frames\n", name, f);
+        CHECK(game.movie() != nullptr);
+        game.key(0x01, false, true, 0, 0x1B);
+        game.update(kFrameUs);
+        game.key(0x01, false, false, 0);
+    }
+    CHECK(!game.movie());
+    game.update(kFrameUs);
+    CHECK(game.menu() && game.audio()->music.current() == Music::kMenu);
+    press(game, 0x01, false, 0x1B);
+    game.update(kFrameUs);
+    CHECK(game.menu() && !game.menu()->result());
+    CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+}
+
 // Weasel's shop (WeaselGump::I_showWeaselGump, 0x12D): save 5 has the booth
 // (WEA_BOOT 7233) and global 0x1F = 2.
 void test_weasel(const std::filesystem::path& data) {
@@ -3893,6 +3916,7 @@ int main(int argc, char** argv) {
     test_death_called_from_anim(data);
     test_wall_lasers(data);
     test_end_credits(data);
+    test_start_up(data);
     test_weasel(data);
     test_barrels(data);
     test_mines(data);

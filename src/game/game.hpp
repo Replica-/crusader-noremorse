@@ -146,6 +146,12 @@ public:
     // back to (see play_end_credits in game.cpp).
     void play_credits() { end_credits_pending_ = true; }
 
+    // Normal launch (Game_start, 1028:0000), with no game given on the
+    // command line: the movies T01 and T02, then the start-up menu with no
+    // game running ("back" and "save" do nothing), where "new game" and
+    // "load" lead into a game.
+    void start_up();
+
     // The engine's message box (message_gump.hpp, the WorldHooks::show_message
     // of the world): the game freezes as for the menu until a key, or a click
     // on "Ok", closes it. Nothing when one is already open.
