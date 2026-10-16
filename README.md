@@ -26,7 +26,7 @@ This repository contains **no game files**: you need your own copy of the origin
 - Explore the possibility of supporting *Crusader: No Regret*.
 - Have an idea? Let me know what you'd like to see!
 
-Further improvements will come when my Claude subscription renews. If you'd like to help speed things up, feel free to leave a small tip.
+Further improvements will come when my Claude subscription renews. If you'd like to help speed things up, feel free to leave a small tip (see [SPONSORING.md](SPONSORING.md)).
 
 ## Running the game
 
@@ -88,7 +88,7 @@ Versions follow [SemVer](https://semver.org) and are calculated automatically fr
 
 ## Contribution
 
-Contributions are welcome. For substantial changes, please open an issue first to discuss the proposed approach. When reporting a bug, include the game version, operating system, screenshot, savegame, steps to reproduce it, and any relevant error messages or logs.
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. For substantial changes, please open an issue first to discuss the proposed approach. When reporting a bug, include the game version, operating system, screenshot, savegame, steps to reproduce it, and any relevant error messages or logs.
 
 Pull requests should describe the change and its purpose, stay focused, and include tests where appropriate. Before submitting one, build the project and run the available tests:
 
