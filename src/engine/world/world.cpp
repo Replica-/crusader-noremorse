@@ -897,7 +897,28 @@ void World::shift_camera(int dx, int dy) {
     const int cam_sx = ((cx - cy) >> 1) - state.view_left;
     const int cam_sy = (static_cast<std::uint16_t>(cx + cy) >> 2) - state.view_top;
     const int abs_x = cam_sx + dx + state.view_left, abs_y = cam_sy + dy + state.view_top;
-    set_camera(abs_x + 2 * abs_y, 2 * abs_y - abs_x, state.camera_z);
+    const int base_x = abs_x + 2 * abs_y, base_y = 2 * abs_y - abs_x;
+    if (!follow_player_) {
+        set_camera(base_x, base_y, state.camera_z);
+        return;
+    }
+    // set_camera truncates halves and quarters separately, so the exact point
+    // can land a pixel or two off the wanted view; with small, eased steps that
+    // made the view jitter back and forth. Pick the nearby camera position whose
+    // view is closest to the wanted one, and stay put if none beats the current.
+    const int want_left = state.view_left + dx, want_top = state.view_top + dy;
+    int best_x = base_x, best_y = base_y, best_err = std::abs(dx) + std::abs(dy);
+    for (int oy = -3; oy <= 3; ++oy) {
+        for (int ox = -3; ox <= 3; ++ox) {
+            const auto px = static_cast<std::uint16_t>(base_x + ox), py = static_cast<std::uint16_t>(base_y + oy);
+            const int left = static_cast<std::int16_t>((px >> 1) - (py >> 1) - 0x140);
+            const int top = static_cast<std::int16_t>((px >> 2) + (py >> 2) - state.camera_z - 300);
+            const int err = std::abs(left - want_left) + std::abs(top - want_top);
+            if (err < best_err) best_err = err, best_x = px, best_y = py;
+        }
+    }
+    if (best_x == base_x && best_y == base_y && best_err == std::abs(dx) + std::abs(dy)) return;
+    set_camera(best_x, best_y, state.camera_z);
 }
 
 // @orig none: port-only camera follow

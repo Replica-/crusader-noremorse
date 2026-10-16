@@ -110,18 +110,23 @@ struct PadSettings {
         b[kPadB] = kPadJump;
         b[kPadX] = kPadConfirm;
         b[kPadY] = kPadNextWeapon;
-        b[kPadLeftBumper] = kPadStepLeft;
-        b[kPadRightBumper] = kPadStepRight;
+        b[kPadLeftBumper] = kPadRollLeft;
+        b[kPadRightBumper] = kPadRollRight;
         b[kPadLeftTrigger] = kPadNone;
         b[kPadRightTrigger] = kPadFire;
-        b[kPadLeftStick] = kPadShift;
+        b[kPadLeftStick] = kPadRun;
         b[kPadRightStick] = kPadCrouch;
         b[kPadStart] = kPadMenu;
         b[kPadBack] = kPadNone;
-        // Right stick left / right roll (so it no longer moves the mouse sideways),
-        // up / down keep the aim; the d-pad uses the inventory and the medkit.
-        b[kPadRightStickLeft] = kPadRollLeft;
-        b[kPadRightStickRight] = kPadRollRight;
+        // Left stick: forward / backward, step aside left / right. Right stick
+        // left / right turn (so it no longer moves the mouse sideways), up / down
+        // keep the aim; the d-pad uses the inventory and the medkit.
+        b[kPadLeftStickUp] = kPadForward;
+        b[kPadLeftStickDown] = kPadBackward;
+        b[kPadLeftStickLeft] = kPadStepLeft;
+        b[kPadLeftStickRight] = kPadStepRight;
+        b[kPadRightStickLeft] = kPadTurnLeft;
+        b[kPadRightStickRight] = kPadTurnRight;
         b[kPadDpadUp] = kPadUseItem;
         b[kPadDpadDown] = kPadMedkit;
         b[kPadDpadLeft] = kPadPrevItem;

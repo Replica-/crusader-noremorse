@@ -397,9 +397,9 @@ void test_gamepad() {
     fresh.feed(button(SDL_CONTROLLERBUTTONUP, SDL_CONTROLLER_BUTTON_DPAD_UP));
     keys = fresh.take_keys();
     CHECK(keys.size() == 2 && keys[0].scancode == 0x16 && !keys[0].extended);
-    fresh.feed(axis(SDL_CONTROLLER_AXIS_RIGHTX, 32767));  // roll right: Ctrl + right, no mouse
+    fresh.feed(axis(SDL_CONTROLLER_AXIS_RIGHTX, 32767));  // turn right: the right arrow, no mouse
     keys = fresh.take_keys();
-    CHECK(keys.size() == 2 && keys[0].scancode == 0x1D && keys[1].scancode == 0x4D);
+    CHECK(keys.size() == 1 && keys[0].scancode == 0x4D && keys[0].extended && keys[0].pressed && !keys[0].ctrl());
     fresh.mouse_motion(0.1, &dx, &dy);
     CHECK(dx == 0);
     fresh.feed(axis(SDL_CONTROLLER_AXIS_RIGHTX, 0));

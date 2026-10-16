@@ -5,10 +5,10 @@
 // into a key of the original controls, or a combination of keys.
 //
 // The defaults (the author's settings, PadSettings in core/pad_config.hpp):
-//   left stick          arrows (move, turn)        RT  fire (Space)
-//   right stick         up / down: aim (mouse)     right stick left / right  roll left / right
+//   left stick          up / down: forward / backward, left / right: step aside   RT  fire (Space)
+//   right stick         up / down: aim (mouse)     right stick left / right  turn left / right
 //   A / B / X / Y       select (S) / jump / confirm / next weapon
-//   LB / RB             step left / right          L3 / R3  Shift / kneel or stand (Ctrl + down)
+//   LB / RB             roll left / right          L3 / R3  run (Shift + up) / kneel or stand (Ctrl + down)
 //   d-pad               use item / medkit / previous item / next item
 //   Start               menu
 // The actions of the inputs, and the right stick's speed and dead zone, come

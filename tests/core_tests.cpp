@@ -68,7 +68,7 @@ void check_config() {
               a.button_of(kPadFire) == kPadB,
           "pad assign moves the action");
     // A short list leaves the other inputs at their defaults; a direction round-trips.
-    check(c2.pad.buttons[kPadLeftStickUp] == kPadDefaultRole && c2.pad.buttons[kPadDpadRight] == PadSettings{}.buttons[kPadDpadRight],
+    check(c2.pad.buttons[kPadRightStickUp] == kPadDefaultRole && c2.pad.buttons[kPadDpadRight] == PadSettings{}.buttons[kPadDpadRight],
           "config pad directions default");
     PadSettings dir;
     dir.assign(kPadRightStickLeft, kPadStepLeft);
