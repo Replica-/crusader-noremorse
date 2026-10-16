@@ -11,7 +11,8 @@
 // GUMPS.FLX shapes 0x16..0x19, frame 0, at (3, 0), (0, 0x47), (5, 0xCC) and
 // (9, 0x16A), then texts in font 6, depending on the state (+0x142):
 //   - 2 (confirm): "Etes-vous sûr de" / "vouloir acheter" / "ceci ?" at
-//     (0x19, 0x5A), (0x19, 0x62), (0x19, 0x6A);
+//     (0x19, 0x5A), (0x19, 0x62), (0x19, 0x6A); the US version has two
+//     lines, "Are you sure you" / "want to buy this?";
 //   - 6 (browsing), for the current item: its icon (13E0:19EF: shape 3 for
 //     the weapons and the credits 0x4ED, 4 for family 12, 5 for the ammunition,
 //     family 13 and the keycard 0x111; frame DTABLE_1120_05dc) at (0x6C, 0x83);

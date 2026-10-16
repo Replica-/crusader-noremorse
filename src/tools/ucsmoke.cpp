@@ -12,11 +12,13 @@
 //
 // Usage: ucsmoke [data_dir] [slices_per_event] [--map N]
 
+#include "core/data_info.hpp"
 #include "core/flex.hpp"
 #include "core/typeflags.hpp"
 #include "engine/kernel.hpp"
 #include "core/anim_dat.hpp"
 #include "engine/usecode/audio_intrinsics.hpp"
+#include "engine/usecode/intrinsic_numbering.hpp"
 #include "engine/usecode/item_intrinsics.hpp"
 #include "engine/usecode/npc_intrinsics.hpp"
 #include "engine/usecode/uc_machine.hpp"
@@ -31,6 +33,7 @@
 #include <filesystem>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -50,10 +53,14 @@ struct Stats {
 // extra bytes sit unused below the declared ones.
 constexpr std::uint8_t kArgs[16] = {};
 
+// The intrinsic numbers of the US usecode, translated to the French ones bound.
+std::span<const std::uint16_t> g_numbering;
+
 void run_event(const UsecodeFile& usecode, std::uint16_t cid, std::uint32_t ev, int slices, Stats& st,
                World* world, ObjId item, const AnimDat* anims = nullptr, const dtable::NpcTypes* types = nullptr) {
     Kernel kernel;
     UCMachine machine(kernel, usecode);
+    machine.set_intrinsic_numbering(g_numbering);
     machine.set_instruction_budget(20'000);
     if (world) {
         register_item_intrinsics(machine, *world);
@@ -100,6 +107,7 @@ int main(int argc, char** argv) {
     if (positional.size() > 1) slices = std::stoi(positional[1]);
 
     try {
+        if (detect_data_info(data).us()) g_numbering = us_intrinsic_numbering();
         const auto flex = FlexArchive::open(data / "USECODE/EUSECODE.FLX");
         const auto usecode = UsecodeFile::from_flex(flex);
         Stats st;

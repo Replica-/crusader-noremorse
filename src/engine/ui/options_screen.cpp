@@ -1,5 +1,6 @@
 #include "engine/ui/options_screen.hpp"
 
+#include "core/language.hpp"
 #include "engine/audio/audio.hpp"
 #include "engine/ui/gump_keys.hpp"
 
@@ -174,7 +175,7 @@ void OptionsScreen::draw_pad_button(Surface8& screen) const {
     fill_rect(screen, r.x0, r.y0, r.x1, r.y1, kButtonFill);
     outline(screen, r.x0, r.y0, r.x1, r.y1, colour);
     TextWriter writer(*fonts_, kButtonFont);
-    const std::string text = "MANETTE";
+    const std::string text = tr("MANETTE", "CONTROLLER");
     const int width = writer.measure(text).width;
     // Drawn on a scratch surface and copied in one colour, as the font has its own.
     constexpr int kPad = 4, kAbove = 32, kHeight = 48;

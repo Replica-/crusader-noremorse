@@ -51,6 +51,10 @@ public:
     std::vector<std::uint8_t>& globals() { return globals_; }
 
     void set_intrinsic(std::uint16_t number, Intrinsic fn);
+    // Usecode whose intrinsic numbers differ from those of the bindings (US
+    // data): numbering[n] is the bound number called by `calli n`. Empty: the
+    // same numbers.
+    void set_intrinsic_numbering(std::span<const std::uint16_t> numbering) { numbering_ = numbering; }
     void set_item_search(ItemSearch fn) { item_search_ = std::move(fn); }
     void set_item_exists(std::function<bool(ObjId)> fn) { item_exists_ = std::move(fn); }
     // Instructions a process may execute in one slice before being forced to yield.
@@ -84,6 +88,7 @@ private:
     UCHeap heap_;
     std::vector<std::uint8_t> globals_;
     std::vector<Intrinsic> intrinsics_;
+    std::span<const std::uint16_t> numbering_;
     ItemSearch item_search_;
     std::function<bool(ObjId)> item_exists_;
     std::uint32_t budget_ = 100'000;

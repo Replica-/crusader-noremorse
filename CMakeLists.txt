@@ -37,7 +37,9 @@ add_library(crusader_core
   src/core/weapon_overlay.cpp
   src/core/font.cpp
   src/core/game_config.cpp
+  src/core/data_info.cpp
   src/core/dtable.cpp
+  src/core/language.cpp
   src/core/typeflags.cpp
   src/core/trig.cpp
   src/core/anim_dat.cpp
@@ -62,6 +64,7 @@ add_library(crusader_engine
   src/engine/usecode/npc_intrinsics.cpp
   src/engine/usecode/audio_intrinsics.cpp
   src/engine/usecode/movie_intrinsics.cpp
+  src/engine/usecode/intrinsic_numbering.cpp
   src/engine/audio/asylum_mixer.cpp
   src/engine/audio/asylum_music.cpp
   src/engine/audio/music.cpp
@@ -211,6 +214,14 @@ if(CRUSADER_GAME_DATA_TESTS)
     foreach(t core_data_tests world_data_tests audio_data_tests game_tests)
         add_test(NAME ${t} COMMAND ${t} ${CRUSADER_DATA_DIR})
     endforeach()
+endif()
+
+# The US data (v1.23), when found: the same game through the US usecode and texts.
+set(CRUSADER_US_DATA_DIR "${CMAKE_SOURCE_DIR}/data_us" CACHE PATH "US game data used by us_data_tests")
+add_executable(us_data_tests e2e/us_data_tests.cpp)
+target_link_libraries(us_data_tests PRIVATE crusader_game)
+if(EXISTS "${CRUSADER_US_DATA_DIR}/STATIC")
+    add_test(NAME us_data_tests COMMAND us_data_tests ${CRUSADER_US_DATA_DIR})
 endif()
 
 # Optional private workspace (decompilation material and analysis tools, not in

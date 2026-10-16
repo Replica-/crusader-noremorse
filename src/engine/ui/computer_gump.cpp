@@ -136,7 +136,7 @@ void ComputerGump::draw(Surface8& screen) const {
         cell(column_, row_);
         writer.put(screen, kCursor);
     }
-    if (page_full_) writer.print(screen, x_ + kTextX, y_ + kTextY + row_ * kRowHeight, kMore);
+    if (page_full_) writer.print(screen, x_ + kTextX, y_ + kTextY + row_ * kRowHeight, more());
 }
 
 // @orig 13A0:0A2A

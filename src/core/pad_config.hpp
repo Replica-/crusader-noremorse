@@ -13,7 +13,8 @@
 namespace crusader {
 
 struct PadAction {
-    const char* label;         // shown by the screen (French, the port's target)
+    const char* label;         // shown by the screen, in French
+    const char* label_en;      // and in English (US data)
     std::uint8_t scancode;     // PC set 1; 0 for "none"
     bool extended;
     std::uint8_t ascii;
@@ -33,25 +34,25 @@ enum PadActionId : int {
 constexpr std::uint8_t kScShift = 0x2A, kScCtrl = 0x1D, kScAlt = 0x38;
 
 constexpr std::array<PadAction, kPadActionCount> kPadActions = {{
-    {"AUCUNE", 0, false, 0},
-    {"TIR", 0x39, false, ' '},
-    {"COURIR", 0x48, true, 0, kScShift},
-    {"ROULADE GAUCHE", 0x4B, true, 0, kScCtrl},
-    {"ROULADE DROITE", 0x4D, true, 0, kScCtrl},
-    {"PAS A GAUCHE", 0x4B, true, 0, kScAlt},
-    {"PAS A DROITE", 0x4D, true, 0, kScAlt},
-    {"SE BAISSER OU LEVER", 0x50, true, 0, kScCtrl},
-    {"MAJ", 0x2A, false, 0},
-    {"ARME PRECEDENTE", 0x10, false, 'q'},
-    {"ARME SUIVANTE", 0x11, false, 'w'},
-    {"OBJET PRECEDENT", 0x17, false, 'i'},
-    {"OBJET SUIVANT", 0x18, false, 'o'},
-    {"UTILISER OBJET", 0x16, false, 'u'},
-    {"TROUSSE", 0x32, false, 'm'},
-    {"SAUT", 0x0F, false, '\t'},
-    {"MENU", 0x01, false, 27},
-    {"VALIDER", 0x1C, false, '\r'},
-    {"SELECTIONNER", 0x1F, false, 's'},  // S: the selection mode, then the next object
+    {"AUCUNE", "NONE", 0, false, 0},
+    {"TIR", "FIRE", 0x39, false, ' '},
+    {"COURIR", "RUN", 0x48, true, 0, kScShift},
+    {"ROULADE GAUCHE", "ROLL LEFT", 0x4B, true, 0, kScCtrl},
+    {"ROULADE DROITE", "ROLL RIGHT", 0x4D, true, 0, kScCtrl},
+    {"PAS A GAUCHE", "STEP LEFT", 0x4B, true, 0, kScAlt},
+    {"PAS A DROITE", "STEP RIGHT", 0x4D, true, 0, kScAlt},
+    {"SE BAISSER OU LEVER", "KNEEL OR STAND", 0x50, true, 0, kScCtrl},
+    {"MAJ", "SHIFT", 0x2A, false, 0},
+    {"ARME PRECEDENTE", "PREVIOUS WEAPON", 0x10, false, 'q'},
+    {"ARME SUIVANTE", "NEXT WEAPON", 0x11, false, 'w'},
+    {"OBJET PRECEDENT", "PREVIOUS ITEM", 0x17, false, 'i'},
+    {"OBJET SUIVANT", "NEXT ITEM", 0x18, false, 'o'},
+    {"UTILISER OBJET", "USE ITEM", 0x16, false, 'u'},
+    {"TROUSSE", "MEDICAL KIT", 0x32, false, 'm'},
+    {"SAUT", "JUMP", 0x0F, false, '\t'},
+    {"MENU", "MENU", 0x01, false, 27},
+    {"VALIDER", "ENTER", 0x1C, false, '\r'},
+    {"SELECTIONNER", "SELECT", 0x1F, false, 's'},  // S: the selection mode, then the next object
 }};
 
 // The inputs of the controller, in the order of PadSettings::buttons: the
@@ -77,6 +78,12 @@ constexpr std::array<const char*, kPadButtonCount> kPadButtonLabels = {
     "STICK G HAUT", "STICK G BAS", "STICK G GAUCHE", "STICK G DROITE",
     "STICK D HAUT", "STICK D BAS", "STICK D GAUCHE", "STICK D DROITE",
     "CROIX HAUT", "CROIX BAS", "CROIX GAUCHE", "CROIX DROITE",
+};
+constexpr std::array<const char*, kPadButtonCount> kPadButtonLabelsEn = {
+    "A", "B", "X", "Y", "LB", "RB", "LT", "RT", "LEFT STICK CLICK", "RIGHT STICK CLICK", "START", "SELECT",
+    "L STICK UP", "L STICK DOWN", "L STICK LEFT", "L STICK RIGHT",
+    "R STICK UP", "R STICK DOWN", "R STICK LEFT", "R STICK RIGHT",
+    "D-PAD UP", "D-PAD DOWN", "D-PAD LEFT", "D-PAD RIGHT",
 };
 
 struct PadSettings {

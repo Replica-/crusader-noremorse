@@ -230,7 +230,8 @@ bool UCMachine::step(UCProcess& p, bool& yield) {
         // ---- calls
         case 0x0F: {
             const auto arg_bytes = in.u8();
-            const auto number = in.u16();
+            const auto called = in.u16();
+            const std::uint16_t number = called < numbering_.size() ? numbering_[called] : called;
             const std::vector<std::uint8_t> args(st.top(arg_bytes).begin(), st.top(arg_bytes).end());
             p.ip_ = static_cast<std::uint16_t>(in.pos);
             if (number < intrinsics_.size() && intrinsics_[number]) {

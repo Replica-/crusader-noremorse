@@ -1,6 +1,7 @@
 #include "engine/world/pickup_list.hpp"
 
 #include "core/dtable.hpp"
+#include "core/language.hpp"
 #include "engine/kernel.hpp"
 #include "engine/world/world.hpp"
 
@@ -20,7 +21,7 @@ struct Description {
 
 // @orig 1190:070F
 Description describe(const World& world, const Item& item) {
-    if (item.shape == kKeycard) return {"PASSE", 5, static_cast<std::uint16_t>(item.frame + 13)};
+    if (item.shape == kKeycard) return {tr("PASSE", "KEYCARD"), 5, static_cast<std::uint16_t>(item.frame + 13)};
     if (item.shape == kCredits) return {"CREDITS", 3, 13};
     switch (world.family_of(item.shape)) {
     case 10: return {dtable::weapon_name(item.shape), 3, dtable::weapon_icon(item.shape)};

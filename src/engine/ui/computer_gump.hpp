@@ -29,7 +29,7 @@
 //     the page (13A0:0487) from the page start to the characters shown, and
 //     when the page is not full and the text not ended, one more character
 //     and the cursor (glyph 0x5B) where it goes; a full page shows "-SUITE-"
-//     (DS:55AB) at the start of its row 13;
+//     (DS:55AB; "<MORE>" in the US version) at the start of its row 13;
 //   - unless the page is full: after a '*', a pause (delay 4800, 1470:0692);
 //     otherwise sound 0x33 restarted (unless the character is '\n') and one
 //     tick of wait (SystemTimer_busy_wait).
@@ -60,6 +60,7 @@
 //     forgotten (DS:8A80..8A84).
 
 #include "core/font.hpp"
+#include "core/language.hpp"
 #include "core/surface.hpp"
 #include "engine/ui/modal_gump.hpp"
 #include "engine/world/render.hpp"
@@ -84,7 +85,7 @@ public:
     static constexpr unsigned char kCursor = 0x5B;
     static constexpr int kSound = 0x33;
     static constexpr std::uint32_t kStarPause = 44;  // ticks, see above
-    static constexpr const char* kMore = "-SUITE-";  // DS:55AB
+    static const char* more() { return tr("-SUITE-", "<MORE>"); }  // DS:55AB (US: DS:557F)
 
     // `play_sfx` restarts a sound (dsfx_stop_if, then AudioProcess_I_playSFX).
     ComputerGump(ShapeCache& gumps, const FontSet& fonts, const std::string& text, std::function<void(int)> play_sfx,

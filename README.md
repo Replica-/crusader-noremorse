@@ -2,7 +2,7 @@
 
 A C++20 / SDL2 reimplementation of the *Crusader: No Remorse* (Origin, 1995) engine, for Windows and Linux. The project is **work in progress**: the game starts, you can walk, fight, and hear sounds, music and cutscenes, but the first mission cannot yet be played from start to finish.
 
-This repository contains **no game files**: you need your own copy of the original game. The target is **at first** the **French version** (`CRUSADER.EXE` dated 12/10/1995).
+This repository contains **no game files**: you need your own copy of the original game. Two versions are supported: the **French version 1.08** (`CRUSADER.EXE` dated 12/10/1995), from which the engine is rebuilt, and the **US version 1.23** (13/02/1996).
 
 ## How the engine was rebuilt
 
@@ -41,8 +41,8 @@ data/
 
 Notes:
 
-- The original executables (`CRUSADER.EXE`, `ASYLUM.DLL`…) are not used, but copying them is harmless.
-- Only the **French version** is supported. The US version (v1.23) has different files (`EUSECODE.FLX`, `UNKCOFF.DAT`) and will not work.
+- The original executables are not run. Keep `CRUSADER.EXE` in `data/` all the same: the port reads the version and the language of the data from it (the US data is still recognised without it, from `USECODE/UNKCOFF.DAT`).
+- **Supported versions**: French 1.08 and US 1.23. With the US data the game is in English (scripts, cutscenes, voices, texts of the executable, the port's own screens). The engine is rebuilt from the French executable: the few routines Origin changed in 1.23 (34 of those ported so far, e.g. the load screen, the music, some AI) still behave as in 1.08. Other revisions (US 1.01, 1.10, 1.21, Spanish, German, Japanese) are untested.
 - File names are case-sensitive on Linux: keep the original **upper-case** names (`STATIC/SHAPES.FLX`, etc.).
 - `FLICS/` is only needed for cutscenes; everything else is required.
 
@@ -70,7 +70,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 SDL2 is taken from the system if installed (`libsdl2-dev` on Linux), otherwise it is downloaded and built.
 
-The tests in `tests/` need no game data. The end-to-end tests in `e2e/` run on the original game data and are registered only when it is found (`-DCRUSADER_DATA_DIR=…`, `data/` by default); those that load saved games read them from `-DCRUSADER_TEST_SAVES_DIR=…` and skip themselves when it is absent.
+The tests in `tests/` need no game data. The end-to-end tests in `e2e/` run on the original game data and are registered only when it is found (`-DCRUSADER_DATA_DIR=…`, `data/` by default); those that load saved games read them from `-DCRUSADER_TEST_SAVES_DIR=…` and skip themselves when it is absent. `us_data_tests` runs on the US data when it is found (`-DCRUSADER_US_DATA_DIR=…`, `data_us/` by default).
 
 Besides `crusader`, the build produces a few tools: `shapeview` (shape viewer), `mapview` (map viewer), `ucsmoke` and `useprobe` (script execution), `diffcheck` (comparison with the original).
 
@@ -84,7 +84,8 @@ Versions follow [SemVer](https://semver.org) and are computed automatically from
 - **Saving and loading** compatible with original saved games (there is no save screen yet).
 - **Later missions**: only mission 1 is used as a reference; the other 15 rely on the same mechanisms but have not been reviewed.
 - **Fidelity**: the original random number generator, gravity behaviour (bounces, slides), draw order on a few maps, restoring saved processes, systematic comparison with the original under DOSBox.
-- **Comfort**: start-up menu, resolution choice (beyond 640×480), gamepad, language option (US version), other game revisions.
+- **Comfort**: start-up menu, resolution choice (beyond 640×480), other game revisions.
+- **US version**: review the 34 ported routines changed in the US 1.23 executable.
 - **Decompilation**: name the ~1,800 functions still anonymous (most are Borland library and Phar Lap code, to be replaced by the standard library).
 - **Out of scope for now**: the original's cheats and debug commands.
 

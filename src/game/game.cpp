@@ -1,6 +1,7 @@
 #include "game/game.hpp"
 
 #include "engine/usecode/audio_intrinsics.hpp"
+#include "engine/usecode/intrinsic_numbering.hpp"
 #include "engine/usecode/item_intrinsics.hpp"
 #include "engine/usecode/movie_intrinsics.hpp"
 #include "engine/usecode/world_intrinsics.hpp"
@@ -9,7 +10,9 @@
 #include "engine/world/actor_create.hpp"
 #include "engine/world/aim_mode.hpp"
 #include "engine/world/attack.hpp"
+#include "core/data_info.hpp"
 #include "core/dtable.hpp"
+#include "core/language.hpp"
 #include "engine/palette_fader.hpp"
 #include "engine/world/projectile.hpp"
 #include "engine/ui/computer_gump.hpp"
@@ -127,46 +130,6 @@ const std::filesystem::path& data) {
     return {entry.begin(), entry.end()};
 }
 
-// @orig none: version and language of the game data, read from CRUSADER.EXE.
-// The version is in the banner ("CRUSADER:  No Remorse V1.08"; DS:E8ED4 in the
-// French 1.08 executable); the language is told by a message of the start-up
-// code that exists in each translation.
-struct DataInfo {
-    std::string version;   // "1.08", empty when unknown
-    std::string language;  // "FR", empty when unknown
-};
-
-// @orig none: port-only data version detection
-
-DataInfo detect_data_info(const std::filesystem::path& data) {
-    std::ifstream in(data / "CRUSADER.EXE", std::ios::binary);
-    if (!in) return {};
-    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    DataInfo info;
-    constexpr std::string_view kBanner = "No Remorse V";
-    for (std::size_t at = bytes.find(kBanner); at != std::string::npos && info.version.empty();
-         at = bytes.find(kBanner, at + 1)) {
-        std::size_t end = at + kBanner.size();
-        const std::size_t begin = end;
-        while (end < bytes.size() && (std::isdigit(static_cast<unsigned char>(bytes[end])) || bytes[end] == '.')) ++end;
-        if (end > begin) info.version = bytes.substr(begin, end - begin);
-    }
-    struct Language {
-        std::string_view marker, name;
-    };
-    constexpr Language kLanguages[] = {
-        {"Appuyer sur une touche pour continuer.", "FR"},
-        {"Press any key to continue.", "US"},
-    };
-    for (const Language& l : kLanguages) {
-        if (bytes.find(l.marker) != std::string::npos) {
-            info.language = l.name;
-            break;
-        }
-    }
-    return info;
-}
-
 }  // namespace
 
 // @orig none: loads the data and builds the port's subsystems
@@ -205,6 +168,7 @@ Game::Game(const std::filesystem::path& data, const std::filesystem::path& saves
     const DataInfo info = detect_data_info(data);
     data_version_ = info.version;
     data_language_ = info.language;
+    set_text_language(info.text_language());
     set_config(config_);
     reset_world();
 }
@@ -233,6 +197,7 @@ void Game::reset_world() {
     world_.reset();
     kernel_ = std::make_unique<Kernel>();
     machine_ = std::make_unique<UCMachine>(*kernel_, usecode_);
+    if (data_language_ == "US") machine_->set_intrinsic_numbering(us_intrinsic_numbering());
     world_ = std::make_unique<World>(typeflags_);
     world_->state.target_designation = target_designation;
     world_->set_damage_table(damage_);
@@ -912,9 +877,10 @@ void Game::open_menu(bool no_game) {
     menu_ = std::make_unique<MainMenu>(
         MainMenu::Resources{&gumps_, &fonts_, &save_names_, &credits_data_, &config_, audio_.get(),
                             [this] { save_config(); },
-                            port_version_.empty() ? std::string() : "PORTAGE V" + port_version_,
-                            "DONNEES DU JEU " + (data_version_.empty() ? std::string("INCONNUES") : "V" + data_version_) + " " +
-                                (data_language_.empty() ? std::string("LANGUE INCONNUE") : data_language_)},
+                            port_version_.empty() ? std::string() : tr("PORTAGE V", "PORT V") + port_version_,
+                            tr("DONNEES DU JEU ", "GAME DATA ") +
+                                (data_version_.empty() ? std::string(tr("INCONNUES", "UNKNOWN")) : "V" + data_version_) + " " +
+                                (data_language_.empty() ? std::string(tr("LANGUE INCONNUE", "UNKNOWN LANGUAGE")) : data_language_)},
         menu_shared_, no_game);
     auto p = std::make_unique<ModalProcess>();
     menu_process_ = p.get();

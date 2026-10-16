@@ -174,6 +174,28 @@ void test_intrinsic() {
     CHECK(m.faults().empty());
 }
 
+// US usecode: `calli 0x11` reaches the routine bound under the French number
+// the numbering gives (here 0x10); a number past the table is kept.
+void test_intrinsic_numbering() {
+    Asm a;
+    a.b({PUSH_BYTE, 21}).b({CALLI, 2}).w(0x11).b({ADD_SP, 0xFE});
+    a.b({CALLI, 0}).w(0x30).b({PUSH_RETVAL}).b({W2D}).b({POP_RES}).b({RET});
+    const auto file = make_file({a.finish()});
+    Kernel k;
+    UCMachine m(k, file);
+    std::uint32_t got = 0;
+    m.set_intrinsic(0x10, [&got](UCMachine&, UCProcess&, std::span<const std::uint8_t> args) {
+        got = static_cast<std::uint32_t>(args[0] | args[1] << 8);
+        return 0u;
+    });
+    m.set_intrinsic(0x30, [](UCMachine&, UCProcess&, std::span<const std::uint8_t>) { return 7u; });
+    std::uint16_t numbering[0x12] = {};
+    numbering[0x11] = 0x10;
+    m.set_intrinsic_numbering(numbering);
+    CHECK(run_to_end(k, m, start(m, 0)) == 7);
+    CHECK(got == 21 && m.unbound_intrinsic_calls().empty() && m.faults().empty());
+}
+
 void test_spawn_implies_result() {
     // parent: child = spawn fn 1; implies(self waits for child); suspend;
     //         return the child's result
@@ -254,6 +276,7 @@ int main() {
     test_call_and_return_value();
     test_list_foreach();
     test_intrinsic();
+    test_intrinsic_numbering();
     test_spawn_implies_result();
     test_result_register_shared();
     test_implies_runs_on_until_suspend();

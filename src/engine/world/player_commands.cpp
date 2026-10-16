@@ -1,6 +1,7 @@
 #include "engine/world/player_commands.hpp"
 
 #include "core/dtable.hpp"
+#include "core/language.hpp"
 #include "engine/audio/audio.hpp"
 #include "engine/world/actor_anim.hpp"
 #include "engine/world/inventory.hpp"
@@ -239,7 +240,8 @@ bool player_command(Kernel& kernel, World& world, const AnimDat& anims, std::uin
         bool& on = world.state.target_designation;
         on = !on;
         if (world.hooks().show_message)
-            world.hooks().show_message(on ? "DESIGNATION DE CIBLE ACTIVE." : "DESIGNATION DE CIBLE INACTIVE.");
+            world.hooks().show_message(on ? tr("DESIGNATION DE CIBLE ACTIVE.", "TARGETING RETICLE ACTIVE.")
+                                          : tr("DESIGNATION DE CIBLE INACTIVE.", "TARGETING RETICLE INACTIVE."));
         return true;
     }
     case 0x420:  // Ctrl+D

@@ -1,6 +1,7 @@
 #include "core/dtable.hpp"
 
 #include "core/flex.hpp"
+#include "core/language.hpp"
 
 #include <stdexcept>
 
@@ -61,7 +62,8 @@ constexpr std::array<std::uint16_t, 6> kClipSizes = {0, 20, 12, 60, 8, 10};
 // Word 3 of the ammo records: icon in GUMPS.FLX shape 5.
 constexpr std::array<std::uint16_t, 6> kAmmoIcons = {0, 8, 10, 9, 11, 12};
 
-// DS:2350 .. DS:23F3: the name pointer tables.
+// DS:2350 .. DS:23F3 of the French CRUSADER.EXE: the name pointer tables. The
+// weapon names are the same in the US one.
 constexpr std::array<const char*, 14> kWeaponNames = {
     "INVALID", "BA-40", "BA-41", "PA-21", "EM-4", "SG-A1", "RP-22",
     "RP-32",   "AR-7",  "GL-303", "PA-31", "PL-1", "AC-88", "UV-9",
@@ -76,6 +78,19 @@ constexpr std::array<const char*, 6> kAmmoNames = {
 };
 constexpr std::array<const char*, 9> kFamily12Names = {
     "INVALID", "GRENADE", "INVALID", "INVALID", "INVALID", "BOMBE AUTOGUIDEE", "MINE", "BOMBE BLASTPAC", "BOMBE A FUSION",
+};
+// US CRUSADER.EXE (DS:22EE .. DS:2391), which also names family-12 records 2..4.
+constexpr std::array<const char*, 12> kItemNamesUs = {
+    "INVALID",         "MEDICAL KIT",      "DATA LINK",          "INHIBITOR",
+    "IONIC GENERATOR", "ENERGY CUBE",      "PLASMA GENERATOR",   "DET PAC",
+    "GRAVITON GENERATOR", "CHEMICAL BATTERY", "FUSION BATTERY", "FISSION BATTERY",
+};
+constexpr std::array<const char*, 6> kAmmoNamesUs = {
+    "INVALID", "BA-41 CLIP", "SG-A1 CLIP", "RP-22 CLIP", "AR-7 CLIP", "GL-303 CLIP",
+};
+constexpr std::array<const char*, 9> kFamily12NamesUs = {
+    "INVALID",     "GRENADE",     "CONCUSSION GRENADE", "NERVE GAS GRENADE", "EMP GRENADE",
+    "SPIDER BOMB", "LAND MINE",   "BLAST PAC",          "FUSION PAC",
 };
 
 // DS:2B82: weapon shape -> overlay class; DS:2B64: class -> overlay shape.
@@ -173,13 +188,22 @@ const char* weapon_name(std::uint16_t shape) {
 }
 
 // @orig 1120:0474
-const char* item_name(std::uint16_t shape) { return kItemNames[inventory_item_index(shape)]; }
+const char* item_name(std::uint16_t shape) {
+    const int i = inventory_item_index(shape);
+    return tr(kItemNames[i], kItemNamesUs[i]);
+}
 
 // @orig 1120:02AB
-const char* ammo_name(std::uint16_t shape) { return kAmmoNames[ammo_index(shape)]; }
+const char* ammo_name(std::uint16_t shape) {
+    const int i = ammo_index(shape);
+    return tr(kAmmoNames[i], kAmmoNamesUs[i]);
+}
 
 // @orig 1120:03C3
-const char* family12_name(std::uint16_t shape) { return kFamily12Names[family12_index(shape)]; }
+const char* family12_name(std::uint16_t shape) {
+    const int i = family12_index(shape);
+    return tr(kFamily12Names[i], kFamily12NamesUs[i]);
+}
 
 // @orig 1120:0240
 std::uint16_t ammo_icon(std::uint16_t shape) { return kAmmoIcons[ammo_index(shape)]; }
