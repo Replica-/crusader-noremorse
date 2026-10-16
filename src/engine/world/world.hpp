@@ -530,6 +530,15 @@ public:
     // 70 of the bottom, the view jumps to put it at x 520 (coming from the
     // left), 120 (from the right) or the centre, and y 280.
     void track_camera_target(std::int32_t x, std::int32_t y, std::int32_t z);
+    // Port addition ("camera suit le joueur" in the enhancements window): the
+    // controlled NPC is kept at the centre of the view at every step instead
+    // of only when it nears an edge.
+    void set_follow_player(bool on) {
+        follow_player_ = on;
+        if (!on) follow_active_ = false;
+    }
+    // Once a frame: moves the view a step towards the followed NPC.
+    void update_follow_camera();
 
     // Item::I_isPartlyOnScreen: the item's frame overlaps the screen. Uses
     // the item's own x/y/z, like the original.
@@ -639,6 +648,10 @@ private:
     const TrigTables* trig_ = nullptr;
     int current_map_ = -1;
     FastArea fast_area_;
+    void shift_camera(int dx, int dy);  // the view moves by (dx, dy) pixels
+    bool follow_player_ = false;
+    bool follow_active_ = false;  // follow_goal_ is set
+    std::int32_t follow_goal_[3] = {0, 0, 0};
     bool expanding_glob_ = false;  // DAT_10FC: no fast area entry while set
     std::array<ObjId, kTrackedSlots> tracked_{};
     std::size_t tracked_count_ = 0;

@@ -6,6 +6,7 @@
 #include "engine/audio/audio.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -858,6 +859,14 @@ std::uint8_t World::npc_direction(ObjId id) const {
 
 // @orig ?: camera follow of CameraProcess (segment 1188), not located
 void World::track_camera_target(std::int32_t x, std::int32_t y, std::int32_t z) {
+    if (follow_player_) {
+        // Port addition: update_follow_camera() glides there, frame by frame.
+        follow_goal_[0] = x;
+        follow_goal_[1] = y;
+        follow_goal_[2] = z;
+        follow_active_ = true;
+        return;
+    }
     // Screen position of the target (SHAPHAND.C projection), feet at z.
     const auto ux = static_cast<std::int16_t>(x), uy = static_cast<std::int16_t>(y);
     const int sx = static_cast<std::int16_t>(((ux - uy) >> 1) - state.view_left);
@@ -877,9 +886,11 @@ void World::track_camera_target(std::int32_t x, std::int32_t y, std::int32_t z) 
     } else if (w - 0x77 < sx) {
         target_x = 0x78;
     }
-    const int dx = sx - target_x;
-    const int dy = sy - ((h + 1) / 2 + 0x28);
+    shift_camera(sx - target_x, sy - ((h + 1) / 2 + 0x28));
+}
 
+// @orig none: port-only camera follow
+void World::shift_camera(int dx, int dy) {
     // Move the camera point by the same amount on screen (ANIMCACH.C 0467:
     // x = sx + 2 sy, y = 2 sy - sx in absolute screen coordinates).
     const auto cx = static_cast<std::int16_t>(state.camera_x), cy = static_cast<std::int16_t>(state.camera_y);
@@ -887,6 +898,27 @@ void World::track_camera_target(std::int32_t x, std::int32_t y, std::int32_t z) 
     const int cam_sy = (static_cast<std::uint16_t>(cx + cy) >> 2) - state.view_top;
     const int abs_x = cam_sx + dx + state.view_left, abs_y = cam_sy + dy + state.view_top;
     set_camera(abs_x + 2 * abs_y, 2 * abs_y - abs_x, state.camera_z);
+}
+
+// @orig none: port-only camera follow
+void World::update_follow_camera() {
+    if (!follow_player_ || !follow_active_) return;
+    const auto ux = static_cast<std::int16_t>(follow_goal_[0]), uy = static_cast<std::int16_t>(follow_goal_[1]);
+    const int sx = static_cast<std::int16_t>(((ux - uy) >> 1) - state.view_left);
+    const int sy = static_cast<std::int16_t>((static_cast<std::uint16_t>(ux + uy) >> 2) - state.view_top -
+                                             (follow_goal_[2] & 0xFF));
+    int dx = sx - (state.screen_right + 1) / 2;
+    int dy = sy - ((state.screen_bottom + 1) / 2 + 0x28);
+    if (dx == 0 && dy == 0) return;
+    // The NPC moves by steps: the view eases towards it (about a tenth of the
+    // gap per frame) instead of jumping with each step; a teleport or a map
+    // change far away is taken at once.
+    if (std::abs(dx) <= 200 && std::abs(dy) <= 150) {
+        const auto ease = [](int d) { return d == 0 ? 0 : (std::abs(d) < 10 ? (d > 0 ? 1 : -1) : d / 10); };
+        dx = ease(dx);
+        dy = ease(dy);
+    }
+    shift_camera(dx, dy);
 }
 
 // @orig 10A8:40CE

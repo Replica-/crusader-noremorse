@@ -32,6 +32,9 @@ public:
     bool big_video = false;    // "bigvideo" (DS:68CE: mode 0x13 / 8 when big, else 0x101 / 0)
     bool subtitles = false;    // "subtitles" (DS:0179): the cutscenes' subtitles
     bool no_weasel = false;    // "noweasel" (DS:0178): no movies in Weasel's shop
+    // Port addition, written only when set: "followplayer", the camera keeps
+    // the controlled NPC at the centre of the screen.
+    bool follow_player = false;
     // Port addition, written only when changed: "padmap" (comma-separated
     // action numbers, see PadButton), "padaim" and "paddeadzone".
     PadSettings pad;

@@ -9,10 +9,10 @@ namespace crusader {
 
 namespace {
 
-constexpr int kPanelX0 = 170, kPanelY0 = 140, kPanelX1 = 469, kPanelY1 = 339;
+constexpr int kPanelX0 = 100, kPanelY0 = 140, kPanelX1 = 539, kPanelY1 = 339;
 constexpr int kTitleY = 176, kIconSize = 14, kIconGap = 8;
-constexpr int kRowX0 = 200, kRowX1 = 439, kRowY0 = 214, kRowStep = 30, kRowHeight = 24;
-constexpr int kTextDrop = 17;  // glyphs hang from their baseline
+constexpr int kRowX0 = 130, kRowX1 = 509, kRowY0 = 214, kRowStep = 30, kRowHeight = 24;
+constexpr int kTextDrop = 17, kRowPad = 18;  // glyphs hang from their baseline
 constexpr std::uint8_t kFrameColour = 0x57, kGreen = 0x0C, kDimGreen = 0x75;
 
 // Text in one colour: drawn on a scratch surface, copied in `tint`.
@@ -89,16 +89,29 @@ void EnhancementsScreen::draw(Surface8& screen) const {
         const bool focused = row == focus_;
         const int tint = focused ? kGreen : kDimGreen;
         draw_rounded_box(screen, r.x0, r.y0, r.x1, r.y1, -1, static_cast<std::uint8_t>(tint));
+        const TextWriter writer(*fonts_, kFont);
+        if (row == kFollowRow) {
+            // The name on the left, its state on the right.
+            const std::string name = tr("SUIVI CAMERA", "CAMERA FOLLOW");
+            const std::string value = config_->follow_player ? tr("MARCHE", "ON") : tr("ARRET", "OFF");
+            print_tinted(screen, *fonts_, r.x0 + kRowPad, r.y0 + kTextDrop, name, tint);
+            print_tinted(screen, *fonts_, r.x1 + 1 - kRowPad - writer.measure(value).width, r.y0 + kTextDrop, value,
+                         tint);
+            continue;
+        }
         const std::string label = row == kPadRow ? tr("MANETTE", "CONTROLLER") : tr("RETOUR", "BACK");
-        const int width = TextWriter(*fonts_, kFont).measure(label).width;
+        const int width = writer.measure(label).width;
         print_tinted(screen, *fonts_, r.x0 + (r.x1 - r.x0 + 1 - width) / 2, r.y0 + kTextDrop, label, tint);
     }
 }
 
+// @orig none: port-only enhancements window
 void EnhancementsScreen::activate(int row) {
     focus_ = row;
     if (row == kPadRow) {
         pad_ = std::make_unique<GamepadScreen>(*fonts_, *config_, *pad_focus_);
+    } else if (row == kFollowRow) {
+        config_->follow_player = !config_->follow_player;
     } else {
         closed_ = true;
     }

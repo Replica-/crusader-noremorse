@@ -1,8 +1,10 @@
 #pragma once
 // The enhancements window (port addition, the original has nothing like it),
 // opened from the options screen's "ameliorations" button (a "+" icon and its
-// name). It gathers what the port adds to the original options; for now the
-// controller screen (gamepad_screen.hpp), opened by its first row.
+// name). It gathers what the port adds to the original options: the
+// controller screen (gamepad_screen.hpp), opened by its first row, and the
+// "camera suit joueur" on / off toggle (GameConfig::follow_player), which keeps
+// the controlled NPC at the centre of the screen.
 //
 // Look: the screen cleared, a small red framed window (colour 0x57) in the
 // middle, the title with the "+" icon in green, and one row per entry
@@ -31,7 +33,7 @@ void draw_plus_icon(Surface8& screen, int x, int y, int size, std::uint8_t colou
 
 class EnhancementsScreen {
 public:
-    static constexpr int kPadRow = 0, kBackRow = 1, kRows = 2;
+    static constexpr int kPadRow = 0, kFollowRow = 1, kBackRow = 2, kRows = 3;
     static constexpr int kFont = 14;
 
     struct Rect {

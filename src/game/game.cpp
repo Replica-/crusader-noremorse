@@ -567,6 +567,8 @@ void Game::new_game(int difficulty) {
 
 // @orig 11D8:31CF
 void Game::update(std::uint32_t elapsed_us) {
+    // The enhancements window edits config_ in place.
+    if (world_) world_->set_follow_player(config_.follow_player);
     // Outside the kernel slice: a key repeat can choose a save from within it.
     if (pending_load_) {
         const int slot = pending_load_;
@@ -593,6 +595,7 @@ void Game::update(std::uint32_t elapsed_us) {
         return;
     }
     dispatch_mouse();
+    if (!modal()) world_->update_follow_camera();
     const std::uint32_t before = kernel_->ticks();
     kernel_->advance_time(elapsed_us);
     kernel_->run_slice();

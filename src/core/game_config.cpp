@@ -50,6 +50,7 @@ GameConfig GameConfig::parse(std::string_view text) {
         else if (key == "bigvideo") c.big_video = value == "true";
         else if (key == "subtitles") c.subtitles = value == "true";
         else if (key == "noweasel") c.no_weasel = value == "true";
+        else if (key == "followplayer") c.follow_player = value == "true";
         else if (key == "padaim") c.pad.aim = std::clamp(number(value), 1, PadSettings::kAimLevels);
         else if (key == "paddeadzone") c.pad.dead_zone = std::clamp(number(value), 0, PadSettings::kDeadZoneLevels - 1);
         else if (key == "padmap") {
@@ -84,6 +85,8 @@ std::string GameConfig::text() const {
     // Written only when set (DS:0178 != 0).
     if (no_weasel) out.set("noweasel", "true");
     else out.erase("noweasel");
+    if (follow_player) out.set("followplayer", "true");
+    else out.erase("followplayer");
     // The controller settings: only when they differ from the defaults.
     // ("padbuttons" was an earlier format, dropped.)
     out.erase("padbuttons");
