@@ -1,4 +1,6 @@
-# Crusader: No Remorse — SDL port
+# Crusader: No Remorse — DECOMP
+
+![Cover](docs/images/cover.png)
 
 A C++20/SDL2 reimplementation of the *Crusader: No Remorse* (Origin, 1995) engine for Windows and Linux. The game is playable, but the project is still a **work in progress**.
 
