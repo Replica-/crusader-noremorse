@@ -232,6 +232,7 @@ int main(int argc, char** argv) {
             presenter.output_size(&w, &h);
             if (classic || !game.config().native_resolution) w = Game::kScreenWidth, h = Game::kScreenHeight;
             int scale = std::max(1, std::min(w / Game::kScreenWidth, h / Game::kScreenHeight));
+            game.set_view_zoom_limit(scale);
             if (const int zoom = game.config().view_zoom) scale = std::min(scale, zoom);
             const int vw = std::max(Game::kScreenWidth, w / scale), vh = std::max(Game::kScreenHeight, h / scale);
             if (vw != screen.width || vh != screen.height) {
@@ -321,7 +322,13 @@ int main(int argc, char** argv) {
             }
             fit_screen();
             game.render(screen, &stats);
-            presenter.set_title(diagnostics(game, stats, fps));
+            {
+                int ow = 0, oh = 0;
+                presenter.output_size(&ow, &oh);
+                char size[64];
+                std::snprintf(size, sizeof size, "  view %dx%d in %dx%d", screen.width, screen.height, ow, oh);
+                presenter.set_title(diagnostics(game, stats, fps) + size);
+            }
             presenter.present(screen, game.palette());
         }
         print_faults(game);

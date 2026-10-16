@@ -11,6 +11,10 @@ namespace crusader {
 SdlPresenter::SdlPresenter(const std::string& title, int width, int height, int scale, bool fullscreen)
     : width_(width), height_(height) {
     set_gamma(1.0);
+    // Without this, Windows scales a window by the display's zoom (125 %, 150 %...)
+    // and SDL reports a smaller size than the screen has, so the view would
+    // be computed for fewer pixels than are shown.
+    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
     if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
         throw std::runtime_error(std::string("SDL video: ") + SDL_GetError());
     }

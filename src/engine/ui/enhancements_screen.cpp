@@ -133,7 +133,7 @@ void EnhancementsScreen::activate(int row) {
     } else if (row == kDirectionalRow) {
         config_->directional_move = !config_->directional_move;
     } else if (row == kZoomRow) {
-        config_->view_zoom = (config_->view_zoom + 1) % 5;
+        config_->view_zoom = (config_->view_zoom + 1) % (std::clamp(config_->view_zoom_limit, 1, 4) + 1);
     } else if (row == kNativeRow) {
         config_->native_resolution = !config_->native_resolution;
     } else if (row == kAimRow) {

@@ -50,6 +50,9 @@ public:
     // (whole multiple) of the native view; 0 takes the biggest that fits the
     // window, 1 gives the finest picture.
     int view_zoom = 0;
+    // Not saved: the biggest pixel size the window allows (set by the platform
+    // layer), where the zoom choices stop.
+    int view_zoom_limit = 4;
     // Port addition, written only when changed: "padmap" (comma-separated
     // action numbers, see PadButton), "padaim" and "paddeadzone".
     PadSettings pad;
