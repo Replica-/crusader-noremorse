@@ -2,9 +2,28 @@
 
 #include "core/amf_module.hpp"
 
+#include <algorithm>
+#include <cctype>
+#include <system_error>
+
 namespace crusader {
 
 namespace {
+
+// The files are "M01.AMF" on the CD: look the name up without the case, for
+// case-sensitive file systems (Linux).
+std::filesystem::path find_module(const std::filesystem::path& dir, const std::string& name) {
+    const auto lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return s;
+    };
+    const std::string wanted = lower(name + ".amf");
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        if (lower(entry.path().filename().string()) == wanted) return entry.path();
+    }
+    return dir / (name + ".amf");
+}
 
 constexpr int kPlaying = 1;
 constexpr int kPaused = 8;
@@ -55,7 +74,7 @@ void Music::play(int track) {
     // The original builds the path whatever the file; a missing one is
     // silence here.
     std::optional<AmfModule> module;
-    if (name) module = AmfModule::load(dir_ / (*name + ".amf"));
+    if (name) module = AmfModule::load(find_module(dir_, *name));
     if (!module) {
         flags_ = 0;
         current_ = 0;
