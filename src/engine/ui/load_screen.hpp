@@ -28,11 +28,12 @@
 // with at least one character, gives the name (CRUSYS_1058_0528) and closes
 // with result 1 (the caller saves; FUN_1008_041a first checks the free disk
 // space, see Game). Backspace removes the last character. A character is
-// added if it is a letter, a digit or one of < space : ; . ? ! , / " ' (codes
-// below 0x100), the name has fewer than 25, and the name with '_' still fits
-// in the slot less 4 pixels; letters become capitals. The original also
-// turns QWERTY into AZERTY (FUN_1008_0000) because its BIOS gave QWERTY
-// codes; the port's codes already follow the player's layout, so it does not.
+// added if it is a letter, a digit or one of < space : ; . ? ! , / " ' (the
+// US version leaves out < : ;) (codes below 0x100), the name has fewer than
+// 25, and the name with '_' still fits in the slot less 4 pixels; letters
+// become capitals. The French original also turns QWERTY into AZERTY
+// (FUN_1008_0000; not in the US one) because its BIOS gave QWERTY codes; the
+// port's codes already follow the player's layout, so it does not.
 // Not reproduced: the mouse cursor hidden while a name is edited.
 
 #include "core/font.hpp"

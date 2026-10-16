@@ -1519,6 +1519,12 @@ void test_function_keys(const std::filesystem::path& data) {
     press(game, 0x3E, false);
     ask = dynamic_cast<const ShapeDialog*>(game.screen());
     CHECK(ask && ask->shape() == ShapeDialog::kQuickLoadQuestion);
+    // Its buttons are not where the quit question has them (13E8:1ACD).
+    if (ask) {
+        const ShapeButton::Rect q = ask->rect();
+        CHECK(ask->buttons().size() == 2 && ask->buttons()[0].rect.x0 == q.x0 + 49 &&
+              ask->buttons()[1].rect.x0 == q.x0 + 121);
+    }
     press(game, 0x15, false, 'y');
     CHECK(!game.screen());
     game.update(kFrameUs);

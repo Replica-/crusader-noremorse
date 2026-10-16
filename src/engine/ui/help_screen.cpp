@@ -1,6 +1,7 @@
 #include "engine/ui/help_screen.hpp"
 
 #include "core/flex.hpp"
+#include "core/language.hpp"
 #include "engine/ui/credits.hpp"
 #include "engine/ui/gump_keys.hpp"
 
@@ -13,7 +14,8 @@ namespace crusader {
 namespace {
 
 constexpr std::uint16_t kNextShape = 0x51, kQuitShape = 0x52;
-constexpr int kNextX = 410, kQuitX = 516, kButtonY = 449;
+// x of "next" and "quit": 13E8:38E5 (13F0:38D8 in the US executable).
+constexpr int kNextX = 410, kQuitX = 516, kNextXUs = 493, kQuitXUs = 549, kButtonY = 449;
 constexpr int kNextId = 0;
 constexpr int kSounds[] = {0xB8, 0x62, 0x67, 0xA, 0xB};
 
@@ -36,8 +38,8 @@ HelpScreen::Pictures HelpScreen::Pictures::load(const std::filesystem::path& sta
 HelpScreen::HelpScreen(ShapeCache& gumps, const Pictures& pictures, std::function<int(int)> random,
                        std::function<void(int)> play_sfx)
     : pictures_(&pictures), random_(std::move(random)), play_sfx_(std::move(play_sfx)) {
-    buttons_.buttons.emplace_back(gumps, kNextShape, kNextId, kNextX, kButtonY);
-    buttons_.buttons.emplace_back(gumps, kQuitShape, 1, kQuitX, kButtonY);
+    buttons_.buttons.emplace_back(gumps, kNextShape, kNextId, us_version() ? kNextXUs : kNextX, kButtonY);
+    buttons_.buttons.emplace_back(gumps, kQuitShape, 1, us_version() ? kQuitXUs : kQuitX, kButtonY);
     show();
 }
 

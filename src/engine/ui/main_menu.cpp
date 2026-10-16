@@ -1,5 +1,6 @@
 #include "engine/ui/main_menu.hpp"
 
+#include "core/language.hpp"
 #include "engine/ui/gump_keys.hpp"
 
 #include <cctype>
@@ -13,6 +14,10 @@ struct Point {
 };
 constexpr std::array<Point, MainMenu::kButtons> kButtonCorners = {{
     {46, 170}, {46, 221}, {46, 271}, {447, 178}, {469, 271}, {517, 318},
+}};
+// The US executable places "credits" and "quit" for its English shapes.
+constexpr std::array<Point, MainMenu::kButtons> kButtonCornersUs = {{
+    {46, 170}, {46, 221}, {46, 271}, {447, 178}, {490, 271}, {551, 318},
 }};
 constexpr int kVersionFont = 7, kVersionColour = 0x75;
 constexpr int kVersionY0 = 438, kVersionLineHeight = 16;
@@ -31,7 +36,7 @@ MainMenu::MainMenu(const Resources& res, Shared& shared, bool no_game)
         const Shape* s = gumps_->get(static_cast<std::uint16_t>(kFirstButton + i));
         const int w = s && !s->frames().empty() ? s->frames()[0].width : 1;
         const int h = s && !s->frames().empty() ? s->frames()[0].height : 1;
-        const Point p = kButtonCorners[i];
+        const Point p = (us_version() ? kButtonCornersUs : kButtonCorners)[i];
         buttons_[i] = {p.x, p.y, p.x + w - 1, p.y + h - 1};
     }
 }

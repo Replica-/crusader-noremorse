@@ -1,6 +1,7 @@
 #include "engine/ui/load_screen.hpp"
 
 #include "core/flex.hpp"
+#include "core/language.hpp"
 #include "engine/ui/gump_keys.hpp"
 
 #include <algorithm>
@@ -140,8 +141,9 @@ void LoadScreen::edit_key(std::uint16_t code) {
         return;
     }
     const bool alnum = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
-    static constexpr std::string_view kPunctuation = "< :;.?!,/\"'";
-    if (!(alnum || kPunctuation.find(static_cast<char>(c)) != std::string_view::npos)) return;
+    // The US executable no longer takes < : and ; (13D8:09F3).
+    const std::string_view punctuation = us_version() ? " .?!,/\"'" : "< :;.?!,/\"'";
+    if (!(alnum || punctuation.find(static_cast<char>(c)) != std::string_view::npos)) return;
     if (name_.size() >= kMaxNameLength || code >= 0x100) return;
     name_ += static_cast<char>(c >= 'a' && c <= 'z' ? c - 0x20 : c);
     const Rect& r = slots_[*selected_];

@@ -8,9 +8,10 @@
 // top-left corner given relative to the dialog.
 //
 // Question (World_on_key): F4 "load the quick save?" shape 0x11, F5 "quick
-// save?" 0x12, Alt+X "quit?" 0x15; "yes" is shape 0x13 at (57, 47), button
-// id 1, and "no" shape 0x14 at (125, 47), id 0. Keys (1368:0F2A, the others
-// do not reach it): o O j J y Y n N s S and Escape; 13F8:0299 closes with 1
+// save?" 0x12, Alt+X "quit?" 0x15; "yes" is shape 0x13, button id 1, and
+// "no" shape 0x14, id 0, at y 47 and x 57 / 125 for Alt+X, 49 / 121 for F4
+// and F5 (55 / 135 for the three in the US executable). Keys (1368:0F2A,
+// the others do not reach it): o O j J y Y n N s S and Escape; 13F8:0299 closes with 1
 // for Y, J or O (after toupper: "yes", "ja", "oui"), with 0 for the others.
 // A button activated closes with its id (13F8:0237).
 //

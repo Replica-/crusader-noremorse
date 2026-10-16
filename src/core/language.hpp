@@ -17,4 +17,8 @@ inline const char* tr(const char* french, const char* english) {
     return text_language() == Language::English ? english : french;
 }
 
+// The data in use is the US version (the only English one supported): some
+// screens of the US executable place their buttons for its English images.
+inline bool us_version() { return text_language() == Language::English; }
+
 }  // namespace crusader

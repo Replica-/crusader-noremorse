@@ -4,7 +4,8 @@
 //
 // Palette STATIC/DIFF.PAL; mouse cursor 0x26, the mouse put at (320, 400).
 // Background (13D0:2B16): the screen cleared, GUMPS.FLX shape 0x49 frame 0 at
-// (139, 76) and frame 1 at (331, 76). Four buttons (13D0:2D5E), level 1..4,
+// (139, 76) and frame 1 at (331, 76); the US shape has a single frame, centred
+// at y 76. Four buttons (13D0:2D5E), level 1..4,
 // shape 0x49 + level: frame 0 at the button's corner and frame 1 170 pixels
 // to its right. A button's rectangle is 321 pixels wide (x 159..479, centred
 // on the screen) and as high as the shape, from y 120, 179, 238, 297. The

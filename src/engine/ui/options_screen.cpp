@@ -29,6 +29,19 @@ constexpr std::array<Placement, OptionsScreen::kWidgets> kPlacements = {{
     {W::kMouseDown, 49, 435, 249},   {W::kMouseUp, 50, 597, 249},
     {W::kQuit, 43, 517, 318},
 }};
+// The US executable places the "off" buttons and the video line for its
+// English shapes (13D0:0ECE): x 95, y 243.
+constexpr std::array<Placement, OptionsScreen::kWidgets> kPlacementsUs = {{
+    {W::kAnimationOn, 31, 35, 163},  {W::kAnimationOff, 32, 95, 163},
+    {W::kFrameSkipOn, 33, 35, 203},  {W::kFrameSkipOff, 34, 95, 203},
+    {W::kBlastsOn, 37, 35, 283},     {W::kBlastsOff, 38, 95, 283},
+    {W::kFilterOn, 39, 35, 323},     {W::kFilterOff, 40, 95, 323},
+    {W::kVideoBig, 35, 35, 243},     {W::kVideoSmall, 36, 137, 243},
+    {W::kSoundDown, 49, 435, 146},   {W::kSoundUp, 50, 597, 146},
+    {W::kMusicDown, 49, 435, 197},   {W::kMusicUp, 50, 597, 197},
+    {W::kMouseDown, 49, 435, 249},   {W::kMouseUp, 50, 597, 249},
+    {W::kQuit, 43, 517, 318},
+}};
 
 struct Point {
     int x, y;
@@ -47,6 +60,11 @@ constexpr int kButtonFont = 7;
 constexpr std::array<OptionsScreen::Rect, OptionsScreen::kQuitLine> kLineRects = {{
     {22, 145, 258, 176}, {22, 185, 258, 216}, {22, 225, 227, 256}, {22, 265, 314, 296},
     {22, 305, 349, 336}, {432, 144, 614, 191}, {432, 194, 614, 242}, {432, 247, 614, 294},
+}};
+// US: the left lines end where their English labels do.
+constexpr std::array<OptionsScreen::Rect, OptionsScreen::kQuitLine> kLineRectsUs = {{
+    {22, 145, 198, 176}, {22, 185, 202, 216}, {22, 225, 225, 256}, {22, 265, 232, 296},
+    {22, 305, 284, 336}, {432, 144, 614, 191}, {432, 194, 614, 242}, {432, 247, 614, 294},
 }};
 // Widgets acted on by left / '4' and right / '6', by line (tables at 13D0:234C and 233C).
 constexpr std::array<W, OptionsScreen::kQuitLine> kLeftOf = {
@@ -79,7 +97,7 @@ bool step(int& s, bool up) {
 OptionsScreen::OptionsScreen(ShapeCache& gumps, GameConfig& config, Audio* audio, int& focus, const FontSet* fonts)
     : gumps_(&gumps), config_(&config), audio_(audio), focus_(&focus), fonts_(fonts) {
     for (int i = 0; i < kWidgets; ++i) {
-        const Placement& p = kPlacements[i];
+        const Placement& p = (us_version() ? kPlacementsUs : kPlacements)[i];
         const Shape* s = gumps_->get(p.shape);
         const int w = s && !s->frames().empty() ? s->frames()[0].width : 1;
         const int h = s && !s->frames().empty() ? s->frames()[0].height : 1;
@@ -146,9 +164,9 @@ void OptionsScreen::draw(Surface8& screen) const {
                    kBackgroundCorners[q].y);
     }
     draw_shape(screen, 41, 0, 468, 146);
-    draw_shape(screen, 42, 0, 459, 196);
+    draw_shape(screen, 42, 0, us_version() ? 465 : 459, 196);  // 13D0:17C5: "music volume"
     if (*focus_ >= 0 && *focus_ < kQuitLine) {
-        const Rect& r = kLineRects[*focus_];
+        const Rect& r = (us_version() ? kLineRectsUs : kLineRects)[*focus_];
         outline(screen, r.x0, r.y0, r.x1, r.y1, kFocusColour);
     }
     // Mouse speed: 0x2164 per notch in 16.16, the last notch pulled back.

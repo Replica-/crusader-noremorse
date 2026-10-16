@@ -1,5 +1,6 @@
 #include "engine/ui/difficulty_screen.hpp"
 
+#include "core/language.hpp"
 #include "engine/ui/gump_keys.hpp"
 
 namespace crusader {
@@ -30,8 +31,15 @@ void DifficultyScreen::draw_shape(Surface8& screen, std::uint16_t shape, int fra
 // @orig 13D0:2B16 13D0:2E2B
 void DifficultyScreen::draw(Surface8& screen) const {
     screen.clear(0);
-    draw_shape(screen, kBackground, 0, 139, 76);
-    draw_shape(screen, kBackground, 1, 331, 76);
+    if (us_version()) {
+        // The US shape has one frame, centred (13D0:2B16 of the US executable).
+        const Shape* s = gumps_->get(kBackground);
+        const int w = s && !s->frames().empty() ? s->frames()[0].width : 0;
+        draw_shape(screen, kBackground, 0, (640 - w) >> 1, 76);
+    } else {
+        draw_shape(screen, kBackground, 0, 139, 76);
+        draw_shape(screen, kBackground, 1, 331, 76);
+    }
     for (int level = 1; level <= kLevels; ++level) {
         const Rect& r = buttons_[level - 1];
         const auto shape = static_cast<std::uint16_t>(kBackground + level);

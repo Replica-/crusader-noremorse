@@ -2,6 +2,7 @@
 
 #include "core/bytes.hpp"
 #include "core/dtable.hpp"
+#include "core/language.hpp"
 #include "engine/audio/audio.hpp"
 
 #include <algorithm>
@@ -559,9 +560,11 @@ ObjId World::create_npc(std::uint16_t shape, std::uint16_t frame) {
         const Item* i = get(id);
         if (!i) continue;
 
+        // Status bit 0x0002 is required by the French executable only: the US
+        // one (10F0:2378) takes any NPC outside the fast area.
         const std::uint16_t s = i->shape;
         if ((i->z & 0xFF) != 0xFE && s != 0x3AC && s != 0x4DC && s != 0x524 && s != 0x4D9 && s != 0x4E0 &&
-            (i->flags & 0x0002) && !(i->flags & kItemFastArea)) {
+            ((i->flags & 0x0002) || us_version()) && !(i->flags & kItemFastArea)) {
             destroy(id);
             slot = id;
         }

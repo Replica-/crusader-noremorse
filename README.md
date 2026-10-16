@@ -45,7 +45,7 @@ data/
 Notes:
 
 - The original executables are not run. Keep `CRUSADER.EXE` in `data/` all the same: the port reads the version and the language of the data from it (the US data is still recognised without it, from `USECODE/UNKCOFF.DAT`).
-- **Supported versions**: French 1.08 and US 1.23. With the US data the game is in English (scripts, cutscenes, voices, texts of the executable, the port's own screens). The engine is rebuilt from the French executable: the few routines Origin changed in 1.23 (34 of those ported so far, e.g. the load screen, the music, some AI) still behave as in 1.08. Other revisions (US 1.01, 1.10, 1.21, Spanish, German, Japanese) are untested.
+- **Supported versions**: French 1.08 and US 1.23. With the US data the game is in English (scripts, cutscenes, voices, texts of the executable, the port's own screens). The engine is rebuilt from the French executable; the US one differs in 66 of its 2,931 routines. The differences that matter so far are reproduced: button positions of the US screens, save names, NPC slot reuse. Not yet: the US version resets the world between missions, keeping only the player and their inventory. Other revisions (US 1.01, 1.10, 1.21, Spanish, German, Japanese) are untested.
 - File names are case-sensitive on Linux: keep the original **upper-case** names (`STATIC/SHAPES.FLX`, etc.).
 - `FLICS/` is only needed for cutscenes; everything else is required.
 
@@ -88,7 +88,7 @@ Versions follow [SemVer](https://semver.org) and are computed automatically from
 - **Later missions**: only mission 1 is used as a reference; the other 15 rely on the same mechanisms but have not been reviewed.
 - **Fidelity**: the original random number generator, gravity behaviour (bounces, slides), draw order on a few maps, restoring saved processes, systematic comparison with the original under DOSBox.
 - **Comfort**: start-up menu, resolution choice (beyond 640×480), other game revisions.
-- **US version**: review the 34 ported routines changed in the US 1.23 executable.
+- **US version**: the world reset between missions of the US 1.23 executable.
 - **Decompilation**: name the ~1,800 functions still anonymous (most are Borland library and Phar Lap code, to be replaced by the standard library).
 - **Out of scope for now**: the original's cheats and debug commands.
 

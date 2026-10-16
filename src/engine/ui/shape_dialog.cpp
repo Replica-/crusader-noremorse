@@ -1,5 +1,6 @@
 #include "engine/ui/shape_dialog.hpp"
 
+#include "core/language.hpp"
 #include "engine/ui/gump_keys.hpp"
 
 namespace crusader {
@@ -7,7 +8,20 @@ namespace crusader {
 namespace {
 
 constexpr std::uint16_t kYesShape = 0x13, kNoShape = 0x14, kOkShape = 0x50;
-constexpr int kYesX = 57, kNoX = 125, kOkX = 91, kButtonY = 47;
+constexpr int kOkX = 91, kButtonY = 47;
+
+struct YesNo {
+    int yes_x, no_x;
+};
+
+// World_on_key gives the places: in the French executable the quit question
+// has its own (13E8:159A), the quick load and save ones share theirs
+// (13E8:1ACD, 1BAB); the US one uses the same for the three.
+YesNo yes_no_places(std::uint16_t shape) {
+    if (us_version()) return {55, 135};
+    if (shape == ShapeDialog::kQuitQuestion) return {57, 125};
+    return {49, 121};
+}
 
 const ShapeFrame* first_frame(ShapeCache& gumps, std::uint16_t shape, std::size_t frame = 0) {
     const Shape* s = gumps.get(shape);
@@ -75,8 +89,9 @@ ShapeDialog::ShapeDialog(ShapeCache& gumps, std::uint16_t shape, bool question)
     const int y = (479 - h) >> 1;
     rect_ = {x, y, x + w - 1, y + h - 1};
     if (question) {
-        buttons_.buttons.emplace_back(gumps, kYesShape, 1, x + kYesX, y + kButtonY);
-        buttons_.buttons.emplace_back(gumps, kNoShape, 0, x + kNoX, y + kButtonY);
+        const YesNo p = yes_no_places(shape);
+        buttons_.buttons.emplace_back(gumps, kYesShape, 1, x + p.yes_x, y + kButtonY);
+        buttons_.buttons.emplace_back(gumps, kNoShape, 0, x + p.no_x, y + kButtonY);
     } else {
         buttons_.buttons.emplace_back(gumps, kOkShape, 1, x + kOkX, y + kButtonY);
     }

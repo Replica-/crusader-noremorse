@@ -5,7 +5,8 @@
 // 640 x 480 BMP drawn on the cleared screen with its own palette (segment
 // 1010), STATIC/HELP1.DAT for page 0, HELP2.DAT for page 1, HELP3.DAT for
 // page 4. Two shape buttons (shape_dialog.hpp) over it: "next" shape 0x51 at
-// (410, 449), id 0, and "quit" 0x52 at (516, 449), id 1. Cursor frame 0x27.
+// (410, 449), id 0, and "quit" 0x52 at (516, 449), id 1 (x 493 and 549 in
+// the US executable). Cursor frame 0x27.
 //
 // Showing the page +0x49 (13E8:3BA5): -1 becomes 0 and nothing is drawn
 // again; 2 closes the screen; otherwise the screen is cleared and the page's
