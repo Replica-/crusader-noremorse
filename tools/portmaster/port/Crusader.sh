@@ -44,6 +44,6 @@ chmod +x "$GAMEDIR/crusader"
 # gptokeyb is not used: its default key mapping would double every input.
 # CRUSADER_PAD_DEBUG=1 logs the controller and its inputs in log.txt.
 pm_platform_helper "$GAMEDIR/crusader"
-./crusader --fullscreen --gamma 1.4 data
+./crusader --fullscreen data
 
 pm_finish
