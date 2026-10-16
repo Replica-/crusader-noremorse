@@ -161,6 +161,9 @@ Game::Game(const std::filesystem::path& data, const std::filesystem::path& saves
       data_(data),
       save_dir_(saves.empty() ? data / "SAVEGAME" : saves),
       config_(GameConfig::load(data / "CRUSADER.CFG")) {
+    // The US data has no CRUSADER.CFG (the installer writes it): without one,
+    // take the installer's choices, the doubled videos and the subtitles.
+    if (!std::filesystem::exists(data / "CRUSADER.CFG")) config_.big_video = config_.subtitles = true;
     // dsfx_init: without SOUND.FLX the game runs silent, as with "sound=off".
     if (std::filesystem::exists(data / "SOUND/SOUND.FLX")) {
         audio_ = std::make_unique<Audio>(SoundFlex::open(data / "SOUND/SOUND.FLX"), data / "SOUND");
