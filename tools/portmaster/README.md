@@ -18,7 +18,6 @@ Le zip de release suit la structure PortMaster. Dézipper dans le dossier `ports
 ```
 Crusader.sh                    lanceur
 crusader/crusader              le binaire
-crusader/crusader.gptk         gptokeyb : seulement la combinaison pour quitter
 crusader/licenses/             licences
 crusader/data/                 données du jeu (fichiers installés ou .iso)
 ```
@@ -29,7 +28,7 @@ Les données sont celles du jeu d'origine (version française), à fournir soi-m
 
 ## Manette
 
-Le jeu lit la manette lui-même (SDL_GameController) : `crusader.gptk` ne mappe aucun bouton, `gptokeyb` ne sert qu'à quitter (hotkey + start). Les réglages par défaut sont ceux de l'écran « MANETTE » des options, où chaque action se réassigne (écrits dans `data/CRUSADER.CFG`, clés `padmap`, `padaim`, `paddeadzone`) :
+Le jeu lit la manette lui-même (SDL_GameController) : `gptokeyb` n'est pas utilisé (ses touches par défaut doublaient chaque entrée : RT envoyait aussi Fin, qui fait reculer). Select + Start quitte le jeu. `CRUSADER_PAD_DEBUG=1` journalise la manette dans `log.txt`. Les réglages par défaut sont ceux de l'écran « MANETTE » des options, où chaque action se réassigne (écrits dans `data/CRUSADER.CFG`, clés `padmap`, `padaim`, `paddeadzone`) :
 
 | Entrée | Action |
 |---|---|

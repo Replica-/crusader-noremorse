@@ -1,5 +1,0 @@
-# gptokeyb for the Crusader: No Remorse port: no button mapping on purpose.
-# The game reads the controller itself (SDL_GameController, see
-# src/platform/sdl_gamepad.hpp) with the settings of its "manette" screen
-# (options), so mapping the buttons to keys here would send every input twice.
-# gptokeyb only stays for the PortMaster exit combination (hotkey + start).

@@ -40,8 +40,9 @@ fi
 
 chmod +x "$GAMEDIR/crusader"
 
-# The controller is read by the game itself; gptokeyb is only here for the exit hotkey.
-$GPTOKEYB "crusader" -c "$GAMEDIR/crusader.gptk" &
+# The game reads the controller itself (SDL_GameController, Select + Start quits);
+# gptokeyb is not used: its default key mapping would double every input.
+# CRUSADER_PAD_DEBUG=1 logs the controller and its inputs in log.txt.
 pm_platform_helper "$GAMEDIR/crusader"
 ./crusader --fullscreen --gamma 1.4 data
 

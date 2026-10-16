@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 namespace crusader {
 
@@ -13,6 +15,13 @@ constexpr int kStickOn = 16000;   // left stick: digital threshold, with hystere
 constexpr int kStickOff = 10000;
 constexpr int kTriggerOn = 16000;
 constexpr int kTriggerOff = 8000;
+
+// CRUSADER_PAD_DEBUG=1 prints the controller and every raw / mapped input to
+// stdout, to diagnose a device whose SDL mapping is off (the PortMaster log).
+bool debug_enabled() {
+    static const bool on = std::getenv("CRUSADER_PAD_DEBUG") != nullptr;
+    return on;
+}
 
 constexpr std::uint8_t kArrows[4] = {0x48, 0x50, 0x4B, 0x4D};  // up, down, left, right (E0)
 
@@ -33,6 +42,19 @@ void Gamepad::open(int device_index) {
     if (!c) return;
     controller_ = reinterpret_cast<_SDL_GameController*>(c);
     instance_ = SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(c));
+    if (debug_enabled()) {
+        char guid[64];
+        SDL_JoystickGetGUIDString(SDL_JoystickGetDeviceGUID(device_index), guid, sizeof guid);
+        char* mapping = SDL_GameControllerMapping(c);
+        std::printf("[pad] opened #%d \"%s\" guid=%s\n[pad] mapping: %s\n", device_index, SDL_GameControllerName(c), guid,
+                    mapping ? mapping : "(none)");
+        SDL_free(mapping);
+        std::fflush(stdout);
+    }
+}
+
+bool Gamepad::quit_requested() const {
+    return held_[SDL_CONTROLLER_BUTTON_BACK] && held_[SDL_CONTROLLER_BUTTON_START];
 }
 
 void Gamepad::release_all() {
@@ -46,6 +68,29 @@ void Gamepad::release_all() {
 }
 
 bool Gamepad::feed(const SDL_Event& ev) {
+    if (debug_enabled()) {
+        switch (ev.type) {
+            case SDL_JOYAXISMOTION:
+                if (std::abs(ev.jaxis.value) > 4000) std::printf("[pad] raw axis %d = %d\n", ev.jaxis.axis, ev.jaxis.value);
+                break;
+            case SDL_JOYBUTTONDOWN:
+            case SDL_JOYBUTTONUP:
+                std::printf("[pad] raw button %d %s\n", ev.jbutton.button, ev.type == SDL_JOYBUTTONDOWN ? "down" : "up");
+                break;
+            case SDL_JOYHATMOTION: std::printf("[pad] raw hat %d = %d\n", ev.jhat.hat, ev.jhat.value); break;
+            case SDL_CONTROLLERBUTTONDOWN:
+            case SDL_CONTROLLERBUTTONUP:
+                std::printf("[pad] mapped %s %s\n", SDL_GameControllerGetStringForButton(static_cast<SDL_GameControllerButton>(ev.cbutton.button)),
+                            ev.type == SDL_CONTROLLERBUTTONDOWN ? "down" : "up");
+                break;
+            case SDL_CONTROLLERAXISMOTION:
+                if (std::abs(ev.caxis.value) > 4000)
+                    std::printf("[pad] mapped %s = %d\n", SDL_GameControllerGetStringForAxis(static_cast<SDL_GameControllerAxis>(ev.caxis.axis)), ev.caxis.value);
+                break;
+            default: break;
+        }
+        std::fflush(stdout);
+    }
     switch (ev.type) {
         case SDL_CONTROLLERDEVICEADDED:
             open(ev.cdevice.which);

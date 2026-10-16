@@ -229,6 +229,8 @@ int main(int argc, char** argv) {
         bool relative_mouse = false;
         Gamepad gamepad;
         gamepad.init();
+        const bool pad_debug = std::getenv("CRUSADER_PAD_DEBUG") != nullptr;  // see sdl_gamepad.cpp
+        if (pad_debug) std::setvbuf(stdout, nullptr, _IOLBF, 0);
         gamepad.set_settings(&game.config().pad);
         std::uint64_t last = SDL_GetPerformanceCounter();
         const double freq = static_cast<double>(SDL_GetPerformanceFrequency());
@@ -238,8 +240,14 @@ int main(int argc, char** argv) {
             SDL_Event ev;
             while (SDL_PollEvent(&ev)) {
                 if (ev.type == SDL_QUIT) running = false;
-                if (gamepad.feed(ev)) continue;
-                if (auto k = translate_key(ev)) game.key(k->scancode, k->extended, k->pressed, k->flags, k->ascii);
+                if (gamepad.feed(ev)) {
+                    if (gamepad.quit_requested()) running = false;
+                    continue;
+                }
+                if (auto k = translate_key(ev)) {
+                    if (pad_debug) std::printf("[key] sdl keyboard %02x%s %s\n", k->scancode, k->extended ? " ext" : "", k->pressed ? "down" : "up");
+                    game.key(k->scancode, k->extended, k->pressed, k->flags, k->ascii);
+                }
                 if (auto m = translate_mouse(ev)) {
                     if (relative_mouse) {
                         const bool move = m->kind == MouseEvent::Kind::Move;
@@ -259,7 +267,10 @@ int main(int argc, char** argv) {
             gamepad.set_menu(!game.mouse_in_play());
             gamepad.set_capture(game.waiting_for_pad());
             for (int b : gamepad.take_captured()) game.pad_button(b);
-            for (const KeyEvent& k : gamepad.take_keys()) game.key(k.scancode, k.extended, k.pressed, k.flags, k.ascii);
+            for (const KeyEvent& k : gamepad.take_keys()) {
+                if (pad_debug) std::printf("[key] pad %02x%s %s\n", k.scancode, k.extended ? " ext" : "", k.pressed ? "down" : "up");
+                game.key(k.scancode, k.extended, k.pressed, k.flags, k.ascii);
+            }
             if (int dx, dy; (gamepad.mouse_motion(seconds, &dx, &dy), dx || dy)) {
                 game.mouse_move(game.cursor().x() + dx, game.cursor().y() + dy);
             }

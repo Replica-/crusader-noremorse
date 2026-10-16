@@ -71,6 +71,10 @@ public:
 
     bool connected() const { return controller_ != nullptr; }
 
+    // Select + Start held together: the way out on handhelds, where nothing
+    // else (PortMaster's gptokeyb is not used) can quit the game.
+    bool quit_requested() const;
+
 private:
     enum Dir { kUp, kDown, kLeft, kRight };
 
