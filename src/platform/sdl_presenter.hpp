@@ -28,6 +28,13 @@ public:
     // Brightens (> 1) or darkens (< 1) the picture; 1 is the original palette.
     void set_gamma(double gamma);
     void present(const Surface8& frame, const Palette& palette);
+    void maximize();
+    // Desktop fullscreen on / off (Alt+Enter).
+    void toggle_fullscreen();
+    // Size of the window's drawing area in real pixels.
+    void output_size(int* w, int* h) const;
+    // Changes the size of the frames given to present (the window is unchanged).
+    void resize(int width, int height);
     // Puts the system pointer on a point of the game screen (mouse_warp).
     void warp_mouse(int x, int y);
 

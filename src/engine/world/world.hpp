@@ -525,6 +525,13 @@ public:
     // original constants (camera 320 pixels from the left, 300 from the top
     // of a 640 x 480 screen).
     void set_camera(std::int32_t x, std::int32_t y, std::int32_t z);
+    // Port addition (native resolution): the view is w x h instead of
+    // 640 x 480. The camera keeps the same place relative to the centre
+    // (w / 2 from the left, 300 + (h - 480) / 2 from the top), so the extra
+    // pixels show more of the surroundings. No change when the size is the same.
+    void set_view_size(int w, int h);
+    int view_origin_x() const;
+    int view_origin_y() const;
     // ITEMCACH.C 1D29, when the controlled NPC is put down at (x, y, z): if
     // it gets within 100 pixels of the left / right edge, 140 of the top or
     // 70 of the bottom, the view jumps to put it at x 520 (coming from the

@@ -42,6 +42,14 @@ public:
     // Port addition, written only when set: "directionalaim", the right stick
     // puts the crosshair in the direction it points.
     bool directional_aim = false;
+    // Port addition, written when switched off: "nativeresolution", the view
+    // takes the whole screen (more scenery around the camera) instead of the
+    // original 640 x 480.
+    bool native_resolution = true;
+    // Port addition, written when not 0: "viewzoom", the largest pixel size
+    // (whole multiple) of the native view; 0 takes the biggest that fits the
+    // window, 1 gives the finest picture.
+    int view_zoom = 0;
     // Port addition, written only when changed: "padmap" (comma-separated
     // action numbers, see PadButton), "padaim" and "paddeadzone".
     PadSettings pad;

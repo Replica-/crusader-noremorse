@@ -94,6 +94,8 @@ int main(int argc, char** argv) {
     std::filesystem::path data = "data", iso;
     int save = 1, frames = 0;
     bool new_game = false, save_given = false, fullscreen = false;
+    int png_width = Game::kScreenWidth, png_height = Game::kScreenHeight;
+    bool classic = false;  // --classic: the original 640 x 480 view, stretched to the window
     double gamma = 1.0;
     std::int32_t scroll_x = 0, scroll_y = 0;
     bool walk = false, fire = false, menu = false, menu_load = false, menu_credits = false, menu_options = false, menu_gamepad = false,
@@ -112,6 +114,10 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--wav") == 0 && i + 1 < argc) wav = argv[++i];
         else if (std::strcmp(argv[i], "--new-game") == 0) new_game = true;
         else if (std::strcmp(argv[i], "--fullscreen") == 0) fullscreen = true;
+        else if (std::strcmp(argv[i], "--classic") == 0) classic = true;
+        else if (std::strcmp(argv[i], "--size") == 0 && i + 1 < argc) {  // with --png: the screen's size, e.g. 960x540
+            std::sscanf(argv[++i], "%dx%d", &png_width, &png_height);
+        }
         else if (std::strcmp(argv[i], "--gamma") == 0 && i + 1 < argc) gamma = std::stod(argv[++i]);
         else if (std::strcmp(argv[i], "--movie") == 0 && i + 1 < argc) movie = argv[++i];
         else if (std::strcmp(argv[i], "--movie-overlay") == 0 && i + 1 < argc) {
@@ -153,7 +159,7 @@ int main(int argc, char** argv) {
         else if (start_up) game.start_up();
         else game.load_save(save);
         if (!movie.empty()) game.play_movie(movie, movie_kind);
-        Surface8 screen(Game::kScreenWidth, Game::kScreenHeight);
+        Surface8 screen(png_width, png_height);
         RenderStats stats;
 
         if (!png.empty()) {
@@ -217,6 +223,22 @@ int main(int argc, char** argv) {
         game.set_config_file(data / "CRUSADER.CFG");
         SdlPresenter presenter("crusader", Game::kScreenWidth, Game::kScreenHeight, 2, fullscreen);
         presenter.set_gamma(gamma);
+        if (!classic && !fullscreen) presenter.maximize();
+        // Native resolution: the game is drawn at the largest whole fraction of
+        // the window that is still 640 x 480 or more, so the pixels keep their
+        // shape and a wider window shows more of the surroundings.
+        auto fit_screen = [&]() {
+            int w = 0, h = 0;
+            presenter.output_size(&w, &h);
+            if (classic || !game.config().native_resolution) w = Game::kScreenWidth, h = Game::kScreenHeight;
+            int scale = std::max(1, std::min(w / Game::kScreenWidth, h / Game::kScreenHeight));
+            if (const int zoom = game.config().view_zoom) scale = std::min(scale, zoom);
+            const int vw = std::max(Game::kScreenWidth, w / scale), vh = std::max(Game::kScreenHeight, h / scale);
+            if (vw != screen.width || vh != screen.height) {
+                screen = Surface8(vw, vh);
+                presenter.resize(vw, vh);
+            }
+        };
         std::unique_ptr<SdlAudio> audio;
         if (game.audio()) {
             audio = std::make_unique<SdlAudio>(game.audio()->mixer);
@@ -244,6 +266,12 @@ int main(int argc, char** argv) {
                     if (gamepad.quit_requested()) running = false;
                     continue;
                 }
+                // Alt+Enter: fullscreen on / off, not sent to the game.
+                if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && ev.key.keysym.sym == SDLK_RETURN &&
+                    (ev.key.keysym.mod & KMOD_ALT)) {
+                    if (ev.type == SDL_KEYDOWN && !ev.key.repeat) presenter.toggle_fullscreen();
+                    continue;
+                }
                 if (auto k = translate_key(ev)) {
                     if (pad_debug) std::printf("[key] sdl keyboard %02x%s %s\n", k->scancode, k->extended ? " ext" : "", k->pressed ? "down" : "up");
                     game.key(k->scancode, k->extended, k->pressed, k->flags, k->ascii);
@@ -253,6 +281,9 @@ int main(int argc, char** argv) {
                         const bool move = m->kind == MouseEvent::Kind::Move;
                         m->x = game.cursor().x() + (move ? m->dx : 0);
                         m->y = game.cursor().y() + (move ? m->dy : 0);
+                    } else {  // the menus are 640 x 480, centred in the screen
+                        m->x -= game.ui_x();
+                        m->y -= game.ui_y();
                     }
                     if (m->kind == MouseEvent::Kind::Move) game.mouse_move(m->x, m->y);
                     else game.mouse_button(m->button, m->kind == MouseEvent::Kind::ButtonDown, m->x, m->y);
@@ -286,8 +317,9 @@ int main(int argc, char** argv) {
                 relative_mouse = game.mouse_in_play();
                 SDL_SetRelativeMouseMode(relative_mouse ? SDL_TRUE : SDL_FALSE);
                 // Back in a menu: the system pointer where the game's is.
-                if (!relative_mouse) presenter.warp_mouse(game.cursor().x(), game.cursor().y());
+                if (!relative_mouse) presenter.warp_mouse(game.cursor().x() + game.ui_x(), game.cursor().y() + game.ui_y());
             }
+            fit_screen();
             game.render(screen, &stats);
             presenter.set_title(diagnostics(game, stats, fps));
             presenter.present(screen, game.palette());

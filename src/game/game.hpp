@@ -107,7 +107,14 @@ public:
 
     // Draws the view (the original's screen origin, see World::set_camera),
     // then the status bar, or the menu; then the mouse cursor if shown.
+    // `screen` is 640 x 480, or larger for the native resolution: the view then
+    // shows more around the camera, and the menus, screens, films and cursor
+    // stay 640 x 480 in the middle (see ui_x / ui_y for the mouse).
     void render(Surface8& screen, RenderStats* stats = nullptr);
+    // Where the 640 x 480 area starts in the last rendered screen; the mouse
+    // coordinates the game takes are relative to it.
+    int ui_x() const { return ui_x_; }
+    int ui_y() const { return ui_y_; }
 
     // Moves the camera by (dx, dy) usecode units at its current height.
     void move_camera(std::int32_t dx, std::int32_t dy);
@@ -269,6 +276,10 @@ private:
     void animate_scenery();
     // The game view and the status bar, without the cursor.
     void render_view(Surface8& screen, RenderStats* stats = nullptr);
+    template <typename Draw>
+    void draw_window(Surface8& screen, int x0, int y0, Draw&& draw);
+    Surface8 window_;  // 640 x 480 scratch for draw_window
+    int ui_x_ = 0, ui_y_ = 0;
     void update_movie(std::uint32_t elapsed_us);
     void end_movie();
     void save_config();

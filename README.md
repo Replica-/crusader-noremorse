@@ -17,12 +17,14 @@ This repository contains **no game files**: you need your own copy of the origin
   - A camera that follows the player
   - Directional movement: the controller's left stick walks the Silencer where it points, as an alternative to the original tank controls
   - Directional aiming: the right stick puts the crosshair where it points
+  - Native resolution: the view fills your screen (in whole-number pixel multiples, never stretched), showing more of the surroundings; the menus and cutscenes stay 640×480, centred
+  - Zoom: choose the pixel size of the native view (Auto, or ×1 to ×4); ×1 gives the finest picture and the widest view
+- Fullscreen toggle: press **Alt+Enter** at any time to switch between windowed and fullscreen.
 
 ## Planned improvements
 
 - Release the game on PortMaster.
 - Support additional versions of *Crusader: No Remorse*, if there is interest.
-- Support higher screen resolutions.
 - Explore the possibility of supporting *Crusader: No Regret*.
 - Have an idea? Let me know what you'd like to see!
 

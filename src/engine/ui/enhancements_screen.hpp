@@ -8,7 +8,9 @@
 // directionnel" toggle (GameConfig::directional_move): the controller's left
 // stick walks the NPC where it points instead of the tank controls, and the
 // "visee directionnelle" toggle (GameConfig::directional_aim): the right stick
-// puts the crosshair where it points.
+// puts the crosshair where it points, and the "resolution native" toggle
+// (GameConfig::native_resolution): the view fills the screen, and its "zoom" row
+// (GameConfig::view_zoom): auto, then pixels of 1 to 4 screen pixels.
 //
 // Look: the screen cleared, a small red framed window (colour 0x57) in the
 // middle, the title with the "+" icon in green, and one row per entry
@@ -37,8 +39,8 @@ void draw_plus_icon(Surface8& screen, int x, int y, int size, std::uint8_t colou
 
 class EnhancementsScreen {
 public:
-    static constexpr int kPadRow = 0, kFollowRow = 1, kDirectionalRow = 2, kAimRow = 3, kBackRow = 4,
-                              kRows = 5;
+    static constexpr int kPadRow = 0, kFollowRow = 1, kDirectionalRow = 2, kAimRow = 3, kNativeRow = 4,
+                              kZoomRow = 5, kBackRow = 6, kRows = 7;
     static constexpr int kFont = 14;
 
     struct Rect {

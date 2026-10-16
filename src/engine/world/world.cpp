@@ -763,10 +763,22 @@ void World::set_camera(std::int32_t x, std::int32_t y, std::int32_t z) {
     state.camera_x = ux;
     state.camera_y = uy;
     state.camera_z = z & 0xFF;
-    state.view_left = static_cast<std::int16_t>((ux >> 1) - (uy >> 1) - 0x140);
-    state.view_top = static_cast<std::int16_t>((ux >> 2) + (uy >> 2) - state.camera_z - 300);
+    state.view_left = static_cast<std::int16_t>((ux >> 1) - (uy >> 1) - view_origin_x());
+    state.view_top = static_cast<std::int16_t>((ux >> 2) + (uy >> 2) - state.camera_z - view_origin_y());
     update_fast_area(ux, uy);
     if (audio_) audio_->sources.update_volumes(*this);
+}
+
+// 640 x 480: 0x140 and 300.
+int World::view_origin_x() const { return (state.screen_right + 1) / 2; }
+int World::view_origin_y() const { return 300 + ((state.screen_bottom + 1) - 480) / 2; }
+
+// @orig none: port-only native resolution
+void World::set_view_size(int w, int h) {
+    if (state.screen_right == w - 1 && state.screen_bottom == h - 1) return;
+    state.screen_right = static_cast<std::int16_t>(w - 1);
+    state.screen_bottom = static_cast<std::int16_t>(h - 1);
+    set_camera(state.camera_x, state.camera_y, state.camera_z);
 }
 
 // @orig 10D8:01C7
@@ -911,8 +923,8 @@ void World::shift_camera(int dx, int dy) {
     for (int oy = -3; oy <= 3; ++oy) {
         for (int ox = -3; ox <= 3; ++ox) {
             const auto px = static_cast<std::uint16_t>(base_x + ox), py = static_cast<std::uint16_t>(base_y + oy);
-            const int left = static_cast<std::int16_t>((px >> 1) - (py >> 1) - 0x140);
-            const int top = static_cast<std::int16_t>((px >> 2) + (py >> 2) - state.camera_z - 300);
+            const int left = static_cast<std::int16_t>((px >> 1) - (py >> 1) - view_origin_x());
+            const int top = static_cast<std::int16_t>((px >> 2) + (py >> 2) - state.camera_z - view_origin_y());
             const int err = std::abs(left - want_left) + std::abs(top - want_top);
             if (err < best_err) best_err = err, best_x = px, best_y = py;
         }

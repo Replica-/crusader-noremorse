@@ -52,6 +52,8 @@ GameConfig GameConfig::parse(std::string_view text) {
         else if (key == "noweasel") c.no_weasel = value == "true";
         else if (key == "followplayer") c.follow_player = value == "true";
         else if (key == "directionalmove") c.directional_move = value == "true";
+        else if (key == "viewzoom") c.view_zoom = std::clamp(number(value), 0, 4);
+        else if (key == "nativeresolution") c.native_resolution = value != "false";
         else if (key == "directionalaim") c.directional_aim = value == "true";
         else if (key == "padaim") c.pad.aim = std::clamp(number(value), 1, PadSettings::kAimLevels);
         else if (key == "paddeadzone") c.pad.dead_zone = std::clamp(number(value), 0, PadSettings::kDeadZoneLevels - 1);
@@ -91,6 +93,10 @@ std::string GameConfig::text() const {
     else out.erase("followplayer");
     if (directional_move) out.set("directionalmove", "true");
     else out.erase("directionalmove");
+    if (view_zoom) out.set("viewzoom", std::to_string(view_zoom));
+    else out.erase("viewzoom");
+    if (!native_resolution) out.set("nativeresolution", "false");
+    else out.erase("nativeresolution");
     if (directional_aim) out.set("directionalaim", "true");
     else out.erase("directionalaim");
     // The controller settings: only when they differ from the defaults.

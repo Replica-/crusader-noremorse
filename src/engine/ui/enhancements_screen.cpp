@@ -9,9 +9,9 @@ namespace crusader {
 
 namespace {
 
-constexpr int kPanelX0 = 100, kPanelY0 = 140, kPanelX1 = 539, kPanelY1 = 375;
-constexpr int kTitleY = 176, kIconSize = 14, kIconGap = 8;
-constexpr int kRowX0 = 130, kRowX1 = 509, kRowY0 = 214, kRowStep = 30, kRowHeight = 24;
+constexpr int kPanelX0 = 100, kPanelY0 = 112, kPanelX1 = 539, kPanelY1 = 406;
+constexpr int kTitleY = 148, kIconSize = 14, kIconGap = 8;
+constexpr int kRowX0 = 130, kRowX1 = 509, kRowY0 = 186, kRowStep = 30, kRowHeight = 24;
 constexpr int kTextDrop = 17, kRowPad = 18;  // glyphs hang from their baseline
 constexpr std::uint8_t kFrameColour = 0x57, kGreen = 0x0C, kDimGreen = 0x75;
 
@@ -90,21 +90,28 @@ void EnhancementsScreen::draw(Surface8& screen) const {
         const int tint = focused ? kGreen : kDimGreen;
         draw_rounded_box(screen, r.x0, r.y0, r.x1, r.y1, -1, static_cast<std::uint8_t>(tint));
         const TextWriter writer(*fonts_, kFont);
-        if (row == kFollowRow || row == kDirectionalRow || row == kAimRow) {
+        if (row == kFollowRow || row == kDirectionalRow || row == kAimRow || row == kNativeRow || row == kZoomRow) {
             // The name on the left, its state on the right.
             std::string name;
-            bool on;
+            bool on = false;
+            std::string value;
             if (row == kFollowRow) {
                 name = tr("SUIVI CAMERA", "CAMERA FOLLOW");
                 on = config_->follow_player;
             } else if (row == kDirectionalRow) {
                 name = tr("MODE DIRECTIONNEL", "DIRECTIONAL MOVE");
                 on = config_->directional_move;
+            } else if (row == kZoomRow) {
+                name = tr("ZOOM", "ZOOM");
+                value = config_->view_zoom ? "x" + std::to_string(config_->view_zoom) : tr("AUTO", "AUTO");
+            } else if (row == kNativeRow) {
+                name = tr("RESOLUTION NATIVE", "NATIVE RESOLUTION");
+                on = config_->native_resolution;
             } else {
                 name = tr("VISEE DIRECTIONNELLE", "DIRECTIONAL AIM");
                 on = config_->directional_aim;
             }
-            const std::string value = on ? tr("MARCHE", "ON") : tr("ARRET", "OFF");
+            if (row != kZoomRow) value = on ? tr("MARCHE", "ON") : tr("ARRET", "OFF");
             print_tinted(screen, *fonts_, r.x0 + kRowPad, r.y0 + kTextDrop, name, tint);
             print_tinted(screen, *fonts_, r.x1 + 1 - kRowPad - writer.measure(value).width, r.y0 + kTextDrop, value,
                          tint);
@@ -125,6 +132,10 @@ void EnhancementsScreen::activate(int row) {
         config_->follow_player = !config_->follow_player;
     } else if (row == kDirectionalRow) {
         config_->directional_move = !config_->directional_move;
+    } else if (row == kZoomRow) {
+        config_->view_zoom = (config_->view_zoom + 1) % 5;
+    } else if (row == kNativeRow) {
+        config_->native_resolution = !config_->native_resolution;
     } else if (row == kAimRow) {
         config_->directional_aim = !config_->directional_aim;
     } else {

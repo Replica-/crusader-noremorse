@@ -39,6 +39,31 @@ SdlPresenter::~SdlPresenter() {
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
 }
 
+void SdlPresenter::toggle_fullscreen() {
+    const bool on = SDL_GetWindowFlags(window_) & SDL_WINDOW_FULLSCREEN_DESKTOP;
+    SDL_SetWindowFullscreen(window_, on ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+}
+
+void SdlPresenter::maximize() { SDL_MaximizeWindow(window_); }
+
+void SdlPresenter::output_size(int* w, int* h) const {
+    SDL_GetRendererOutputSize(renderer_, w, h);
+}
+
+void SdlPresenter::resize(int width, int height) {
+    if (width == width_ && height == height_) return;
+    SDL_Texture* texture = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+                                             width, height);
+    if (!texture) {
+        throw std::runtime_error(std::string("SDL texture: ") + SDL_GetError());
+    }
+    SDL_DestroyTexture(texture_);
+    texture_ = texture;
+    width_ = width;
+    height_ = height;
+    SDL_RenderSetLogicalSize(renderer_, width, height);
+}
+
 // @orig 1360:0FD6
 void SdlPresenter::warp_mouse(int x, int y) {
     int wx = 0, wy = 0;

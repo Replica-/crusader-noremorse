@@ -1321,31 +1321,73 @@ void Game::dispatch_mouse() {
     if (!any && mouse_in_play()) world_mouse_->idle();
 }
 
+namespace {
+
+// Copies a w x h block between two surfaces (both clipped by the caller's choice of sizes).
+void copy_block(const Surface8& src, int sx, int sy, Surface8& dst, int dx, int dy, int w, int h) {
+    for (int y = 0; y < h; ++y) {
+        std::copy_n(src.row(sy + y) + sx, w, dst.row(dy + y) + dx);
+    }
+}
+
+}  // namespace
+
+// @orig none: port-only native resolution
+// Runs `draw` on the 640 x 480 block of `screen` whose top-left is (x0, y0);
+// the screens, menus and status bar are laid out for that size.
+template <typename Draw>
+void Game::draw_window(Surface8& screen, int x0, int y0, Draw&& draw) {
+    if (screen.width == kScreenWidth && screen.height == kScreenHeight) {
+        draw(screen);
+        return;
+    }
+    if (window_.width != kScreenWidth) window_ = Surface8(kScreenWidth, kScreenHeight);
+    copy_block(screen, x0, y0, window_, 0, 0, kScreenWidth, kScreenHeight);
+    draw(window_);
+    copy_block(window_, 0, 0, screen, x0, y0, kScreenWidth, kScreenHeight);
+}
+
 // @orig 1188:19C1
 void Game::render(Surface8& screen, RenderStats* stats) {
+    // A screen larger than 640 x 480 (native resolution) shows more of the
+    // scene around the camera; everything else stays 640 x 480, centred.
+    const bool large = screen.width >= kScreenWidth && screen.height >= kScreenHeight &&
+                       (screen.width != kScreenWidth || screen.height != kScreenHeight);
+    ui_x_ = large ? (screen.width - kScreenWidth) / 2 : 0;
+    ui_y_ = large ? (screen.height - kScreenHeight) / 2 : 0;
+    if (!large && (screen.width != kScreenWidth || screen.height != kScreenHeight)) {
+        screen = Surface8(kScreenWidth, kScreenHeight);
+    }
     if (movie_) {
-        screen = movie_->screen();
+        if (!large) {
+            screen = movie_->screen();
+        } else {
+            screen.clear(0);
+            copy_block(movie_->screen(), 0, 0, screen, ui_x_, ui_y_, kScreenWidth, kScreenHeight);
+        }
         return;
     }
-    if (menu_) {
-        menu_->draw(screen);
-        cursor_.draw(screen);
-        return;
-    }
-    if (screen_ && !screen_->over_view()) {
-        screen_->draw(screen);
-        cursor_.draw(screen);
+    if (menu_ || (screen_ && !screen_->over_view())) {
+        if (large) screen.clear(0);
+        draw_window(screen, ui_x_, ui_y_, [this](Surface8& s) {
+            if (menu_) menu_->draw(s);
+            else screen_->draw(s);
+            cursor_.draw(s);
+        });
         return;
     }
     render_view(screen, stats);
-    if (message_) message_->draw(screen);
-    if (screen_) screen_->draw(screen);
-    cursor_.draw(screen);
+    draw_window(screen, ui_x_, ui_y_, [this](Surface8& s) {
+        if (message_) message_->draw(s);
+        if (screen_) screen_->draw(s);
+        cursor_.draw(s);
+    });
 }
 
 // @orig 1188:12F1
 void Game::render_view(Surface8& screen, RenderStats* stats) {
     screen.clear(0);
+    world_->set_view_size(screen.width, screen.height);
     const GameState& s = world_->state;
     const auto list =
         build_display_list(*world_, shapes_, View{s.view_left, s.view_top}, screen.width, screen.height, stats);
@@ -1389,7 +1431,9 @@ void Game::render_view(Surface8& screen, RenderStats* stats) {
             frame->frames()[0].draw(screen, ((cx - cy) >> 1) - s.view_left, ((cx + cy) >> 2) - cz - s.view_top);
         }
     }
-    status_bar_.draw(screen, *world_);
+    // The status bar is laid out for 640 pixels: centred at the bottom.
+    draw_window(screen, ui_x_, screen.height - kScreenHeight,
+                [this](Surface8& s) { status_bar_.draw(s, *world_); });
     // DISPLAY_1190_010f, not in the menu mode (DS:2CEE, set with DS:2D8F).
     if (!sprites_suspended_) pickup_area_.draw(screen, world_->state.pickups);
 }
