@@ -156,12 +156,12 @@ Game::Game(const std::filesystem::path& data, const std::filesystem::path& saves
       menu_palette_(Palette::load(data / "STATIC/MISC.PAL")),
       difficulty_palette_(Palette::load(data / "STATIC/DIFF.PAL")),
       cursor_(MouseCursor::load(data / "STATIC/MOUSE.SHP")),
-      save_names_(LoadScreen::read_names(saves.empty() ? data / "SAVEGAME" : saves)),
-      credits_data_(CreditsData::load(data / "STATIC")),
-      help_pictures_(HelpScreen::Pictures::load(data / "STATIC")),
       data_(data),
       save_dir_(saves.empty() ? data / "SAVEGAME" : saves),
-      config_(GameConfig::load(data / "CRUSADER.CFG")) {
+      config_(GameConfig::load(data / "CRUSADER.CFG")),
+      save_names_(LoadScreen::read_names(saves.empty() ? data / "SAVEGAME" : saves)),
+      credits_data_(CreditsData::load(data / "STATIC")),
+      help_pictures_(HelpScreen::Pictures::load(data / "STATIC")) {
     // The US data has no CRUSADER.CFG (the installer writes it): without one,
     // take the installer's choices, the doubled videos and the subtitles.
     if (!std::filesystem::exists(data / "CRUSADER.CFG")) config_.big_video = config_.subtitles = true;

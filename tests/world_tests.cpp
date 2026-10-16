@@ -237,11 +237,13 @@ void test_fast_area() {
     World w(tf);
     std::vector<std::pair<ObjId, std::uint16_t>> events;
     std::vector<ObjId> failed;
-    w.set_hooks({[&](ObjId id, std::uint16_t ev) -> std::uint16_t {
-                     events.emplace_back(id, ev);
-                     return 0;
-                 },
-                 [&](ObjId id) { failed.push_back(id); }});
+    WorldHooks hooks;
+    hooks.start_event = [&](ObjId id, std::uint16_t ev) -> std::uint16_t {
+        events.emplace_back(id, ev);
+        return 0;
+    };
+    hooks.fail_processes = [&](ObjId id) { failed.push_back(id); };
+    w.set_hooks(hooks);
     auto place = [&](std::uint16_t shape, std::int32_t cx, std::int32_t cy, std::uint16_t flags = 0) {
         Item i;
         i.shape = shape;

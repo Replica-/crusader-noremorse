@@ -35,8 +35,10 @@ const std::map<std::string, std::pair<std::size_t, Fn>>& functions() {
         // original's order: gravity range max_range vx vy vz in_reach.
         {"throw_path",
          {8, [](const auto& a) {
-              const ThrowPath t = throw_path({a[0], a[1], a[2]}, {a[3], a[4], a[5]}, static_cast<int>(a[6]),
-                                             static_cast<int>(a[7]));
+              const ThrowPath t = throw_path(
+                  {static_cast<std::int32_t>(a[0]), static_cast<std::int32_t>(a[1]), static_cast<std::int32_t>(a[2])},
+                  {static_cast<std::int32_t>(a[3]), static_cast<std::int32_t>(a[4]), static_cast<std::int32_t>(a[5])},
+                  static_cast<int>(a[6]), static_cast<int>(a[7]));
               std::ostringstream out;
               out << t.gravity << ' ' << t.range << ' ' << t.max_range << ' ' << t.vx << ' ' << t.vy << ' ' << t.vz
                   << ' ' << (t.in_reach ? 1 : 0);
