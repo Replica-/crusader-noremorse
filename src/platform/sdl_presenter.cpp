@@ -25,7 +25,6 @@ SdlPresenter::SdlPresenter(const std::string& title, int width, int height, int 
         throw std::runtime_error(std::string("SDL renderer: ") + SDL_GetError());
     }
     SDL_RenderSetLogicalSize(renderer_, width, height);
-    SDL_RenderSetIntegerScale(renderer_, SDL_TRUE);
     texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
                                  width, height);
     if (!texture_) {
