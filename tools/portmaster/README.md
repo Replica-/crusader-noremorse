@@ -13,14 +13,17 @@ python tools/portmaster/build.py          # -> build-portmaster/crusader
 
 ## Installer sur la console
 
-Sur la carte qui contient `ports/` et `ROMS/Ports/` (SD2 sous muOS) :
+Le zip de release suit la structure PortMaster. Dézipper dans le dossier `ports/` de la carte (SD2 sous muOS) :
 
 ```
-ports/crusader/crusader        le binaire
-ports/crusader/crusader.gptk   gptokeyb : seulement la combinaison pour quitter
-ports/crusader/data/           CRUSADER.EXE, CRUSADER.CFG, ASYLUM.DLL, IDATA, USECODE, SAVEGAME, SOUND, STATIC, FLICS
-ROMS/Ports/Crusader.sh         lanceur (Crusader.sh)
+Crusader.sh                    lanceur
+crusader/crusader              le binaire
+crusader/crusader.gptk         gptokeyb : seulement la combinaison pour quitter
+crusader/licenses/             licences
+crusader/data/                 données du jeu (fichiers installés ou .iso)
 ```
+
+Les sources du port sont dans `tools/portmaster/port/` (`port.json`, `README.md`, `gameinfo.xml`, lanceur). Un `screenshot.png` (4:3, ≥ 640×480, pris en jeu) est à ajouter dans ce dossier avant la PR PortMaster.
 
 Les données sont celles du jeu d'origine (version française), à fournir soi-même. Le jeu écrit ses sauvegardes et `CRUSADER.CFG` dans `data/`.
 
