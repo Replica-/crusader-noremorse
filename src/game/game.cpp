@@ -898,10 +898,13 @@ void Game::open_menu(bool no_game) {
     keyboard_.reset();
     cursor_.reset(MouseCursor::kMenuArrow);
     cursor_.show();
+    // CRUSADER_VERSION may carry a leading "v" (release builds): the label adds its own.
+    const std::string port_version =
+        !port_version_.empty() && (port_version_[0] == 'v' || port_version_[0] == 'V') ? port_version_.substr(1) : port_version_;
     menu_ = std::make_unique<MainMenu>(
         MainMenu::Resources{&gumps_, &fonts_, &save_names_, &credits_data_, &config_, audio_.get(),
                             [this] { save_config(); },
-                            port_version_.empty() ? std::string() : tr("PORTAGE V", "PORT V") + port_version_,
+                            port_version.empty() ? std::string() : tr("PORTAGE V", "PORT V") + port_version,
                             tr("DONNEES DU JEU ", "GAME DATA ") +
                                 (data_version_.empty() ? std::string(tr("INCONNUES", "UNKNOWN")) : "V" + data_version_) + " " +
                                 (data_language_.empty() ? std::string(tr("LANGUE INCONNUE", "UNKNOWN LANGUAGE")) : data_language_)},
