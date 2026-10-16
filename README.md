@@ -1,22 +1,17 @@
 # Crusader: No Remorse — SDL port
 
-A C++20 / SDL2 reimplementation of the *Crusader: No Remorse* (Origin, 1995) engine, for Windows and Linux. The project is **work in progress**: the game starts, you can walk, fight, and hear sounds, music and cutscenes, but the first mission cannot yet be played from start to finish.
+A C++20/SDL2 reimplementation of the *Crusader: No Remorse* (Origin, 1995) engine for Windows and Linux. The game is playable, but the project is still a **work in progress**.
 
-This repository contains **no game files**: you need your own copy of the original game. Two versions are supported: the **French version 1.08** (`CRUSADER.EXE` dated 12/10/1995), from which the engine is rebuilt, and the **US version 1.23** (13/02/1996).
+This repository contains **no game files**: you need your own copy of the original game. The following versions are currently supported:
 
-## How the engine was rebuilt
-
-1. **Decompilation**: the DOS executable (Phar Lap extender) and the audio DLL `ASYLUM.DLL` are analysed with Ghidra to get pseudo-C and a disassembly of every function. The original modules (about 90) are identified by segment, and functions are named from library symbols, the intrinsics known from ScummVM, and reading the code.
-2. **Rewrite**: each function is rewritten in modern C++, with no DOS dependency: hardware access (VGA, keyboard, mouse, Sound Blaster) goes through a thin SDL2 layer. Every function carries an `@orig` tag naming the original routine it replaces.
-3. **Verification**: file formats are tested against all the game data, and differential checks run the original routine in an x86 emulator to compare it with the C++ version on the same inputs.
-
-The game scripts ("usecode", 402 classes) are not rewritten: an interpreter runs them as they are, and the engine provides the native functions ("intrinsics") they call.
+- The **French version 1.08** (`CRUSADER.EXE` dated 12 October 1995)
+- The **US version 1.23** (dated 13 February 1996)
 
 ## Running the game
 
 ### 1. Download
 
-Get the archive of the latest version from the [Releases](../../releases) page:
+Download the latest release from the [Releases](https://github.com/sebsebseb1982/crusader-no-remorse-decomp/releases) page:
 
 - Windows: `crusader-X.Y.Z-windows-x64.zip` (SDL2 is built into the executable)
 - Linux: `crusader-X.Y.Z-linux-x64.tar.gz` — requires SDL2: `sudo apt install libsdl2-2.0-0` (or your distribution's equivalent)
@@ -26,10 +21,10 @@ Checksums are in `SHA256SUMS`.
 
 ### 2. Provide the game data
 
-The archive contains the executable and an empty `data` folder (with a `PUT_GAME_DATA_HERE.txt` note). Put the data of your copy of the game in it, in either form (French 1.08 or US 1.23):
+The archive contains the executable and an empty `data` folder with a `PUT_GAME_DATA_HERE.txt` note. Add the game data from your copy of either supported version (French 1.08 or US 1.23) in one of these ways:
 
-- **the ISO image of the CD**: drop the `.iso` file in `data/` (or run `./crusader game.iso`). On the first launch the game extracts it into `data/` (about 550 MB, a few seconds); the ISO can then be deleted.
-- **the files of an install** (or of the CD): copy the **whole contents** of the install folder into `data/`:
+- **CD image:** Place the `.iso` file in `data/`, or pass its path to the game (for example, `./crusader game.iso`). On first launch, the game extracts the data to `data/` (about 550 MB; this takes a few seconds). You can delete the ISO afterward.
+- **Installed game or CD files:** Copy the **entire contents** of the installation folder or CD into `data/`:
 
 ```
 crusader(.exe)
@@ -42,13 +37,6 @@ data/
 └── SAVEGAME/           saved games (optional for a new game)
 ```
 
-Notes:
-
-- The original executables are not run. Keep `CRUSADER.EXE` in `data/` all the same: the port reads the version and the language of the data from it (the US data is still recognised without it, from `USECODE/UNKCOFF.DAT`).
-- **Supported versions**: French 1.08 and US 1.23. With the US data the game is in English (scripts, cutscenes, voices, texts of the executable, the port's own screens). The engine is rebuilt from the French executable; the US one differs in 66 of its 2,931 routines. The differences that matter so far are reproduced: button positions of the US screens, save names, NPC slot reuse. Not yet: the US version resets the world between missions, keeping only the player and their inventory. Other revisions (US 1.01, 1.10, 1.21, Spanish, German, Japanese) are untested.
-- File names are case-sensitive on Linux: keep the original **upper-case** names (`STATIC/SHAPES.FLX`, etc.).
-- `FLICS/` is only needed for cutscenes; everything else is required.
-
 ### 3. Launch
 
 ```sh
@@ -57,13 +45,9 @@ Notes:
 ./crusader --version
 ```
 
-`data` is the data folder (and the default value). Escape opens the game menu (resume, load, options, credits, quit).
-
-Main controls (those of the original): arrow keys or numeric keypad to move (Shift: walk/run, Ctrl and Alt: variants), Space or Insert to fire, Q/W previous/next weapon, I/O previous/next item, U use, M medkit, Tab or J jump, S/G selection mode, R target designation, F1 help, F2 options. The mouse works in game and in menus.
-
 ## Building from source
 
-Requirements: CMake ≥ 3.21 and a C++20 compiler (Visual Studio 2022, GCC 11+ or Clang 14+).
+Requirements: CMake 3.21 or later and a C++20 compiler (Visual Studio 2022, GCC 11+, or Clang 14+).
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release     # Windows: -G "Visual Studio 17 2022" -A x64
@@ -71,29 +55,31 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-SDL2 is taken from the system if installed (`libsdl2-dev` on Linux), otherwise it is downloaded and built.
+If SDL2 is installed on your system, the build uses it (`libsdl2-dev` on Linux). Otherwise, SDL2 is downloaded and built automatically.
 
-The tests in `tests/` need no game data. The end-to-end tests in `e2e/` run on the original game data and are registered only when it is found (`-DCRUSADER_DATA_DIR=…`, `data/` by default); those that load saved games read them from `-DCRUSADER_TEST_SAVES_DIR=…` and skip themselves when it is absent. `us_data_tests` runs on the US data when it is found (`-DCRUSADER_US_DATA_DIR=…`, `data_us/` by default).
+The tests in `tests/` do not require game data. The end-to-end tests in `e2e/` use the original game data and are registered only when it is found (`-DCRUSADER_DATA_DIR=…`; defaults to `data/`). Tests that load saved games read them from `-DCRUSADER_TEST_SAVES_DIR=…` and are skipped if that directory is absent. `us_data_tests` runs when US game data is found (`-DCRUSADER_US_DATA_DIR=…`; defaults to `data_us/`).
 
-Besides `crusader`, the build produces a few tools: `shapeview` (shape viewer), `mapview` (map viewer), `ucsmoke` and `useprobe` (script execution), `diffcheck` (comparison with the original).
+In addition to `crusader`, the build produces several tools: `shapeview` (shape viewer), `mapview` (map viewer), `ucsmoke` and `useprobe` (script execution), and `diffcheck` (comparison with the original).
 
 ## Versioning
 
-Versions follow [SemVer](https://semver.org) and are computed automatically from [Conventional Commits](https://www.conventionalcommits.org): `fix:` → patch, `feat:` → minor, `BREAKING CHANGE` → major (minor while on `0.x`). Every published version is built and tested on Linux and Windows, and cross-built for PortMaster. Details in [`docs/RELEASING.md`](docs/RELEASING.md).
+Versions follow [SemVer](https://semver.org) and are calculated automatically from [Conventional Commits](https://www.conventionalcommits.org): `fix:` increments the patch version, `feat:` increments the minor version, and `BREAKING CHANGE` increments the major version (or the minor version before `1.0`). Every release is built and tested on Linux and Windows, and cross-compiled for PortMaster. See [`docs/RELEASING.md`](docs/RELEASING.md) for details.
 
-## To do
+## Contribution
 
-- **First mission playable from start to finish**: using scenery objects (doors, switches, elevators), computers and keypads, surveillance cameras and controllable robots, theft and related alarms, on-screen messages, and the last native functions the scripts call. A real playthrough will settle the remaining differences.
-- **Saving and loading** compatible with original saved games (there is no save screen yet).
-- **Later missions**: only mission 1 is used as a reference; the other 15 rely on the same mechanisms but have not been reviewed.
-- **Fidelity**: the original random number generator, gravity behaviour (bounces, slides), draw order on a few maps, restoring saved processes, systematic comparison with the original under DOSBox.
-- **Comfort**: start-up menu, resolution choice (beyond 640×480), other game revisions.
-- **US version**: the world reset between missions of the US 1.23 executable.
-- **Decompilation**: name the ~1,800 functions still anonymous (most are Borland library and Phar Lap code, to be replaced by the standard library).
-- **Out of scope for now**: the original's cheats and debug commands.
+Contributions are welcome. For substantial changes, please open an issue first to discuss the proposed approach. When reporting a bug, include the game version, operating system, screenshot, savegame, steps to reproduce it, and any relevant error messages or logs.
+
+Pull requests should describe the change and its purpose, stay focused, and include tests where appropriate. Before submitting one, build the project and run the available tests:
+
+```sh
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+```
+
+Tests that require the original game data will run only when the data is available and configured as described above.
 
 ## License and rights
 
-The port's code and its documentation are released under the [GNU GPL v3](LICENSE) or any later version, at your option: you may use, study, modify and redistribute them, provided that any redistributed version (modified or not) stays under the same license and comes with its source code.
+The port's code and documentation are released under the [GNU GPL v3](LICENSE) or, at your option, any later version. You may use, study, modify, and redistribute them, provided that every redistributed version, modified or not, remains under the same license and includes its source code.
 
-This license covers this repository only. *Crusader: No Remorse* remains the property of its rights holders: this project distributes none of its code, data or screenshots. You need to own the game to play it.
+This license applies only to this repository. *Crusader: No Remorse* remains the property of its rights holders. This project does not distribute the game's code, data, or screenshots. You must own a copy of the game to play it.
