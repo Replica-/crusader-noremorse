@@ -6,7 +6,9 @@
 // "camera suit joueur" on / off toggle (GameConfig::follow_player), which keeps
 // the controlled NPC at the centre of the screen, and the "deplacement
 // directionnel" toggle (GameConfig::directional_move): the controller's left
-// stick walks the NPC where it points instead of the tank controls.
+// stick walks the NPC where it points instead of the tank controls, and the
+// "visee directionnelle" toggle (GameConfig::directional_aim): the right stick
+// puts the crosshair where it points.
 //
 // Look: the screen cleared, a small red framed window (colour 0x57) in the
 // middle, the title with the "+" icon in green, and one row per entry
@@ -35,7 +37,8 @@ void draw_plus_icon(Surface8& screen, int x, int y, int size, std::uint8_t colou
 
 class EnhancementsScreen {
 public:
-    static constexpr int kPadRow = 0, kFollowRow = 1, kDirectionalRow = 2, kBackRow = 3, kRows = 4;
+    static constexpr int kPadRow = 0, kFollowRow = 1, kDirectionalRow = 2, kAimRow = 3, kBackRow = 4,
+                              kRows = 5;
     static constexpr int kFont = 14;
 
     struct Rect {

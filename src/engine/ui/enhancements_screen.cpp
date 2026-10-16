@@ -9,7 +9,7 @@ namespace crusader {
 
 namespace {
 
-constexpr int kPanelX0 = 100, kPanelY0 = 140, kPanelX1 = 539, kPanelY1 = 339;
+constexpr int kPanelX0 = 100, kPanelY0 = 140, kPanelX1 = 539, kPanelY1 = 375;
 constexpr int kTitleY = 176, kIconSize = 14, kIconGap = 8;
 constexpr int kRowX0 = 130, kRowX1 = 509, kRowY0 = 214, kRowStep = 30, kRowHeight = 24;
 constexpr int kTextDrop = 17, kRowPad = 18;  // glyphs hang from their baseline
@@ -90,12 +90,20 @@ void EnhancementsScreen::draw(Surface8& screen) const {
         const int tint = focused ? kGreen : kDimGreen;
         draw_rounded_box(screen, r.x0, r.y0, r.x1, r.y1, -1, static_cast<std::uint8_t>(tint));
         const TextWriter writer(*fonts_, kFont);
-        if (row == kFollowRow || row == kDirectionalRow) {
+        if (row == kFollowRow || row == kDirectionalRow || row == kAimRow) {
             // The name on the left, its state on the right.
-            const bool follow = row == kFollowRow;
-            const std::string name = follow ? tr("SUIVI CAMERA", "CAMERA FOLLOW")
-                                            : tr("MODE DIRECTIONNEL", "DIRECTIONAL MOVE");
-            const bool on = follow ? config_->follow_player : config_->directional_move;
+            std::string name;
+            bool on;
+            if (row == kFollowRow) {
+                name = tr("SUIVI CAMERA", "CAMERA FOLLOW");
+                on = config_->follow_player;
+            } else if (row == kDirectionalRow) {
+                name = tr("MODE DIRECTIONNEL", "DIRECTIONAL MOVE");
+                on = config_->directional_move;
+            } else {
+                name = tr("VISEE DIRECTIONNELLE", "DIRECTIONAL AIM");
+                on = config_->directional_aim;
+            }
             const std::string value = on ? tr("MARCHE", "ON") : tr("ARRET", "OFF");
             print_tinted(screen, *fonts_, r.x0 + kRowPad, r.y0 + kTextDrop, name, tint);
             print_tinted(screen, *fonts_, r.x1 + 1 - kRowPad - writer.measure(value).width, r.y0 + kTextDrop, value,
@@ -117,6 +125,8 @@ void EnhancementsScreen::activate(int row) {
         config_->follow_player = !config_->follow_player;
     } else if (row == kDirectionalRow) {
         config_->directional_move = !config_->directional_move;
+    } else if (row == kAimRow) {
+        config_->directional_aim = !config_->directional_aim;
     } else {
         closed_ = true;
     }

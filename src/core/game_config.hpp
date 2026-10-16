@@ -39,6 +39,9 @@ public:
     // left stick walks the NPC in the direction it points (the keypad's screen
     // directions) instead of the original's tank controls.
     bool directional_move = false;
+    // Port addition, written only when set: "directionalaim", the right stick
+    // puts the crosshair in the direction it points.
+    bool directional_aim = false;
     // Port addition, written only when changed: "padmap" (comma-separated
     // action numbers, see PadButton), "padaim" and "paddeadzone".
     PadSettings pad;

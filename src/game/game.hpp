@@ -131,6 +131,12 @@ public:
     void pad_button(int button);
     // In play (no menu, screen, message box or movie), the game view puts the
     // mouse back at (320, 200) after each move: only relative motion counts.
+    // Directional aiming: the right stick's direction on the screen (degrees,
+    // counter-clockwise from east) while it is pushed, applied by update().
+    void set_aim_stick(bool active, double screen_deg) {
+        aim_stick_ = active;
+        aim_stick_deg_ = screen_deg;
+    }
     bool mouse_in_play() const { return !modal() && !movie_; }
     const WorldMouse& world_mouse() const { return *world_mouse_; }
 
@@ -276,6 +282,8 @@ private:
     TrigTables trig_;
     std::vector<std::uint8_t> damage_;
     AnimDat anims_;
+    bool aim_stick_ = false;
+    double aim_stick_deg_ = 0;
     WeaponOverlay weapon_overlay_;
     Palette palette_;
     UsecodeFile usecode_;

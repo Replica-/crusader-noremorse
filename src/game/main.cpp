@@ -267,6 +267,10 @@ int main(int argc, char** argv) {
             gamepad.set_menu(!game.mouse_in_play());
             gamepad.set_capture(game.waiting_for_pad());
             gamepad.set_directional(game.config().directional_move);
+            gamepad.set_directional_aim(game.config().directional_aim);
+            double aim_deg = 0;
+            const bool aim_pushed = gamepad.aim_stick(&aim_deg);  // (argument order is unspecified)
+            game.set_aim_stick(aim_pushed, aim_deg);
             for (int b : gamepad.take_captured()) game.pad_button(b);
             for (const KeyEvent& k : gamepad.take_keys()) {
                 if (pad_debug) std::printf("[key] pad %02x%s %s\n", k.scancode, k.extended ? " ext" : "", k.pressed ? "down" : "up");

@@ -73,6 +73,7 @@ void Gamepad::release_all() {
     right_x_ = right_y_ = 0;
     left_x_ = left_y_ = 0;
     update_move();
+    update_aim();
 }
 
 bool Gamepad::feed(const SDL_Event& ev) {
@@ -174,6 +175,7 @@ void Gamepad::set_menu(bool menu) {
     menu_ = menu;
     refresh_arrows();
     sync_left_stick();
+    sync_right_stick();
 }
 
 void Gamepad::set_capture(bool on) {
@@ -181,12 +183,50 @@ void Gamepad::set_capture(bool on) {
     capture_ = on;
     refresh_arrows();
     sync_left_stick();
+    sync_right_stick();
 }
 
 void Gamepad::set_directional(bool on) {
     if (directional_ == on) return;
     directional_ = on;
     sync_left_stick();
+}
+
+void Gamepad::set_directional_aim(bool on) {
+    if (directional_aim_ == on) return;
+    directional_aim_ = on;
+    sync_right_stick();
+}
+
+bool Gamepad::aim_stick(double* deg) const {
+    if (!aim_directional_active() || !aim_on_) return false;
+    *deg = aim_deg_;
+    return true;
+}
+
+// The right stick is either four digital directions (turns, mouse) or one aim
+// direction; when the mode changes, the old one lets go.
+void Gamepad::sync_right_stick() {
+    if (aim_directional_active()) {
+        for (int s = kPadRightStickUp; s <= kPadRightStickRight; ++s) {
+            if (active_[s]) direction(s, false);
+        }
+        update_aim();
+    } else {
+        update_aim();
+        stick(kPadRightStickUp, kLeft, kRight, right_x_);
+        stick(kPadRightStickUp, kUp, kDown, right_y_);
+    }
+}
+
+void Gamepad::update_aim() {
+    if (!aim_directional_active()) {
+        aim_on_ = false;
+        return;
+    }
+    const double len = std::hypot(static_cast<double>(right_x_), static_cast<double>(right_y_));
+    aim_on_ = len > (aim_on_ ? kStickOff : kStickOn);
+    if (aim_on_) aim_deg_ = std::atan2(-static_cast<double>(right_y_), static_cast<double>(right_x_)) * 180.0 / 3.14159265358979;
 }
 
 // The left stick is either four arrow-like directions or one keypad move; when
@@ -312,11 +352,13 @@ void Gamepad::axis(int a, int value) {
             break;
         case SDL_CONTROLLER_AXIS_RIGHTX:
             right_x_ = value;
-            stick(kPadRightStickUp, kLeft, kRight, value);
+            if (aim_directional_active()) update_aim();
+            else stick(kPadRightStickUp, kLeft, kRight, value);
             break;
         case SDL_CONTROLLER_AXIS_RIGHTY:
             right_y_ = value;
-            stick(kPadRightStickUp, kUp, kDown, value);
+            if (aim_directional_active()) update_aim();
+            else stick(kPadRightStickUp, kUp, kDown, value);
             break;
         case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
             trigger(0, triggers_[0] ? value > kTriggerOff : value > kTriggerOn);
@@ -341,6 +383,11 @@ std::vector<KeyEvent> Gamepad::take_keys() {
 }
 
 void Gamepad::mouse_motion(double seconds, int* dx, int* dy) {
+    if (aim_directional_active()) {
+        *dx = *dy = 0;
+        rem_x_ = rem_y_ = 0;
+        return;
+    }
     // Dead zone on the stick's length, then a quadratic response: fine aim
     // near the centre, full speed at the edge.
     const double dead_zone = PadSettings::kDeadZones[std::clamp(settings_->dead_zone, 0, PadSettings::kDeadZoneLevels - 1)];

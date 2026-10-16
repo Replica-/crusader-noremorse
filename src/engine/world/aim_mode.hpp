@@ -86,6 +86,12 @@ void turn_crosshair(Kernel& kernel, World& world, const AnimDat& anims, std::uin
 // SPRITE_1140_0E88: the point a shot aims at, the crosshair's x and y with
 // `z`, the muzzle's height in the world (Item::I_fireWeapon adds the
 // shooter's z to the muzzle offset before passing it; low byte kept).
+// Port addition (directional aiming of the controller's right stick): puts the
+// crosshair at `angle` (degrees in the world's x, y plane, like DS:285E) and
+// turns the NPC to face it with its combat stance, when it is not busy. Does
+// nothing out of the aiming mode.
+void aim_at_angle(Kernel& kernel, World& world, const AnimDat& anims, int angle);
+
 std::optional<World::Point> crosshair_aim(const World& world, int z);
 
 void designate(Kernel& kernel, World& world, const AnimDat& anims, ObjId target);  // 1138:0459

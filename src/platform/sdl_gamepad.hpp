@@ -67,6 +67,13 @@ public:
     // left stick sends the keypad's screen directions (8 ways, the original's
     // absolute moves) instead of its tank bindings, and "run" is Shift alone.
     void set_directional(bool on);
+    // Directional aiming: in play, the right stick no longer turns or moves the
+    // mouse; aim_stick() gives the direction it points, for the engine to put
+    // the crosshair there.
+    void set_directional_aim(bool on);
+    // True while the right stick is pushed in directional aiming; `deg` is its
+    // direction on the screen, counter-clockwise from east.
+    bool aim_stick(double* deg) const;
 
     // Keys produced since the last call.
     std::vector<KeyEvent> take_keys();
@@ -92,6 +99,9 @@ private:
     bool directional_active() const { return directional_ && !menu_ && !capture_; }
     void sync_left_stick();  // after a change of mode: the stick as arrows or as keypad moves
     void update_move();
+    bool aim_directional_active() const { return directional_aim_ && !menu_ && !capture_; }
+    void sync_right_stick();
+    void update_aim();
     bool has_role(int slot) const;  // a direction acting as arrow key or mouse
     void trigger(int index, bool on);
     void press_key(std::uint8_t scancode, bool extended, bool pressed, std::uint8_t ascii = 0);
@@ -114,6 +124,9 @@ private:
     int right_x_ = 0, right_y_ = 0;
     int left_x_ = 0, left_y_ = 0;
     bool directional_ = false;
+    bool directional_aim_ = false;
+    bool aim_on_ = false;  // right stick past its threshold
+    double aim_deg_ = 0;
     int move_dir_ = -1;  // keypad direction held (index in kMoveKeys), or -1
     double rem_x_ = 0, rem_y_ = 0;
     std::uint16_t flags_ = 0;  // modifiers held (Ctrl, Alt, Shift)

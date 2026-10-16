@@ -208,6 +208,30 @@ void turn_crosshair(Kernel& kernel, World& world, const AnimDat& anims, std::uin
     if (world.state.target_designation && turned && wanted != current) search_after_turn(kernel, world, anims, wanted);
 }
 
+// @orig none: port-only directional aiming
+void aim_at_angle(Kernel& kernel, World& world, const AnimDat& anims, int angle) {
+    GameState::Aim& aim = world.state.aim;
+    const ObjId id = world.state.controlled_npc;
+    if (!aim.active || aim.no_stand || aim.turns != 0) return;
+    angle = ((angle % 360) + 360) % 360;
+    const int current = npc_dir(world, id);
+    const Item* npc = world.get(id);
+    if (!npc) return;
+    if (aim.angle != angle || aim.crosshair == -1) {
+        aim.angle = angle;
+        place_crosshair(world, anims);
+    }
+    const ScreenSprite* cross = world.state.screen_sprites.get(aim.crosshair);
+    if (!cross) return;
+    const ShapeInfo* info = world.shape_info(npc->shape);
+    const std::int32_t cx = static_cast<std::uint16_t>(npc->x - (info ? info->footpad_x : 0) * 8);
+    const std::int32_t cy = static_cast<std::uint16_t>(npc->y - (info ? info->footpad_y : 0) * 8);
+    const int wanted = direction_16(cx, cy, cross->x, cross->y);
+    if (wanted == current || actor_busy(kernel, id)) return;
+    do_anim(kernel, world, anims, id, kneeling(world, id) ? 0x2E : 4, wanted);
+    if (world.state.target_designation) search_after_turn(kernel, world, anims, wanted);
+}
+
 std::optional<World::Point> crosshair_aim(const World& world, int z) {
     const ScreenSprite* cross = world.state.screen_sprites.get(world.state.aim.crosshair);
     if (!cross) return std::nullopt;

@@ -16,6 +16,7 @@ This repository contains **no game files**: you need your own copy of the origin
   - Gamepad remapping
   - A camera that follows the player
   - Directional movement: the controller's left stick walks the Silencer where it points, as an alternative to the original tank controls
+  - Directional aiming: the right stick puts the crosshair where it points
 
 ## Planned improvements
 
