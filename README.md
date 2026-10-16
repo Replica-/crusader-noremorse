@@ -7,6 +7,24 @@ This repository contains **no game files**: you need your own copy of the origin
 - The **French version 1.08** (`CRUSADER.EXE` dated 12 October 1995)
 - The **US version 1.23** (dated 13 February 1996)
 
+## Recent improvements
+
+- Added gamepad support.
+- Added an **Enhancements** menu to the Options menu, with:
+  - Gamepad remapping
+  - A camera that follows the player
+
+## Planned improvements
+
+- Release the game on PortMaster.
+- Add directional movement as an alternative to the original tank controls.
+- Support additional versions of *Crusader: No Remorse*, if there is interest.
+- Support higher screen resolutions.
+- Explore the possibility of supporting *Crusader: No Regret*.
+- Have an idea? Let me know what you'd like to see!
+
+Further improvements will come when my Claude subscription renews. If you'd like to help speed things up, feel free to leave a small tip.
+
 ## Running the game
 
 ### 1. Download
