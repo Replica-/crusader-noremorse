@@ -38,6 +38,7 @@ add_library(crusader_core
   src/core/font.cpp
   src/core/game_config.cpp
   src/core/data_info.cpp
+  src/core/iso_image.cpp
   src/core/dtable.cpp
   src/core/language.cpp
   src/core/typeflags.cpp

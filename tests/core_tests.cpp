@@ -1,9 +1,14 @@
 // Game configuration parsing and writing (no game data).
 
 #include "core/game_config.hpp"
+#include "core/iso_image.hpp"
 
 #include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
+#include <vector>
 
 using namespace crusader;
 
@@ -74,10 +79,68 @@ void check_config() {
     check(p.text().find("pad") == std::string::npos, "config pad erased when back to defaults");
 }
 
+// A minimal ISO 9660 image: root with A.TXT;1 and a directory D holding B.BIN;1.
+void check_iso() {
+    namespace fs = std::filesystem;
+    std::vector<unsigned char> img(24 * 2048, 0);
+    auto put32 = [&](std::size_t at, std::uint32_t v) {
+        for (int i = 0; i < 4; ++i) img[at + i] = static_cast<unsigned char>(v >> (8 * i));
+    };
+    auto record = [&](std::size_t at, std::uint32_t lba, std::uint32_t size, bool dir, const std::string& name) {
+        const std::size_t n = name.size();
+        img[at] = static_cast<unsigned char>(33 + n + ((n % 2) ? 0 : 1));
+        put32(at + 2, lba);
+        put32(at + 10, size);
+        img[at + 25] = dir ? 2 : 0;
+        img[at + 32] = static_cast<unsigned char>(n);
+        std::memcpy(&img[at + 33], name.data(), n);
+        return at + img[at];
+    };
+    img[16 * 2048] = 1;
+    std::memcpy(&img[16 * 2048 + 1], "CD001", 5);
+    record(16 * 2048 + 156, 18, 2048, true, std::string(1, 0));
+    std::size_t at = 18 * 2048;
+    at = record(at, 18, 2048, true, std::string(1, 0));
+    at = record(at, 18, 2048, true, std::string(1, 1));
+    at = record(at, 20, 5, false, "A.TXT;1");
+    record(at, 19, 2048, true, "D");
+    record(19 * 2048, 21, 3, false, "B.BIN;1");
+    std::memcpy(&img[20 * 2048], "hello", 5);
+    std::memcpy(&img[21 * 2048], "abc", 3);
+    const fs::path dir = fs::temp_directory_path() / "crusader_iso_test";
+    std::error_code ignored0;
+    fs::remove_all(dir, ignored0);
+    fs::create_directories(dir);
+    std::ofstream(dir / "t.iso", std::ios::binary).write(reinterpret_cast<const char*>(img.data()), img.size());
+
+    {
+    const IsoImage iso = IsoImage::open(dir / "t.iso");
+    check(iso.files().size() == 2, "iso lists two files");
+    iso.extract(dir / "out", {});
+    std::string a, b;
+    std::ifstream(dir / "out/A.TXT") >> a;
+    std::ifstream(dir / "out/D/B.BIN") >> b;
+    check(a == "hello" && b == "abc", "iso extracts files and subdirectories");
+    iso.extract(dir / "skip", {"D"});
+    check(fs::exists(dir / "skip/A.TXT") && !fs::exists(dir / "skip/D"), "iso skips a directory");
+    }  // the image is closed before the folder is removed
+
+    // prepare_game_data: an ISO in a data folder without STATIC/ is extracted.
+    fs::create_directories(dir / "data");
+    fs::copy_file(dir / "t.iso", dir / "data/game.iso");
+    prepare_game_data(dir / "data");
+    check(fs::exists(dir / "data/D/B.BIN"), "prepare_game_data extracts the ISO of data/");
+    prepare_game_data(dir / "fresh");
+    check(fs::exists(dir / "fresh/PUT_GAME_DATA_HERE.txt"), "prepare_game_data creates data/ with its note");
+    std::error_code ignored;
+    fs::remove_all(dir, ignored);
+}
+
 }  // namespace
 
 int main() {
     check_config();
+    check_iso();
     std::printf(failures ? "%d failure(s)\n" : "all checks passed\n", failures);
     return failures ? 1 : 0;
 }

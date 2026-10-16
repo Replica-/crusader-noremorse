@@ -24,9 +24,12 @@ Get the archive of the latest version from the [Releases](../../releases) page:
 
 Checksums are in `SHA256SUMS`.
 
-### 2. Copy the game data
+### 2. Provide the game data
 
-Copy the **whole contents of the game's install folder** (or of the CD) into a `data` folder next to the executable:
+The archive contains the executable and an empty `data` folder (with a `PUT_GAME_DATA_HERE.txt` note). Put the data of your copy of the game in it, in either form (French 1.08 or US 1.23):
+
+- **the ISO image of the CD**: drop the `.iso` file in `data/` (or run `./crusader game.iso`). On the first launch the game extracts it into `data/` (about 550 MB, a few seconds); the ISO can then be deleted.
+- **the files of an install** (or of the CD): copy the **whole contents** of the install folder into `data/`:
 
 ```
 crusader(.exe)

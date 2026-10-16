@@ -83,6 +83,8 @@ jobs:
           pkg="crusader-${VERSION}-${{ matrix.name }}"
           mkdir -p "dist/$pkg/ports/crusader" "dist/$pkg/ROMS/Ports"
           cp build-portmaster/crusader tools/portmaster/crusader.gptk "dist/$pkg/ports/crusader/"
+          mkdir "dist/$pkg/ports/crusader/data"
+          cp tools/release/PUT_GAME_DATA_HERE.txt "dist/$pkg/ports/crusader/data/"
           cp tools/portmaster/Crusader.sh "dist/$pkg/ROMS/Ports/"
           cp tools/portmaster/README.md "dist/$pkg/README-portmaster.md"
           cp README.md "dist/$pkg/README.md"
@@ -101,6 +103,8 @@ jobs:
           else
             cp build/crusader "dist/$pkg/"
           fi
+          mkdir "dist/$pkg/data"
+          cp tools/release/PUT_GAME_DATA_HERE.txt "dist/$pkg/data/"
           cp README.md "dist/$pkg/"
           cd dist
           if [ "$RUNNER_OS" = "Windows" ]; then

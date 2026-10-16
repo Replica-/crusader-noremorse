@@ -1,7 +1,7 @@
 // crusader: runs the game from a saved game (milestone 1: the world runs, the
 // camera moves with the arrow keys).
 //
-//   crusader [data] [--save N | --new-game] [--movie NAME | --movie-overlay NAME] [--frames N [--scroll DX DY] [--walk] [--fire] [--use ID] [--menu | --menu-load | --menu-credits | --menu-options | --menu-gamepad | --menu-new] --png out.png [--wav out.wav]]
+//   crusader [data | game.iso] [--save N | --new-game] [--movie NAME | --movie-overlay NAME] [--frames N [--scroll DX DY] [--walk] [--fire] [--use ID] [--menu | --menu-load | --menu-credits | --menu-options | --menu-gamepad | --menu-new] --png out.png [--wav out.wav]]
 //
 // With --png, runs N frames of 1/60 s without a window, moving the camera by
 // (DX, DY) usecode units per frame or making the player walk, and writes the
@@ -15,6 +15,7 @@
 // Ctrl / Alt moves; see engine/world/avatar_mover.hpp. Escape opens the menu
 // (keyboard or left mouse button; "quit" leaves).
 
+#include "core/iso_image.hpp"
 #include "core/png_writer.hpp"
 #include "crusader_version.hpp"
 #include "engine/world/inventory.hpp"
@@ -32,6 +33,7 @@
 #include <exception>
 #include <fstream>
 #include <memory>
+#include <stdexcept>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -89,7 +91,7 @@ void print_faults(Game& game) {
 // @orig none: command line and SDL start-up of the port
 int main(int argc, char** argv) {
     SDL_SetMainReady();
-    std::filesystem::path data = "data";
+    std::filesystem::path data = "data", iso;
     int save = 1, frames = 0;
     bool new_game = false, fullscreen = false;
     double gamma = 1.0;
@@ -129,10 +131,18 @@ int main(int argc, char** argv) {
             scroll_x = std::stoi(argv[++i]);
             scroll_y = std::stoi(argv[++i]);
         }
+        else if (std::filesystem::path p = argv[i]; p.extension() == ".iso" || p.extension() == ".ISO") iso = p;
         else data = argv[i];
     }
 
     try {
+        // The data folder holds an install of the game, or an ISO of the CD
+        // that is extracted into it on the first launch.
+        prepare_game_data(data, iso);
+        if (!std::filesystem::exists(data / "STATIC")) {
+            throw std::runtime_error("no game data in '" + data.string() +
+                                     "': copy the files of an install of the game (French 1.08 or US 1.23) there, or its .iso image");
+        }
         Game game(data);
         game.set_port_version(CRUSADER_VERSION);
         if (new_game) game.new_game(0);
