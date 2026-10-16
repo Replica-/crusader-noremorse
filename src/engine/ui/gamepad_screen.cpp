@@ -11,9 +11,9 @@ namespace {
 
 constexpr int kPanelX0 = 20, kPanelY0 = 10, kPanelX1 = 619, kPanelY1 = 462;
 constexpr int kTitleY = 34;
-constexpr int kRowX0 = 50, kRowX1 = 589, kRowY0 = 50, kRowStep = 18, kRowHeight = 17;
+constexpr int kRowX0 = 50, kRowX1 = 589, kRowY0 = 50, kRowStep = 15, kRowHeight = 14;
 constexpr int kValueX0 = 340;
-constexpr int kLabelX = 58, kTextDrop = 13;  // glyphs hang from their baseline
+constexpr int kLabelX = 58, kTextDrop = 12;  // glyphs hang from their baseline
 constexpr int kHintY = 456;
 constexpr int kHintFont = 7;
 constexpr std::uint8_t kFrameColour = 0x57, kGreen = 0x0C, kDimGreen = 0x75;

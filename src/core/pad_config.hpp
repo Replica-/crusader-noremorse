@@ -28,6 +28,8 @@ enum PadActionId : int {
     kPadNone, kPadFire, kPadRun, kPadRollLeft, kPadRollRight, kPadStepLeft, kPadStepRight, kPadCrouch,
     kPadShift, kPadPrevWeapon, kPadNextWeapon, kPadPrevItem, kPadNextItem, kPadUseItem, kPadMedkit,
     kPadJump, kPadMenu, kPadConfirm, kPadSelect,
+    // The plain arrows, so that any direction can be moved to any input (appended: CRUSADER.CFG stores indices).
+    kPadForward, kPadBackward, kPadTurnLeft, kPadTurnRight,
     kPadActionCount,
 };
 
@@ -53,6 +55,10 @@ constexpr std::array<PadAction, kPadActionCount> kPadActions = {{
     {"MENU", "MENU", 0x01, false, 27},
     {"VALIDER", "ENTER", 0x1C, false, '\r'},
     {"SELECTIONNER", "SELECT", 0x1F, false, 's'},  // S: the selection mode, then the next object
+    {"AVANCER", "MOVE FORWARD", 0x48, true, 0},
+    {"RECULER", "MOVE BACKWARD", 0x50, true, 0},
+    {"TOURNER A GAUCHE", "TURN LEFT", 0x4B, true, 0},
+    {"TOURNER A DROITE", "TURN RIGHT", 0x4D, true, 0},
 }};
 
 // The inputs of the controller, in the order of PadSettings::buttons: the
