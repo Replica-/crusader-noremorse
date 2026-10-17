@@ -2,6 +2,8 @@
 
 #include "engine/ui/gump_keys.hpp"
 
+#include <algorithm>
+
 namespace crusader {
 
 namespace {
@@ -51,7 +53,10 @@ void KeypadGump::draw(Surface8& screen) const {
     // The children, after the gump.
     for (int i = 0; i < kButtons; ++i) {
         const Rect& r = kButtonRects[static_cast<std::size_t>(i)];
-        const int frame = pressed_[static_cast<std::size_t>(i)] ? i + kPressedFrame : i;
+        const int frame = pressed_[static_cast<std::size_t>(i)] ||
+                                  (selection_active_ && selected_ == i)
+                              ? i + kPressedFrame
+                              : i;
         if (const ShapeFrame* f = gump_frame(*gumps_, kButtonShape, frame)) f->draw(screen, x_ + r.x0, y_ + r.y0);
     }
 }
@@ -71,6 +76,15 @@ void KeypadGump::button(int index) {
     } else {
         add_digit(index == kZero ? 0 : index + 1);
     }
+}
+
+void KeypadGump::move_selection(int dx, int dy) {
+    int column = selected_ % 3;
+    int row = selected_ / 3;
+    column = std::clamp(column + dx, 0, 2);
+    row = std::clamp(row + dy, 0, 3);
+    selected_ = row * 3 + column;
+    selection_active_ = true;
 }
 
 // @orig 13C8:089A
@@ -116,21 +130,36 @@ void KeypadGump::key(std::uint16_t code) {
     case '(': code = '9'; break;
     default: break;
     }
-    if (code >= '0' && code <= '9') {
+    if (code == gump_key::kUp) {
+        move_selection(0, -1);
+    } else if (code == gump_key::kDown) {
+        move_selection(0, 1);
+    } else if (code == gump_key::kLeft) {
+        move_selection(-1, 0);
+    } else if (code == gump_key::kRight) {
+        move_selection(1, 0);
+    } else if (code >= '0' && code <= '9') {
+        selection_active_ = false;
         if (count_ < kMaxDigits) {
             add_digit(code & 0x0F);
             if (play_sfx_) play_sfx_(kSoundButton);
         }
     } else if (code == kBackspaceKey) {
+        selection_active_ = false;
         if (count_ > 0) --count_;
         if (play_sfx_) play_sfx_(kSoundBackspace);
     } else if (code == gump_key::kEscape) {
         value_ = 0;
         finish(-1);
-    } else if (code == gump_key::kEnter && count_ > 0) {
-        compute_value();
-        check();
-        finish(static_cast<std::int16_t>(value_));
+    } else if (code == gump_key::kEnter) {
+        if (selection_active_) {
+            button(selected_);
+            if (play_sfx_) play_sfx_(selected_ == kBackspace ? kSoundBackspace : kSoundButton);
+        } else if (count_ > 0) {
+            compute_value();
+            check();
+            finish(static_cast<std::int16_t>(value_));
+        }
     }
 }
 
@@ -145,6 +174,7 @@ void KeypadGump::release(int index) {
 // @orig 1310:001D 13C8:006D
 void KeypadGump::mouse_down(int x, int y) {
     if (closed_ || captured_ >= 0) return;
+    selection_active_ = false;
     for (int i = 0; i < kButtons; ++i) {
         if (kButtonRects[static_cast<std::size_t>(i)].contains(x - x_, y - y_)) {
             captured_ = i;

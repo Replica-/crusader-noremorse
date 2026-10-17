@@ -37,6 +37,9 @@
 //     value (13C8:089A) is checked (13C8:09DB), the result is the value,
 //     the gump closes;
 //   - Escape: the result is -1, the gump closes.
+//   - arrows move a selection over the buttons; Enter activates it. The
+//     selection is inactive until an arrow is pressed, preserving Enter as
+//     the submit key for codes typed on the keyboard.
 //   The shifted digits of a US keyboard count as the digits: ! @ # $ % ^ &
 //   * ( ) for 1..9, 0.
 // The check, only with a code (non-zero): the value 74697689 (0x0473CBD9) is
@@ -113,6 +116,7 @@ public:
 
 private:
     void button(int index);      // 13C8:0543
+    void move_selection(int dx, int dy);
     void add_digit(int digit);
     void compute_value();        // 13C8:089A
     void check();                // 13C8:09DB
@@ -130,6 +134,8 @@ private:
     int matched_ = -1;
     std::array<bool, kButtons> pressed_{};
     int captured_ = -1;  // the button holding the mouse (DS:47D2)
+    int selected_ = 0;
+    bool selection_active_ = false;
     int result_ = 0;
     bool closed_ = false;
 };

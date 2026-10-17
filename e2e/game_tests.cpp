@@ -1829,6 +1829,12 @@ void test_keypad(const std::filesystem::path& data) {
         game.key(scancode, false, false, 0, ascii);
         game.update(kFrameUs);
     };
+    const auto press_arrow = [](Game& game, std::uint8_t scancode) {
+        game.key(scancode, true, true, 0, 0);
+        game.update(kFrameUs);
+        game.key(scancode, true, false, 0, 0);
+        game.update(kFrameUs);
+    };
     const auto flags = [](Game& game) { return game.world().get(kKeypad)->flags; };
     const auto clean = [](Game& game) {
         return game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty();
@@ -1897,6 +1903,27 @@ void test_keypad(const std::filesystem::path& data) {
         for (int f = 0; f < 120; ++f) game.update(kFrameUs);
         std::printf("keypad: right code, flags %04X\n", flags(game));
         CHECK((flags(game) & 0x1000) == 0 && (flags(game) & 0x0004) != 0);
+        CHECK(clean(game));
+    }
+    // Arrows navigate the on-screen keys; Enter activates the selected key.
+    {
+        Game game(data, test_saves(data));
+        game.load_save(2);
+        const KeypadGump* keypad = open(game);
+        CHECK(keypad != nullptr);
+        if (!keypad) return;
+        press_arrow(game, 0x4D);  // right: select 2
+        press(game, 0x1C, 0x0D);
+        CHECK(game.screen() == keypad && keypad->digit_count() == 1);
+        press_arrow(game, 0x50);  // down to 5, 8, 0
+        press_arrow(game, 0x50);
+        press_arrow(game, 0x50);
+        press_arrow(game, 0x4D);  // select Enter
+        press(game, 0x1C, 0x0D);
+        CHECK(game.screen() == nullptr);
+        CHECK(game.audio() && game.audio()->voices.handle_playing(KeypadGump::kSoundWrong) != SoundManager::kNoHandle);
+        for (int f = 0; f < 120; ++f) game.update(kFrameUs);
+        CHECK((flags(game) & 0x1004) == 0);
         CHECK(clean(game));
     }
 }
@@ -4183,6 +4210,10 @@ int main(int argc, char** argv) {
         test_mission2_npc_teleport(data);
         std::error_code ignored;
         std::filesystem::remove(test_saves(data) / ("SAVEGAME." + std::to_string(Game::kAutoSave)), ignored);
+        return failures ? 1 : 0;
+    }
+    if (argc > 2 && std::string(argv[2]) == "--keypad") {
+        test_keypad(data);
         return failures ? 1 : 0;
     }
     test_load_and_run(data);
