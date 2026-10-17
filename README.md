@@ -2,7 +2,7 @@
 
 <img src="docs/images/cover.png" alt="Cover" width="300">
 
-A C++20/SDL2 reimplementation of the *Crusader: No Remorse* (Origin, 1995) engine for Windows and Linux. The game is playable, but the project is still a **work in progress**.
+A C++20/SDL2 reimplementation of the *Crusader: No Remorse* (Origin, 1995) engine for Windows and Linux. The game is playable through the end of Mission 2, but Mission 2 is currently broken. The project is still a **work in progress**.
 
 This repository contains **no game files**: you need your own copy of the original game. The following versions are currently supported:
 
