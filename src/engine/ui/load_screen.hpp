@@ -5,10 +5,12 @@
 // Layout: the screen is cleared; background GUMPS.FLX shapes 64 + 5 * mode ..
 // 67 + 5 * mode (load: 69..72, save: 64..67, 208 x 174 each) at (111, 66), (319, 66),
 // (111, 240), (319, 240) (FUN_1008_05a6: a 417 x 348 area centred on the
-// screen). Eleven slots (FUN_1008_0758), slot i at (183, 109 + 27 i): shape 68
-// frame 0 (314 x 17); the selected one (DS:0098, 0 at start-up, kept between
-// screens) gets an outline of colour 0xFD around its rectangle; the slot name
-// is written in font 14 at (+4, +12) (FUN_1008_0c9a). Palette: MISC.PAL.
+// screen). Eleven original slots (FUN_1008_0758), slot i at (183, 109 + 27 i):
+// shape 68 frame 0 (314 x 17); the selected one (DS:0098, 0 at start-up, kept
+// between screens) gets an outline of colour 0xFD around its rectangle; the
+// slot name is written in font 14 at (+4, +12) (FUN_1008_0c9a). The load screen
+// adds SAVEGAME.12 (the autosave) as a twelfth row at y=406; the save screen
+// keeps the original eleven. Palette: MISC.PAL.
 //
 // Slot i is SAVEGAME/SAVEGAME.<i + 1>; its name is the 32-byte entry 9 of
 // that file, read at start-up into DS:7964 (CRUSYS_1058_000d, 13 names; an
@@ -16,9 +18,10 @@
 // as the format string; the port writes it as is.
 //
 // Keys (FUN_1008_0312): up / '8' select the previous slot (not before 0), down
-// / '2' the next (not after 10), Enter chooses the selected slot, Escape closes
-// with result 0. Mouse (FUN_1008_0aea): a button press on a slot selects and
-// chooses it. Loading: choosing a slot with an empty name does nothing
+// / '2' the next (not past the last visible row), Enter chooses the selected
+// slot, Escape closes with result 0. On a gamepad, directions and confirm map
+// to the same inputs. Mouse (FUN_1008_0aea): a button press on a slot selects
+// and chooses it. Loading: choosing a slot with an empty name does nothing
 // (FUN_1008_0b63); otherwise the slot goes to DS:0C94 and the screen closes
 // with result 1.
 //
@@ -50,7 +53,8 @@ namespace crusader {
 
 class LoadScreen {
 public:
-    static constexpr int kSlots = 11;
+    static constexpr int kSaveSlots = 11;
+    static constexpr int kSlots = 12;
     static constexpr int kNames = 13;  // DS:7964 .. DS:7998
     static constexpr std::uint16_t kSlotShape = 68;
     static constexpr std::uint8_t kSelectedColour = 0xFD;
@@ -86,6 +90,7 @@ public:
     const Rect& slot_rect(int i) const { return slots_[i]; }
 
 private:
+    int visible_slots() const { return mode_ == Mode::kLoad ? kSlots : kSaveSlots; }
     void choose(int i);
     void edit_key(std::uint16_t code);
 

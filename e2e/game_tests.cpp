@@ -373,13 +373,14 @@ void test_load_from_menu(const std::filesystem::path& data) {
         const std::string name = "SAVEGAME." + std::to_string(n);
         std::filesystem::copy_file(test_saves(data) / name, dir / name);
     }
+    std::filesystem::copy_file(test_saves(data) / "SAVEGAME.2", dir / "SAVEGAME.12");
     const auto names = LoadScreen::read_names(dir);
     CHECK(names[0] == "SEB" && names[1] == "SEB2" && names[5] == "MISSION2" && names[7].empty() &&
-          names[12].empty());
+          names[11] == "SEB2" && names[12].empty());
 
     Game reference(data, test_saves(data));
     reference.set_save_dir(dir);
-    reference.load_save(2);
+    reference.load_save(12);
     const Item* expected = reference.world().get(1);
 
     Game game(data, test_saves(data));
@@ -397,6 +398,8 @@ void test_load_from_menu(const std::filesystem::path& data) {
     const auto& r = game.menu()->load_screen()->slot_rect(0);
     CHECK(r.x0 == 183 && r.y0 == 109 && r.x1 == 183 + 313 && r.y1 == 109 + 16);
     CHECK(screen.row(r.y0)[r.x0] == LoadScreen::kSelectedColour);  // slot 0 outlined
+    const auto& autosave_row = game.menu()->load_screen()->slot_rect(11);
+    CHECK(autosave_row.y0 == 406 && autosave_row.x0 == 183);
 
     // An empty slot (SAVEGAME.8 does not exist) cannot be chosen.
     const auto empty = game.menu()->load_screen()->slot_rect(7);
@@ -415,6 +418,19 @@ void test_load_from_menu(const std::filesystem::path& data) {
     const Item* player = game.world().get(1);
     CHECK(player && expected && player->x == expected->x && player->y == expected->y && player->z == expected->z);
     CHECK(game.world().state.status_bar_visible && game.machine().faults().empty());
+
+    // The autosave is selectable from the load screen with the same arrows
+    // and confirm controls as the regular slots (also mapped from a gamepad).
+    press(game, 0x01, false, 0x1B);
+    press(game, 0x1C, false, 0x0D);
+    for (int i = 0; i < 10; ++i) press(game, 0x50, true);
+    CHECK(game.menu() && game.menu()->load_screen() && game.menu()->load_screen()->slot() == 11);
+    press(game, 0x1C, false, 0x0D);
+    CHECK(!game.menu());
+    game.update(kFrameUs);
+    player = game.world().get(1);
+    CHECK(player && expected && player->x == expected->x && player->y == expected->y && player->z == expected->z);
+    CHECK(game.machine().faults().empty());
     std::filesystem::remove_all(dir);
 }
 

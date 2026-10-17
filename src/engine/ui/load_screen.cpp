@@ -43,6 +43,7 @@ LoadScreen::Names LoadScreen::read_names(const std::filesystem::path& savegame_d
 // @orig 1008:0088
 LoadScreen::LoadScreen(ShapeCache& gumps, const FontSet& fonts, const Names& names, int& selected, Mode mode)
     : gumps_(&gumps), fonts_(&fonts), names_(&names), selected_(&selected), mode_(mode) {
+    *selected_ = std::clamp(*selected_, 0, visible_slots() - 1);
     const Shape* s = gumps_->get(kSlotShape);
     const int w = s && !s->frames().empty() ? s->frames()[0].width : 1;
     const int h = s && !s->frames().empty() ? s->frames()[0].height : 1;
@@ -62,7 +63,7 @@ void LoadScreen::draw(Surface8& screen) const {
         }
     }
     const Shape* slot = gumps_->get(kSlotShape);
-    for (int i = 0; i < kSlots; ++i) {
+    for (int i = 0; i < visible_slots(); ++i) {
         const Rect& r = slots_[i];
         if (slot && !slot->frames().empty()) slot->frames()[0].draw(screen, r.x0, r.y0);
         if (i == *selected_) outline(screen, r.x0, r.y0, r.x1, r.y1, kSelectedColour);
@@ -89,7 +90,7 @@ void LoadScreen::key(std::uint16_t code) {
         break;
     case gump_key::kDown:
     case '2':
-        if (sel < kSlots - 1) *selected_ = sel + 1;
+        if (sel < visible_slots() - 1) *selected_ = sel + 1;
         break;
     case gump_key::kEnter:
         choose(sel);
@@ -102,7 +103,7 @@ void LoadScreen::key(std::uint16_t code) {
 // @orig 1008:0AEA 1008:0B63
 void LoadScreen::mouse_down(int x, int y) {
     if (result_ || editing_) return;
-    for (int i = 0; i < kSlots; ++i) {
+    for (int i = 0; i < visible_slots(); ++i) {
         if (slots_[i].contains(x, y)) {
             *selected_ = i;
             choose(i);
