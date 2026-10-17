@@ -16,6 +16,7 @@
 #include "engine/palette_fader.hpp"
 #include "engine/world/projectile.hpp"
 #include "engine/ui/computer_gump.hpp"
+#include "engine/ui/floppy_icon.hpp"
 #include "engine/ui/gump_keys.hpp"
 #include "engine/ui/keypad_gump.hpp"
 #include "engine/ui/weasel_gump.hpp"
@@ -123,6 +124,12 @@ private:
 };
 
 constexpr std::size_t kSavedGlobals = 0x42;
+
+// The autosave: the floppy disk stays 2.5 s, doubled, 8 pixels from the corner; a request waits
+// 1 s (kernel ticks, 60 a second) for the scripts to settle.
+constexpr std::uint32_t kAutosaveIconUs = 2'500'000;
+constexpr std::uint32_t kAutosaveDelayTicks = 60;
+constexpr int kFloppyScale = 2, kFloppyMargin = 8;
 
 std::vector<std::uint8_t> load_damage_table(
 const std::filesystem::path& data) {
@@ -305,6 +312,8 @@ void Game::reset_world() {
         if (npc != world_->state.controlled_npc) restart_activity(*kernel_, *world_, anims_, npc);
     };
     hooks.show_message = [this](const std::string& text) { show_message(text); };
+    hooks.autosave = [this] { autosave(); };
+    hooks.autosave_soon = [this] { request_autosave(); };
     hooks.designated_target_moved = [this](ObjId item, std::int32_t x, std::int32_t y, std::int32_t z) {
         designated_target_moved(*kernel_, *world_, anims_, item, x, y, z);
     };
@@ -322,6 +331,7 @@ void Game::reset_world() {
     screen_closed_ = nullptr;
     screen_process_ = nullptr;
     sprites_suspended_ = false;
+    autosave_pending_ = false;
 }
 
 // @orig none: the controller screen's "press a button"
@@ -472,6 +482,63 @@ void Game::save_game(int slot) {
     flex.write(dir / ("SAVEGAME." + std::to_string(slot)));
 }
 
+// @orig none: port-only autosave
+void Game::autosave() {
+    if (!config_.autosave || modal() || movie_ || !world_ || !world_->get(1) || world_->is_dead(1) ||
+        world_->state.controlled_npc != 1) {
+        return;
+    }
+    try {
+        set_save_name(kAutoSave, tr("SAUVEGARDE AUTO", "AUTOSAVE"));
+        save_game(kAutoSave);
+        autosave_icon_us_ = kAutosaveIconUs;
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "autosave: %s\n", e.what());
+    }
+}
+
+// @orig none: port-only autosave
+void Game::request_autosave() {
+    if (!config_.autosave) return;
+    autosave_pending_ = true;
+    autosave_due_ = kernel_->ticks() + kAutosaveDelayTicks;
+}
+
+// @orig none: port-only autosave
+void Game::draw_autosave_icon(Surface8& screen) {
+    if (autosave_icon_us_ == 0) return;
+    if (floppy_.empty()) {
+        // The nearest colours of the game palette, but not the cycling ones (0..14).
+        const Palette& palette = world_->state.game_palette;
+        for (const std::uint32_t pixel : kFloppyPixels) {
+            std::uint8_t best = kTransparentIndex;
+            if ((pixel & 0xFF) != 0) {
+                const int r = static_cast<int>(pixel >> 24), g = static_cast<int>(pixel >> 16 & 0xFF),
+                          b = static_cast<int>(pixel >> 8 & 0xFF);
+                int best_distance = 1 << 30;
+                for (int i = 15; i < kTransparentIndex; ++i) {
+                    const Rgb& c = palette.colors[static_cast<std::size_t>(i)];
+                    const int dr = r - c.r, dg = g - c.g, db = b - c.b;
+                    const int distance = dr * dr + dg * dg + db * db;
+                    if (distance < best_distance) {
+                        best_distance = distance;
+                        best = static_cast<std::uint8_t>(i);
+                    }
+                }
+            }
+            floppy_.push_back(best);
+        }
+    }
+    // Top right, each pixel of the icon doubled.
+    const int x0 = kScreenWidth - kFloppyWidth * kFloppyScale - kFloppyMargin, y0 = kFloppyMargin;
+    for (int y = 0; y < kFloppyHeight * kFloppyScale; ++y) {
+        for (int x = 0; x < kFloppyWidth * kFloppyScale; ++x) {
+            const std::uint8_t index = floppy_[static_cast<std::size_t>(y / kFloppyScale * kFloppyWidth + x / kFloppyScale)];
+            if (index != kTransparentIndex) screen.row(y0 + y)[x0 + x] = index;
+        }
+    }
+}
+
 // @orig none: save directory of the port (tests)
 void Game::set_save_dir(const std::filesystem::path& dir) {
     save_dir_ = dir;
@@ -592,6 +659,7 @@ void Game::update(std::uint32_t elapsed_us) {
         pending_new_game_ = 0;
         new_game(difficulty);
     }
+    autosave_icon_us_ -= std::min(autosave_icon_us_, elapsed_us);
     if (movie_) {
         // The game is frozen while the movie plays (the original plays it
         // inside the intrinsic).
@@ -605,6 +673,10 @@ void Game::update(std::uint32_t elapsed_us) {
     kernel_->advance_time(elapsed_us);
     kernel_->run_slice();
     animate_scenery();
+    if (autosave_pending_ && kernel_->ticks() >= autosave_due_ && !modal() && player_may_act(*world_)) {
+        autosave_pending_ = false;
+        autosave();
+    }
     if (end_credits_pending_ && !modal()) play_end_credits();
     if (!modal()) selection_tick(*world_);
     mix_elapsed(elapsed_us);
@@ -699,6 +771,7 @@ void Game::update_movie(std::uint32_t elapsed_us) {
 
 // @orig 1468:3D7A 1468:3C23
 void Game::end_movie() {
+    const bool shop_movie = weasel_movie_;
     // 1468:3D7A / 3C23.
     if (audio_) {
         audio_->mixer.stop(0);
@@ -716,6 +789,9 @@ void Game::end_movie() {
         world_->state.cycle_paused = false;
     }
     movie_.reset();
+    // Port addition: a movie of the mission's course (not the shop's, nor the
+    // start-up's under the menu) ends: autosave.
+    if (!shop_movie && !menu_ && !end_credits_ && !end_credits_pending_) request_autosave();
     next_start_up_movie();
 }
 
@@ -1039,6 +1115,17 @@ bool Game::function_key(std::uint16_t code) {
             pending_notice_ = ShapeDialog::kQuickLoadNotice;
         });
         return true;
+    case gump_key::kF6:
+        // Port addition: load the autosave (slot 12, SAVEGAME.12), as F4 loads
+        // the quick save.
+        if (s.cru_stasis || s.controlled_npc != 1) return false;
+        if (!std::filesystem::exists(save_dir_ / ("SAVEGAME." + std::to_string(kAutoSave)))) return false;
+        ask(ShapeDialog::kQuickLoadQuestion, 0x107, [this] {
+            if (audio_) audio_->stop_all();
+            pending_load_ = kAutoSave;
+            pending_notice_ = ShapeDialog::kQuickLoadNotice;
+        });
+        return true;
     case gump_key::kF5:
         // Quick save? Yes: slot 12 (DS:0C94 = 12) under the name it has,
         // then the notice.
@@ -1163,13 +1250,16 @@ void Game::show_keypad(std::int16_t code, Pid pid) {
     auto gump = std::make_unique<KeypadGump>(gumps_, code, [this](int sfx) {
         if (audio_) audio_->play_sfx(sfx);
     }, kScreenWidth, kScreenHeight);
-    open_screen(std::move(gump), [this, pid](const ModalGump& screen) {
+    open_screen(std::move(gump), [this, pid, code](const ModalGump& screen) {
         // 13C8:04EE: the keyboard and the mouse clicks flushed.
         keyboard_.reset();
         leave_menu_mode();
         if (auto* p = dynamic_cast<UCProcess*>(kernel_->get(pid))) {
             p->set_call_result(static_cast<std::uint16_t>(screen.result()));
         }
+        // Port addition: the code matched, the door or chest is about to
+        // open (autosave).
+        if (code != 0 && static_cast<std::int16_t>(screen.result()) == code) autosave();
     });
 }
 
@@ -1378,6 +1468,7 @@ void Game::render(Surface8& screen, RenderStats* stats) {
     }
     render_view(screen, stats);
     draw_window(screen, ui_x_, ui_y_, [this](Surface8& s) {
+        draw_autosave_icon(s);
         if (message_) message_->draw(s);
         if (screen_) screen_->draw(s);
         cursor_.draw(s);

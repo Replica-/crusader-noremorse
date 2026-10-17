@@ -142,6 +142,7 @@ bool add_item_cru(World& world, ObjId item_id, bool show) {
         if (card < 0x20) world.state.keycards |= std::uint32_t{1} << card;
         shown();
         world.destroy(item_id);
+        if (world.hooks().autosave) world.hooks().autosave();
         return true;
     }
     if (shape == 0x3A2 || shape == 0x3A3 || shape == 0x3A4) {

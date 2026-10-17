@@ -156,7 +156,10 @@ std::vector<std::uint16_t> register_npc_intrinsics(UCMachine& m, World& w, const
         return 0;
     });
     m.set_intrinsic(0x0FD, [&w](UCMachine&, UCProcess&, Args a) -> std::uint32_t {
-        return (w.state.keycards >> (arg16(a, 0) & 0x1F)) & 1;
+        const std::uint32_t has = (w.state.keycards >> (arg16(a, 0) & 0x1F)) & 1;
+        // Port addition: a door opens with the keycard (autosave).
+        if (has && w.hooks().autosave) w.hooks().autosave();
+        return has;
     });
     bound.insert(bound.end(), {0x07A, 0x097, 0x0CC, 0x03A, 0x0B9, 0x0CF, 0x079, 0x0FD});
     // World::I_setControlledNPCNum(npc) (1138:0000).

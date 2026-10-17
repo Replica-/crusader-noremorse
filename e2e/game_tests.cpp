@@ -1886,6 +1886,147 @@ void test_keypad(const std::filesystem::path& data) {
     }
 }
 
+// The autosave (port addition): SAVEGAME.12 is written when a keypad's code
+// matches, a keycard is picked up, a mission starts or a movie ends, only when
+// GameConfig::autosave is on, and F6 loads it back.
+void test_autosave(const std::filesystem::path& data) {
+    const auto dir = std::filesystem::temp_directory_path() / "crusader_autosave_test";
+    const auto autosave = dir / ("SAVEGAME." + std::to_string(Game::kAutoSave));
+    const auto fresh = [&] {
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir);
+        std::filesystem::copy_file(test_saves(data) / "SAVEGAME.2", dir / "SAVEGAME.2");
+    };
+    const auto enable = [](Game& game) {
+        GameConfig config = game.config();
+        config.autosave = true;
+        game.set_config(config);
+    };
+    const auto code = [&](Game& game, bool right) {
+        constexpr ObjId kKeypad = 5459;
+        use_item(game.world(), kKeypad);
+        for (int f = 0; f < 3; ++f) game.update(kFrameUs);
+        const char digits[] = {'9', '6', '2'};
+        const std::uint8_t scancodes[] = {0x0A, 0x07, 0x03};
+        for (int i = 0; i < (right ? 3 : 1); ++i) {
+            game.key(scancodes[i], false, true, 0, static_cast<std::uint8_t>(digits[i]));
+            game.key(scancodes[i], false, false, 0, static_cast<std::uint8_t>(digits[i]));
+            game.update(kFrameUs);
+        }
+        game.key(0x1C, false, true, 0, 0x0D);
+        game.key(0x1C, false, false, 0, 0x0D);
+        game.update(kFrameUs);
+    };
+
+    // A wrong code saves nothing, the right one does, with the floppy disk.
+    fresh();
+    {
+        Game game(data, test_saves(data));
+        game.set_save_dir(dir);
+        enable(game);
+        game.load_save(2);
+        code(game, false);
+        CHECK(!std::filesystem::exists(autosave) && !game.autosave_icon_shown());
+    }
+    {
+        Game game(data, test_saves(data));
+        game.set_save_dir(dir);
+        enable(game);
+        game.load_save(2);
+        code(game, true);
+        CHECK(std::filesystem::exists(autosave) && game.autosave_icon_shown());
+        for (int f = 0; f < 200; ++f) game.update(kFrameUs);
+        CHECK(!game.autosave_icon_shown());
+        // It loads like any save (F6 asks, Enter... here the slot directly).
+        Game again(data, test_saves(data));
+        again.set_save_dir(dir);
+        again.load_save(Game::kAutoSave);
+        CHECK(again.world().get(1) && again.world().get(1)->x == game.world().get(1)->x);
+        CHECK(again.machine().faults().empty());
+    }
+    // Switched off: nothing.
+    fresh();
+    {
+        Game game(data, test_saves(data));
+        game.set_save_dir(dir);
+        enable(game);
+        game.load_save(2);
+        GameConfig config = game.config();
+        config.autosave = false;
+        game.set_config(config);
+        code(game, true);
+        CHECK(!std::filesystem::exists(autosave) && !game.autosave_icon_shown());
+        CHECK(!GameConfig::parse(config.text()).autosave && GameConfig::parse(game.config().text()).autosave == false);
+        CHECK(GameConfig::parse("").autosave);
+    }
+    // A keycard picked up.
+    fresh();
+    {
+        Game game(data, test_saves(data));
+        game.set_save_dir(dir);
+        enable(game);
+        game.load_save(2);
+        World& w = game.world();
+        const ObjId card = w.create(0x111, 0);
+        CHECK(card != 0);
+        if (card) {
+            w.get(card)->quality = 3;
+            w.pop_to_coords(w.get(1)->x, w.get(1)->y, w.get(1)->z);
+            CHECK(add_item_cru(w, card, false));
+            CHECK((w.state.keycards & 8) != 0 && std::filesystem::exists(autosave));
+        }
+    }
+    // A door opened with a keycard (CARD_NS 2415 of save 13), saved before it moves.
+    fresh();
+    std::filesystem::copy_file(test_saves(data) / "SAVEGAME.13", dir / "SAVEGAME.13");
+    {
+        Game game(data, test_saves(data));
+        game.set_save_dir(dir);
+        enable(game);
+        game.load_save(13);
+        World& w = game.world();
+        w.state.keycards = 0xFFFFFFFF;
+        const Item* door = w.get(2415);
+        CHECK(door != nullptr);
+        if (door) {
+            const std::uint16_t frame = door->frame;
+            use_item(w, 2415);
+            for (int f = 0; f < 5; ++f) game.update(kFrameUs);
+            CHECK(std::filesystem::exists(autosave));
+            for (int f = 0; f < 200; ++f) game.update(kFrameUs);
+            std::fprintf(stderr, "autosave: card door frame %u -> %u\n", frame, w.get(2415)->frame);
+        }
+    }
+    // A mission starts: once the player may act again.
+    fresh();
+    {
+        Game game(data, test_saves(data));
+        game.set_save_dir(dir);
+        enable(game);
+        game.new_game(3);
+        int frames = 0;
+        int movies = 0;
+        for (; frames < 6000 && !std::filesystem::exists(autosave); ++frames) {
+            // The arrival movie is skipped with Escape.
+            if (game.movie()) {
+                ++movies;
+                game.key(0x01, false, true, 0, 0x1B);
+                game.update(kFrameUs);
+                game.key(0x01, false, false, 0);
+            }
+            game.update(kFrameUs);
+        }
+        std::printf("autosave: %d frames of movie\n", movies);
+        std::printf("autosave: a mission started, saved after %d frames\n", frames);
+        CHECK(std::filesystem::exists(autosave));
+        Game again(data, test_saves(data));
+        again.set_save_dir(dir);
+        again.load_save(Game::kAutoSave);
+        CHECK(again.world().get(1) != nullptr && again.machine().faults().empty());
+    }
+    std::filesystem::remove_all(dir);
+}
+
 // SURCAMNS 3224 (save 7, quality low 0xFE): the view of its EVENT egg, in
 // grey, and the control of the NPC near it whose egg quality (record +0x63)
 // is 0xFE, robot 10; Escape gives the control back. Without such an NPC, the
@@ -3914,6 +4055,7 @@ int main(int argc, char** argv) {
     test_scenery_use(data);
     test_computer(data);
     test_keypad(data);
+    test_autosave(data);
     test_monitor(data);
     test_security_camera(data);
     test_energy_walls(data);
@@ -3954,6 +4096,9 @@ int main(int argc, char** argv) {
     test_new_game(data);
     test_movies(data);
     test_back_to_base(data);
+    // The tests that play on the test saves autosave into them (Game::kAutoSave): not kept.
+    std::error_code ignored;
+    std::filesystem::remove(test_saves(data) / ("SAVEGAME." + std::to_string(Game::kAutoSave)), ignored);
     std::printf(failures ? "%d failure(s)\n" : "all game checks passed\n", failures);
     return failures ? 1 : 0;
 }

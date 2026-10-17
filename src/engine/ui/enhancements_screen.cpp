@@ -9,9 +9,9 @@ namespace crusader {
 
 namespace {
 
-constexpr int kPanelX0 = 100, kPanelY0 = 112, kPanelX1 = 539, kPanelY1 = 406;
-constexpr int kTitleY = 148, kIconSize = 14, kIconGap = 8;
-constexpr int kRowX0 = 130, kRowX1 = 509, kRowY0 = 186, kRowStep = 30, kRowHeight = 24;
+constexpr int kPanelX0 = 100, kPanelY0 = 84, kPanelX1 = 539, kPanelY1 = 426;
+constexpr int kTitleY = 120, kIconSize = 14, kIconGap = 8;
+constexpr int kRowX0 = 130, kRowX1 = 509, kRowY0 = 158, kRowStep = 30, kRowHeight = 24;
 constexpr int kTextDrop = 17, kRowPad = 18;  // glyphs hang from their baseline
 constexpr std::uint8_t kFrameColour = 0x57, kGreen = 0x0C, kDimGreen = 0x75;
 
@@ -90,7 +90,8 @@ void EnhancementsScreen::draw(Surface8& screen) const {
         const int tint = focused ? kGreen : kDimGreen;
         draw_rounded_box(screen, r.x0, r.y0, r.x1, r.y1, -1, static_cast<std::uint8_t>(tint));
         const TextWriter writer(*fonts_, kFont);
-        if (row == kFollowRow || row == kDirectionalRow || row == kAimRow || row == kNativeRow || row == kZoomRow) {
+        if (row == kFollowRow || row == kDirectionalRow || row == kAimRow || row == kNativeRow || row == kZoomRow ||
+            row == kAutosaveRow) {
             // The name on the left, its state on the right.
             std::string name;
             bool on = false;
@@ -104,6 +105,9 @@ void EnhancementsScreen::draw(Surface8& screen) const {
             } else if (row == kZoomRow) {
                 name = tr("ZOOM", "ZOOM");
                 value = config_->view_zoom ? "x" + std::to_string(config_->view_zoom) : tr("AUTO", "AUTO");
+            } else if (row == kAutosaveRow) {
+                name = tr("SAUVEGARDE AUTO", "AUTOSAVE");
+                on = config_->autosave;
             } else if (row == kNativeRow) {
                 name = tr("RESOLUTION NATIVE", "NATIVE RESOLUTION");
                 on = config_->native_resolution;
@@ -134,6 +138,8 @@ void EnhancementsScreen::activate(int row) {
         config_->directional_move = !config_->directional_move;
     } else if (row == kZoomRow) {
         config_->view_zoom = (config_->view_zoom + 1) % (std::clamp(config_->view_zoom_limit, 1, 4) + 1);
+    } else if (row == kAutosaveRow) {
+        config_->autosave = !config_->autosave;
     } else if (row == kNativeRow) {
         config_->native_resolution = !config_->native_resolution;
     } else if (row == kAimRow) {

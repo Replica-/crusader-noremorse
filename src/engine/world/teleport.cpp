@@ -74,6 +74,8 @@ protected:
             world_.teleport(kPlayer, x, y, z, map_);
             player = world_.get(kPlayer);
             if (!(support_mask(world_, player->shape, x, y, z, true, kPlayer) & 0x10)) fall(kernel_, world_, kPlayer);
+            // Port addition: a mission starts (autosave).
+            if (egg_ == kTeleportStartEgg && world_.hooks().autosave_soon) world_.hooks().autosave_soon();
         }
         terminate();
     }

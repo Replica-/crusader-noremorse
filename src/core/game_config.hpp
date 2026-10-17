@@ -46,6 +46,9 @@ public:
     // takes the whole screen (more scenery around the camera) instead of the
     // original 640 x 480.
     bool native_resolution = true;
+    // Port addition, written when switched off: "autosave", the game saves
+    // itself (slot Game::kAutoSave) at the key moments of a mission.
+    bool autosave = true;
     // Port addition, written when not 0: "viewzoom", the largest pixel size
     // (whole multiple) of the native view; 0 takes the biggest that fits the
     // window, 1 gives the finest picture.

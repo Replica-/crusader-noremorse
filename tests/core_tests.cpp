@@ -48,6 +48,13 @@ void check_config() {
     w.no_weasel = false;
     check(w.text().find("noweasel") == std::string::npos, "config noweasel erased when clear");
 
+    // "autosave" (port addition): on by default, written only when switched off.
+    GameConfig saving = GameConfig::parse("irq=7\r\n");
+    check(saving.autosave && saving.text().find("autosave") == std::string::npos, "config autosave default on, not written");
+    saving.autosave = false;
+    check(!GameConfig::parse(saving.text()).autosave && saving.text().find("autosave=false") != std::string::npos,
+          "config autosave off round trip");
+
     // Controller settings (port addition): defaults, not written until changed.
     GameConfig p = GameConfig::parse("irq=7\r\n");
     check(p.pad.is_default() && p.text().find("pad") == std::string::npos, "config pad defaults not written");

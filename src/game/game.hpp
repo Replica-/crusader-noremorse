@@ -54,6 +54,7 @@ public:
     static constexpr int kScreenWidth = 640;
     static constexpr int kScreenHeight = 480;
     static constexpr int kQuickSave = 13;  // SAVEGAME.13, slot 12 (F4 / F5)
+    static constexpr int kAutoSave = 12;   // SAVEGAME.12, port addition (F6): the autosave
 
     // `saves`: where the saved games are read and written, data/SAVEGAME
     // when empty (the tests use a copy of the original saves).
@@ -84,6 +85,18 @@ public:
     void save_named(int slot, const std::string& name);
     // save_game, a failure shown in the message box; false then.
     bool save_or_report(int slot);
+
+    // Port addition (GameConfig::autosave): saves the game in slot kAutoSave
+    // and shows the floppy disk for a moment. Does nothing when switched off,
+    // in a menu, a screen or a movie, or when the player is not the controlled
+    // NPC. It happens when a keycard is picked up, a door opens with one or
+    // with a code, a chest opens with a code (the keypad matched), a mission
+    // starts and a movie ends; the last two wait until the player may act
+    // again (request_autosave).
+    void autosave();
+    void request_autosave();
+    // The floppy disk is on screen.
+    bool autosave_icon_shown() const { return autosave_icon_us_ > 0; }
 
     // Port only: where the saved games are read and written (data/SAVEGAME
     // by default); the slot names are read again from there.
@@ -285,6 +298,7 @@ private:
     void update_movie(std::uint32_t elapsed_us);
     void end_movie();
     void save_config();
+    void draw_autosave_icon(Surface8& screen);
 
 
     // Data, kept open for the whole run.
@@ -362,6 +376,10 @@ private:
     LoadScreen::Names save_names_;     // DS:7964
     CreditsData credits_data_;
     HelpScreen::Pictures help_pictures_;
+    bool autosave_pending_ = false;    // request_autosave, until the player may act
+    std::uint32_t autosave_due_ = 0;   // the kernel tick from which it can run
+    std::uint32_t autosave_icon_us_ = 0;  // what is left of the floppy disk's display
+    std::vector<std::uint8_t> floppy_;    // its palette indices (0xFF: transparent), built when first drawn
     int pending_load_ = 0;             // save to load at the next update (1-based)
     int pending_new_game_ = 0;         // difficulty of a new game to start at the next update
     bool end_credits_pending_ = false; // Game::I_playCredits: its process has not run yet

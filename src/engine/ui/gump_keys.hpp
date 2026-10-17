@@ -25,6 +25,7 @@ constexpr std::uint16_t kF1 = 0x13B;
 constexpr std::uint16_t kF2 = 0x13C;
 constexpr std::uint16_t kF4 = 0x13E;
 constexpr std::uint16_t kF5 = 0x13F;
+constexpr std::uint16_t kF6 = 0x140;
 constexpr std::uint16_t kF8 = 0x142;
 constexpr std::uint16_t kF9 = 0x143;
 }  // namespace gump_key

@@ -307,6 +307,11 @@ struct WorldHooks {
     // ITEM.C 275F: the item is hit by `other` with `force` (contact events
     // of a move, 10E8:123A; see hit_item).
     std::function<void(ObjId item, ObjId other, std::uint16_t force)> got_hit;
+    // Port addition, the autosave's moments (Game::autosave): `autosave` saves
+    // the game as it is (a keycard picked up, a door about to open with one),
+    // `autosave_soon` once the player may act again (a mission start).
+    std::function<void()> autosave;
+    std::function<void()> autosave_soon;
 };
 
 class World {
