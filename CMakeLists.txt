@@ -130,7 +130,12 @@ target_link_libraries(crusader_platform PUBLIC crusader_engine ${SDL2_TARGET})
 add_library(crusader_game src/game/game.cpp)
 target_link_libraries(crusader_game PUBLIC crusader_engine)
 
-add_executable(crusader src/game/main.cpp)
+if(WIN32)
+  # Embed the application icon (Explorer, taskbar, window title bar).
+  add_executable(crusader src/game/main.cpp src/game/res/crusader.rc)
+else()
+  add_executable(crusader src/game/main.cpp)
+endif()
 target_link_libraries(crusader PRIVATE crusader_game crusader_platform)
 # Set by the release pipeline (semantic version, without the leading "v").
 set(CRUSADER_VERSION "0.0.0-dev" CACHE STRING "Version reported by crusader --version")

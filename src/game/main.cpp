@@ -44,6 +44,9 @@ namespace {
 
 constexpr std::uint32_t kFrameUs = 1'000'000 / 60;
 
+// @orig none: the port's window title (taskbar, title bar)
+constexpr const char* kWindowTitle = "Crusader: No Remorse — DECOMP";
+
 // @orig none: start-up diagnostics of the port
 std::string diagnostics(Game& game, const RenderStats& stats, double fps) {
     std::size_t unbound = 0;
@@ -93,7 +96,7 @@ int main(int argc, char** argv) {
     SDL_SetMainReady();
     std::filesystem::path data = "data", iso;
     int save = 1, frames = 0;
-    bool new_game = false, save_given = false, fullscreen = false;
+    bool new_game = false, save_given = false, fullscreen = false, debug_title = false;
     int png_width = Game::kScreenWidth, png_height = Game::kScreenHeight;
     bool classic = false;  // --classic: the original 640 x 480 view, stretched to the window
     double gamma = 1.0;
@@ -114,6 +117,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--wav") == 0 && i + 1 < argc) wav = argv[++i];
         else if (std::strcmp(argv[i], "--new-game") == 0) new_game = true;
         else if (std::strcmp(argv[i], "--fullscreen") == 0) fullscreen = true;
+        else if (std::strcmp(argv[i], "--debug-title") == 0) debug_title = true;  // diagnostics in the window title
         else if (std::strcmp(argv[i], "--classic") == 0) classic = true;
         else if (std::strcmp(argv[i], "--size") == 0 && i + 1 < argc) {  // with --png: the screen's size, e.g. 960x540
             std::sscanf(argv[++i], "%dx%d", &png_width, &png_height);
@@ -221,7 +225,7 @@ int main(int argc, char** argv) {
 
         // The options screen saves its settings, as the original does.
         game.set_config_file(data / "CRUSADER.CFG");
-        SdlPresenter presenter("crusader", Game::kScreenWidth, Game::kScreenHeight, 2, fullscreen);
+        SdlPresenter presenter(kWindowTitle, Game::kScreenWidth, Game::kScreenHeight, 2, fullscreen);
         presenter.set_gamma(gamma);
         if (!classic && !fullscreen) presenter.maximize();
         // Native resolution: the game is drawn at the largest whole fraction of
@@ -322,7 +326,7 @@ int main(int argc, char** argv) {
             }
             fit_screen();
             game.render(screen, &stats);
-            {
+            if (debug_title) {
                 int ow = 0, oh = 0;
                 presenter.output_size(&ow, &oh);
                 char size[64];
