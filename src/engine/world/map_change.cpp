@@ -106,6 +106,9 @@ void World::load_map(int map) {
 
 // @orig 10B0:13BE
 void World::move_camera_to(std::int32_t x, std::int32_t y, std::int32_t z, int map) {
+    // A scripted view takes precedence over the smooth follow's last goal.
+    // Following resumes when the controlled target next moves.
+    follow_active_ = false;
     if (map == 0) map = current_map_;
     if (map != current_map_) {
         if (current_map_ != 0) unload_map();

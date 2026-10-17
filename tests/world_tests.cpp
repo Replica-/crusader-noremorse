@@ -8,6 +8,7 @@
 #include "engine/usecode/uc_machine.hpp"
 #include "engine/usecode/uc_process.hpp"
 #include "engine/usecode/world_intrinsics.hpp"
+#include "engine/world/actor_anim.hpp"
 #include "engine/world/collision.hpp"
 #include "engine/world/gravity.hpp"
 #include "engine/world/render.hpp"
@@ -482,6 +483,79 @@ void test_collisions() {
     CHECK(!box_free(w, 16, 16, 1, 0x8001, {140, 100, 63}) && box_free(w, 16, 16, 1, 0x8000, {140, 100, 63}));
 }
 
+void test_walk_alignment() {
+    // A two-frame half stride: the first step is clear, the second meets the
+    // doorpost. A full-stride probe must choose the free side before walking.
+    constexpr std::size_t table = AnimDat::kShapes * 4, action = table + AnimDat::kActions * 4;
+    std::vector<std::uint8_t> bytes(action + 4 + 8 * 4 * 8);
+    auto u32 = [&](std::size_t at, std::size_t value) {
+        for (int b = 0; b < 4; ++b) bytes[at + b] = static_cast<std::uint8_t>(value >> (b * 8));
+    };
+    u32(4, table);
+    u32(table + 4, action);
+    bytes[action] = 4;
+    bytes[action + 1] = 1;
+    bytes[action + 2] = 1;
+    for (std::size_t f = 0; f < 8 * 4; ++f) {
+        bytes[action + 4 + f * 8 + 4] = 4;  // distance 4 * 2 = 8
+        bytes[action + 4 + f * 8 + 5] = 2;  // ground check
+    }
+    const AnimDat anims = AnimDat::parse(bytes);
+    for (bool closed : {false, true}) {
+        std::vector<ShapeInfo> tf(4);
+        tf[1].flags = ShapeInfo::kSolid | ShapeInfo::kNpc;
+        tf[1].footpad_x = tf[1].footpad_y = tf[1].footpad_z = 1;
+        tf[2].flags = tf[3].flags = ShapeInfo::kSolid | ShapeInfo::kFixed;
+        tf[2].footpad_x = tf[2].footpad_y = 16;
+        tf[3].footpad_x = 1;
+        tf[3].footpad_y = closed ? 16 : 4;
+        tf[3].footpad_z = 8;
+        World w(tf);
+        w.create(2, 0);
+        w.pop_to_coords(255, 255, 0);
+        w.create(3, 0);
+        w.pop_to_coords(125, closed ? 255 : 100, 0);
+        Item player;
+        player.id = player.shape = 1;
+        player.x = player.y = 100;
+        w.add_with_id(player);
+        w.set_camera(100, 100, 0);
+        w.state.controlled_npc = 1;
+        Kernel k;
+        do_anim(k, w, anims, 1, 1, 4);
+        for (int f = 0; f < 10; ++f) {
+            k.advance_time(16667);
+            k.run_slice();
+        }
+        CHECK(w.get(1));
+        std::printf("walk alignment: closed %d, at %d %d\n", closed, w.get(1)->x, w.get(1)->y);
+        CHECK(w.get(1)->x == (closed ? 108 : 116));
+        CHECK(w.get(1)->y == (closed ? 100 : 116));
+        CHECK(position_free(w, 1, w.location(*w.get(1)), nullptr, 1));
+    }
+}
+
+void test_scripted_camera() {
+    World w;
+    w.state.controlled_npc = w.state.camera_target = 1;
+    w.set_follow_player(true);
+    w.set_camera(1000, 1000, 0);
+    w.track_camera_target(1100, 1100, 0);
+    w.update_follow_camera();
+    CHECK(w.state.camera_x != 1000 || w.state.camera_y != 1000);
+    w.move_camera_to(3000, 4000, 0, 0);
+    for (int f = 0; f < 100; ++f) w.update_follow_camera();
+    CHECK(w.state.camera_x == 3000 && w.state.camera_y == 4000);
+    // The next player move resumes following, but an unfollowed camera stays put.
+    w.track_camera_target(1100, 1100, 0);
+    w.state.camera_target = 0;
+    w.update_follow_camera();
+    CHECK(w.state.camera_x == 3000 && w.state.camera_y == 4000);
+    w.state.camera_target = 1;
+    w.update_follow_camera();
+    CHECK(w.state.camera_x != 3000 || w.state.camera_y != 4000);
+}
+
 void test_support_and_fall() {
     std::vector<ShapeInfo> tf(32);
     tf[20].footpad_x = 4;  // platform 64 x 64, flat, fixed, solid
@@ -740,6 +814,8 @@ int main() {
     test_surface_search();
     test_footprint_intrinsics();
     test_collisions();
+    test_walk_alignment();
+    test_scripted_camera();
     test_support_and_fall();
     test_gravity_step();
     test_gravity_step();

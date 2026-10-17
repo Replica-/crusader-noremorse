@@ -935,7 +935,8 @@ void World::shift_camera(int dx, int dy) {
 
 // @orig none: port-only camera follow
 void World::update_follow_camera() {
-    if (!follow_player_ || !follow_active_) return;
+    if (!follow_player_ || !follow_active_ || state.camera_target == 0 ||
+        state.camera_target != state.controlled_npc) return;
     const auto ux = static_cast<std::int16_t>(follow_goal_[0]), uy = static_cast<std::int16_t>(follow_goal_[1]);
     const int sx = static_cast<std::int16_t>(((ux - uy) >> 1) - state.view_left);
     const int sy = static_cast<std::int16_t>((static_cast<std::uint16_t>(ux + uy) >> 2) - state.view_top -
