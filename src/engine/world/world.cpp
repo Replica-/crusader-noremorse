@@ -1082,10 +1082,12 @@ ObjId World::pop_to_end(ObjId container) { return pop_into(container, true); }
 
 // @orig 10B0:1C21 10B0:1D29
 void World::move_item(ObjId id, std::int32_t x, std::int32_t y, std::int32_t z) {
-    // An item already pushed (ethereal) is not pushed again; the original
-    // would then pop whichever item is on top of the stack.
+    // CONVEYOR pushes its passenger before legalMoveToPoint. push is then
+    // a no-op, but the successful move must still pop it back onto the map.
+    // Only accept an ethereal item at the top, so an unrelated pending item
+    // is never popped in its place.
     Item* item = get(id);
-    if (!item || (item->flags & kItemEthereal)) return;
+    if (!item || ((item->flags & kItemEthereal) && pending_top() != id)) return;
     push(id);
     pop_to_coords(x, y, z);
     // Item_I_move: the marker follows the designated target.

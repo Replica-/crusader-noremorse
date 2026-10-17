@@ -4198,6 +4198,44 @@ void test_mission2_npc_teleport(const std::filesystem::path& data) {
     }
 }
 
+// TEST16: CONVFLR starts CONVEYOR when the player steps onto the belt.
+// The script pushes each passenger before legalMoveToPoint. A successful
+// move must pop it back onto the map, or subsequent walks animate in place
+// while the player is absent from rendering, collisions and surface searches.
+void test_conveyor_passenger(const std::filesystem::path& data) {
+    for (int dir : {4, 6}) {
+        Game game(data, test_saves(data));
+        game.load_save_file(test_saves(data) / "tapis-roulants-traverses.sav");
+        World& w = game.world();
+        const Item start = *w.get(1);
+        const auto pending = w.pending_count();
+        w.npc_record(1)[npc::kDirection] = static_cast<std::uint8_t>(dir);
+        bool ethereal = false, on_belt = false, occupied = false, unlinked = false;
+        game.key(0x48, true, true, 0);
+        for (int f = 0; f < 90; ++f) {
+            game.update(kFrameUs);
+            const Item& p = *w.get(1);
+            ethereal |= (p.flags & kItemEthereal) != 0;
+            const auto cell = w.cell(p.x >> World::kCellShift, p.y >> World::kCellShift);
+            unlinked |= std::count(cell.begin(), cell.end(), ObjId{1}) != 1;
+            occupied |= !position_free(w, p.shape, w.location(p), nullptr, 1);
+            static constexpr std::uint8_t kAll[] = {'$'};
+            for (ObjId id : w.surface_search(1, 2, kAll)) {
+                if (w.get(id)->shape == 0x22C) on_belt = true;
+            }
+        }
+        game.key(0x48, true, false, 0);
+        const Item& end = *w.get(1);
+        std::printf("conveyor: dir %d, (%d,%d,%d) -> (%d,%d,%d), on belt %d, ethereal %d\n",
+                    dir, start.x, start.y, start.z, end.x, end.y, end.z, on_belt, ethereal);
+        CHECK(on_belt && !ethereal && !unlinked && !occupied && !w.is_dead(1));
+        CHECK(end.x > start.x + 100);
+        if (dir == 4) CHECK(end.y < start.y);  // the belt carries him north while he walks east
+        CHECK(w.pending_count() == pending);
+        CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+    }
+}
+
 int main(int argc, char** argv) {
     const std::filesystem::path data = argc > 1 ? argv[1] : "data";
     if (!std::filesystem::exists(data / "STATIC/FIXED.DAT")) {
@@ -4205,6 +4243,10 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (!have_test_saves(data)) return 1;
+    if (argc > 2 && std::string(argv[2]) == "--conveyor") {
+        test_conveyor_passenger(data);
+        return failures ? 1 : 0;
+    }
     // Isolate this crash regression when running under a memory checker.
     if (argc > 2 && std::string(argv[2]) == "--mission2-teleport") {
         test_mission2_npc_teleport(data);
@@ -4244,6 +4286,7 @@ int main(int argc, char** argv) {
     test_floor_pad(data);
     test_ledge_step(data);
     test_walk_down_steps(data);
+    test_conveyor_passenger(data);
     test_inventory_keys(data);
     test_item_selection(data);
     test_message_box(data);

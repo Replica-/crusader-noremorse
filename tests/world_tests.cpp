@@ -192,6 +192,23 @@ void test_pending_stack() {
     CHECK(w.get(a)->x == 100 && w.get(a)->y == 200 && w.get(a)->z == 250);  // z capped
     CHECK(!(w.get(a)->flags & kItemEthereal));
 
+    // Conveyor passengers are pushed before their successful legal move.
+    // Finishing it must put the passenger back, leaving older pending items.
+    const ObjId waiting = w.create(5, 0);
+    w.push(a);
+    SweepResult moved;
+    moved.end = {120, 220, 24};
+    finish_move(w, a, moved);
+    CHECK(w.get(a)->x == 120 && w.get(a)->y == 220 && w.get(a)->z == 24);
+    CHECK(!(w.get(a)->flags & kItemEthereal));
+    CHECK(w.pending_count() == 1 && w.pending_top() == waiting && w.cells_consistent());
+    // An ethereal item below the top must not pop a different item.
+    w.push(a);
+    w.move_item(waiting, 300, 400, 0);
+    CHECK(w.pending_count() == 2 && w.pending_top() == a);
+    CHECK(w.pop() == a);
+    w.destroy(waiting);
+
     Item box;
     box.shape = 6;
     box.x = 1000;
