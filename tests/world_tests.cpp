@@ -150,6 +150,30 @@ void test_create_npc_reuses_a_slot() {
     set_text_language(Language::French);
 }
 
+void test_created_npc_teleport() {
+    // Mission 2 creates an NPC, aligns it with the teleporter, then destroys
+    // it. Its map must agree with the grid from birth; otherwise teleport
+    // skips unlinking and leaves a freed id in the cell. Also cover leaving
+    // the map, returning, and reusing the freed slot.
+    World w(test_typeflags());
+    w.load_map(3);
+    w.set_camera(5000, 5000, 0);
+    for (int reuse = 0; reuse < 2; ++reuse) {
+        const ObjId npc = w.create_npc(3, 0);
+        w.pop_to_coords(5000, 5000, 0);
+        CHECK(w.get(npc)->map_number == 3 && w.cells_consistent());
+        w.teleport(npc, 5500, 5000, 0, 3);
+        CHECK(w.cells_consistent());
+        w.teleport(npc, 5510, 5010, 0, 0);
+        CHECK(w.get(npc)->off_map && w.cells_consistent());
+        CHECK(w.cell(5500 >> World::kCellShift, 5000 >> World::kCellShift).empty());
+        w.teleport(npc, 0, 0, 0, 3);
+        CHECK(!w.get(npc)->off_map && w.cells_consistent());
+        w.destroy(npc);
+        CHECK(!w.get(npc) && w.cells_consistent());
+    }
+}
+
 void test_pending_stack() {
     World w(test_typeflags());
     // DAMAGE.FLX layout: shape 3 has 50 hit points; absent entries give 1.
@@ -804,6 +828,7 @@ int main() {
     test_typeflag_decode();
     test_world_ids();
     test_create_npc_reuses_a_slot();
+    test_created_npc_teleport();
     test_item_intrinsics();
     test_pending_stack();
     test_position_intrinsics();

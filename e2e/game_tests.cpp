@@ -4104,6 +4104,73 @@ void test_mission2_final_scene(const std::filesystem::path& data) {
     }
 }
 
+// Updated PBM2: open the door, watch 2j.AVI, let the NPC teleport, then move.
+// A newly created NPC with map 0 used to leave its freed id in a nearby cell;
+// the next walk's collision check then dereferenced the missing item.
+void test_mission2_npc_teleport(const std::filesystem::path& data) {
+    const auto save = test_saves(data) / "fin-mission2-teleportation-plantage.sav";
+    if (!std::filesystem::exists(save)) return;
+    for (bool follow : {false, true}) {
+        Game game(data, test_saves(data));
+        auto config = game.config();
+        config.follow_player = follow;
+        config.autosave = true;
+        game.set_config(config);
+        game.load_save_file(save);
+        World& w = game.world();
+        Surface8 screen(960, 720);
+        w.set_view_size(960, 720);
+        CHECK(w.current_map() == 3);
+        CHECK(w.get(5517) && w.get(5517)->shape == 0xA1);
+        use_item(w, 5517);  // the door's wall switch
+        for (int f = 0; f < 30; ++f) game.update(kFrameUs);
+        game.key(0x48, true, true, 0);
+        bool started = false, movie = false, teleporting = false;
+        ObjId npc = 0;
+        for (int f = 0; f < 3000; ++f) {
+            game.update(kFrameUs);
+            if (w.state.avatar_in_stasis) {
+                started = true;
+                game.key(0x48, true, false, 0);
+            }
+            if (f == 600) game.key(0x48, true, false, 0);
+            if (game.movie() && !movie) {
+                movie = true;
+                w.for_each([&](const Item& i) {
+                    if (is_npc_id(i.id) && i.shape == 0x3AC) {
+                        npc = i.id;
+                        CHECK(i.map_number == 3);
+                    }
+                });
+            }
+            game.key(0x01, false, game.movie() != nullptr, 0, 0x1B);
+            if (w.get(npc)) teleporting |= w.npc_word(npc, npc::kLastAnim) == 0x21;
+            if (started && !w.state.avatar_in_stasis && !game.movie()) break;
+        }
+        CHECK(started && movie && teleporting && npc != 0 && !w.get(npc));
+        CHECK(!w.state.avatar_in_stasis && w.state.controlled_npc == 1);
+        // Check the actual grid even on builds whose allocation order happens
+        // to keep the dangling cell outside the next movement's sweep.
+        for (int x = 0; x < World::kGridSize; ++x) {
+            for (int y = 0; y < World::kGridSize; ++y) {
+                const auto& cell = w.cell(x, y);
+                CHECK(std::find(cell.begin(), cell.end(), npc) == cell.end());
+            }
+        }
+        const Item before = *w.get(1);
+        game.key(0x48, true, true, 0);
+        for (int f = 0; f < 120; ++f) {
+            game.update(kFrameUs);
+            game.render(screen);
+        }
+        game.key(0x48, true, false, 0);
+        CHECK(w.get(1)->x != before.x || w.get(1)->y != before.y);
+        CHECK(game.machine().faults().empty() && game.machine().unbound_intrinsic_calls().empty());
+        std::printf("mission 2 teleport: follow %d, NPC %u removed, player (%d, %d) -> (%d, %d)\n",
+                    follow, npc, before.x, before.y, w.get(1)->x, w.get(1)->y);
+    }
+}
+
 int main(int argc, char** argv) {
     const std::filesystem::path data = argc > 1 ? argv[1] : "data";
     if (!std::filesystem::exists(data / "STATIC/FIXED.DAT")) {
@@ -4111,6 +4178,13 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (!have_test_saves(data)) return 1;
+    // Isolate this crash regression when running under a memory checker.
+    if (argc > 2 && std::string(argv[2]) == "--mission2-teleport") {
+        test_mission2_npc_teleport(data);
+        std::error_code ignored;
+        std::filesystem::remove(test_saves(data) / ("SAVEGAME." + std::to_string(Game::kAutoSave)), ignored);
+        return failures ? 1 : 0;
+    }
     test_load_and_run(data);
     test_alert(data);
     test_player_walks(data);
@@ -4174,6 +4248,7 @@ int main(int argc, char** argv) {
     test_movies(data);
     test_back_to_base(data);
     test_mission2_final_scene(data);
+    test_mission2_npc_teleport(data);
     // The tests that play on the test saves autosave into them (Game::kAutoSave): not kept.
     std::error_code ignored;
     std::filesystem::remove(test_saves(data) / ("SAVEGAME." + std::to_string(Game::kAutoSave)), ignored);

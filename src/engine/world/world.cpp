@@ -575,6 +575,9 @@ ObjId World::create_npc(std::uint16_t shape, std::uint16_t frame) {
     item.id = slot;
     item.shape = shape;
     item.npc_number = static_cast<std::uint8_t>(slot);
+    // NPC_10f0_236b: a new or reused NPC belongs to the current map. Teleport
+    // uses this field to unlink it before changing its coordinates.
+    item.map_number = static_cast<std::uint8_t>(current_map_);
     add_with_id(std::move(item));
     // NPC_10f0_2610: the record starts cleared.
     auto r = npc_record(slot);
