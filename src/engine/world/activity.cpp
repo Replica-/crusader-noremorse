@@ -15,12 +15,14 @@ namespace crusader {
 
 namespace {
 
-int rnd(World& w, int n) {
-    return n <= 1 ? 0 : static_cast<int>(random_range(w.state.random_state, 0, static_cast<std::uint16_t>(n - 1)));
-}
+// random_range(n) (SYSTEM.C 12D8:04FF), UCMachine::I_rndRange (12E0:0293)
+// and the C library's rand() * n / 0x8000 (core/random.hpp), each where the
+// original uses it.
+int rnd(World& w, int n) { return random_range(w.state.random_state, static_cast<std::uint16_t>(n)); }
+int crt_rnd(World& w, int n) { return crt_rand_below(w.state.crt_rand_state, n); }
 
 int rnd_between(World& w, int lo, int hi) {
-    return lo + static_cast<int>(random_range(w.state.random_state, 0, static_cast<std::uint16_t>(hi - lo)));
+    return random_between(w.state.random_state, static_cast<std::int16_t>(lo), static_cast<std::int16_t>(hi));
 }
 
 std::uint16_t word_at(std::span<const std::uint8_t> r, std::size_t at) {
@@ -194,11 +196,11 @@ private:
         static constexpr int k597[] = {0xD6, 0xFF, 0xD7};
         int sfx = -1;
         switch (self.shape) {
-        case 0x2F7: sfx = k2F7[rnd(world_, 6)]; break;
-        case 0x2F6: sfx = k2F6[rnd(world_, 4)]; break;
-        case 0x344: sfx = k344[rnd(world_, 4)]; break;
-        case 0x2F5: sfx = k2F5[rnd(world_, 4)]; break;
-        case 0x597: sfx = k597[rnd(world_, 3)]; break;
+        case 0x2F7: sfx = k2F7[crt_rnd(world_, 6)]; break;
+        case 0x2F6: sfx = k2F6[crt_rnd(world_, 4)]; break;
+        case 0x344: sfx = k344[crt_rnd(world_, 4)]; break;
+        case 0x2F5: sfx = k2F5[crt_rnd(world_, 4)]; break;
+        case 0x597: sfx = k597[crt_rnd(world_, 3)]; break;
         default: return;
         }
         if (Audio* audio = world_.audio()) audio->sources.play(world_, sfx, owner());
@@ -226,7 +228,7 @@ protected:
             return;
         }
         if (rnd(world_, 2) == 0) {
-            sleep(static_cast<std::uint32_t>(rnd(world_, 3) * 60 + 60));
+            sleep(static_cast<std::uint32_t>(crt_rnd(world_, 3) * 60 + 60));
             return;
         }
         const Item* self = world_.get(npc);

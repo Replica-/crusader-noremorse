@@ -186,7 +186,7 @@ std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes,
 
     std::vector<DrawItem> items;
     world.for_each([&](const Item& item) {
-        if (item.parent != 0 || (item.flags & (kItemInvisible | kItemContained | kItemEthereal))) return;
+        if (item.off_map || item.parent != 0 || (item.flags & (kItemInvisible | kItemContained | kItemEthereal))) return;
         const ShapeInfo* info = world.shape_info(item.shape);
         if (info && info->is(ShapeInfo::kEditor)) return;  // editor-only markers
         const Shape* shape = shapes.get(item.shape);

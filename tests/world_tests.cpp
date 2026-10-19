@@ -770,18 +770,30 @@ void test_directions() {
     CHECK(direction_8(100, 100, 150, 120) == 4);  // close to the x axis
 }
 
+// The two generators of the executable (core/random.hpp). Expected values
+// from CRUSADER.EXE run in the emulator (tools/diffcheck): SYSTEM.C's
+// random_next from its start-up state, the library's rand() from 1.
 void test_random_range() {
-    std::uint32_t state = 12345;
+    std::uint32_t state = kRandomStartState;
+    for (std::uint16_t expected : {0x2EB4, 0xAF24, 0x7686, 0x9EDE}) CHECK(random_next(state) == expected);
+    std::uint32_t crt = kCrtRandStartState;
+    for (std::uint16_t expected : {346, 130, 10982}) CHECK(crt_rand(crt) == expected);
+    // random_range(0) is 0 and still draws.
+    std::uint32_t a = kRandomStartState, b = kRandomStartState;
+    CHECK(random_range(a, 0) == 0 && a != kRandomStartState);
+    random_next(b);
+    CHECK(a == b);
+    // rndRange: signed bounds in either order; a span of 0x10000 gives lo.
     bool seen_lo = false, seen_hi = false;
-    for (int i = 0; i < 1000; ++i) {
-        const auto v = random_range(state, 10, 3);  // bounds in either order
-        CHECK(v >= 3 && v <= 10);
-        seen_lo |= v == 3;
-        seen_hi |= v == 10;
+    for (int i = 0; i < 4000; ++i) {
+        const int v = random_between(state, 0x200, -0x200);
+        CHECK(v >= -0x200 && v <= 0x200);
+        seen_lo |= v == -0x200;
+        seen_hi |= v == 0x200;
     }
     CHECK(seen_lo && seen_hi);
-    std::uint32_t a = 7, b = 7;
-    CHECK(random_range(a, 0, 1000) == random_range(b, 0, 1000));  // deterministic
+    CHECK(random_between(state, -0x8000, 0x7FFF) == -0x8000);
+    CHECK(random_seed(0x12345678) == 0x12345679);
 }
 
 

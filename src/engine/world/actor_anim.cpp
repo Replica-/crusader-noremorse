@@ -150,6 +150,12 @@ const ActorAnimProcess* ActorAnimProcess::next_queued() const {
 
 // @orig 1158:1908 1158:2F21
 void ActorAnimProcess::run() {
+    // ANIMPRIM.C 1908: out of the fast area the animation waits, without
+    // sleeping, for the actor to come back (Item_I_inFastArea). Played out
+    // there, its steps found no floor (the glob items only exist in the fast
+    // area): a guard shot out of it stumbled on the first frame of its death
+    // and stayed standing for good (TEST15, docs/bugs.md).
+    if (const Item* item = world_.get(owner()); item && !(item->flags & kItemFastArea)) return;
     // ANIMPRIM.C 1908: nothing happens while the actor falls.
     if (auto r = world_.npc_record(owner()); !r.empty() && (r[npc::kAnimFlags] & 0x02)) {
         sleep(1);

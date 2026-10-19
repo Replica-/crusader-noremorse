@@ -117,7 +117,7 @@ void GravityProcess::run() {
     const bool low_friction = item->flags & kItemLowFriction;
     auto quarter = [](int v) { return (v < 0 ? v + 1 : v) >> 2; };
     auto rnd = [this](int n) {
-        return n <= 1 ? 0 : static_cast<int>(random_range(world_.state.random_state, 0, static_cast<std::uint16_t>(n - 1)));
+        return static_cast<int>(random_range(world_.state.random_state, static_cast<std::uint16_t>(n)));
     };
 
     // 1040:0899: an item that starts falling (or bounces) leaves what rests

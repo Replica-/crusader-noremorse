@@ -15,9 +15,8 @@ constexpr std::array<std::uint16_t, 10> kOverlayShapes = {0x326, 0x31C, 0x31F, 0
 constexpr std::array<int, 10> kOverlayDx = {0x98, 0xA8, 0x59, 0x8B, 0x98, 0xB4, -8, 0x0A, 0x91, 0x5A};
 constexpr std::array<int, 10> kOverlayDy = {0xA2, 0x94, 0x4E, 0x93, 0x53, 0xA3, -0x17, -0x24, 0x3A, 0x4D};
 
-int rnd(World& w, int n) {
-    return n <= 1 ? 0 : static_cast<int>(random_range(w.state.random_state, 0, static_cast<std::uint16_t>(n - 1)));
-}
+// The C library's rand() * n / 0x8000 (core/random.hpp).
+int rnd(World& w, int n) { return crt_rand_below(w.state.crt_rand_state, n); }
 
 // SPRITE_1140_0007: same screen place at z 240, then the shape's offset.
 // @orig 1140:0007
@@ -137,7 +136,7 @@ void impact_sprite(Kernel& kernel, World& world, int fire_type, World::Point at)
     case 0x59B: first = rnd(world, 2) * 4; last = first + 3; break;
     case 0x1D8: {
         static constexpr int kRanges[4][2] = {{0, 4}, {5, 8}, {9, 12}, {13, 16}};
-        const int r = rnd(world, 4);
+        const int r = random_between(world.state.random_state, 0, 3);  // UCMachine::I_rndRange
         first = kRanges[r][0];
         last = kRanges[r][1];
         break;

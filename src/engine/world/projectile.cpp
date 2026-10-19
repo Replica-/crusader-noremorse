@@ -31,11 +31,13 @@ int chebyshev(const World::Point& a, const World::Point& b) {
     return std::max({std::abs(a.x - b.x), std::abs(a.y - b.y), std::abs(a.z - b.z)});
 }
 
-// UCMachine::I_rndRange with signed bounds.
-int random_between(World& w, int lo, int hi) {
-    if (hi < lo) std::swap(lo, hi);
-    return lo + static_cast<int>(random_range(w.state.random_state, 0, static_cast<std::uint16_t>(hi - lo)));
+// UCMachine::I_rndRange (12E0:0293), signed bounds.
+int rnd_between(World& w, int lo, int hi) {
+    return random_between(w.state.random_state, static_cast<std::int16_t>(lo), static_cast<std::int16_t>(hi));
 }
+
+// The C library's rand() * n / 0x8000 (core/random.hpp).
+int crt_rnd(World& w, int n) { return crt_rand_below(w.state.crt_rand_state, n); }
 
 // DeathSilence (CRUSADER_1130_000e, type 0x261): started by the player's
 // death, plays sound 9 three ticks later (1130:00D6 counts the ticks, then
@@ -93,7 +95,7 @@ std::uint8_t projectile_frame(int fire_type, int dir, World& w) {
     case 3: case 9: case 10: return static_cast<std::uint8_t>(dir + 0x11);
     case 5: return static_cast<std::uint8_t>(dir + 1);
     case 6: return 0x46;
-    case 0xE: return static_cast<std::uint8_t>(random_between(w, 0, 1) + 0x47);
+    case 0xE: return static_cast<std::uint8_t>(crt_rnd(w, 5) + 0x47);
     case 0xF: return 0x4C;
     default: return 0;
     }
@@ -200,7 +202,7 @@ Pid fire_weapon(Kernel& kernel, World& world, const AnimDat& anims, ObjId shoote
         }
     }
     const dtable::FireType* dft = dtable::fire_type(damage_type);
-    const int damage = dft ? random_between(world, dft->min_damage(), dft->max_damage()) : 0;
+    const int damage = dft ? rnd_between(world, dft->min_damage(), dft->max_damage()) : 0;
 
     // Muzzle already inside an item (ITEMFIND.C 1874): immediate hit on the
     // first solid item there.
@@ -248,10 +250,10 @@ Pid fire_weapon(Kernel& kernel, World& world, const AnimDat& anims, ObjId shoote
         if (spread_shot) {
             int spread = chebyshev(origin, target) / spread_divisor(world, shooter, fire_type, kernel.ticks());
             spread = std::min(spread, kMaxSpread);
-            target.x += random_between(world, -spread, spread);
-            target.y += random_between(world, -spread, spread);
+            target.x += rnd_between(world, -spread, spread);
+            target.y += rnd_between(world, -spread, spread);
             spread = std::min(spread / 3, kMaxZSpread);
-            target.z = std::clamp(target.z + random_between(world, -spread, spread), 0, kTopZ);
+            target.z = std::clamp(target.z + rnd_between(world, -spread, spread), 0, kTopZ);
         }
         auto projectile = std::make_unique<ProjectileProcess>(world, anims, shooter, origin, target, fire_type, damage,
                                                               projectile_frame(fire_type, dir, world));
@@ -291,8 +293,8 @@ void apply_damage(Kernel& kernel, World& world, const AnimDat& anims, ObjId targ
         const Item* thrown = world.get(target);
         const ShapeInfo* info = thrown ? world.shape_info(thrown->shape) : nullptr;
         if (info && info->weight != 0 && (fire_type == 3 || fire_type == 4)) {
-            const int ry = random_between(world, 10, 25);
-            const int rx = random_between(world, 10, 25);
+            const int ry = rnd_between(world, 10, 25);
+            const int rx = rnd_between(world, 10, 25);
             hurl(kernel, world, target, kThrowX[dir & 0xF] * rx, kThrowY[dir & 0xF] * ry, 0, 2);
         }
         return;
@@ -376,9 +378,9 @@ void apply_damage(Kernel& kernel, World& world, const AnimDat& anims, ObjId targ
                 kernel.fail_processes(1, ActorAnimProcess::kType, 1);
                 do_anim(kernel, world, anims, 1, 0x37, kDirCurrent, 0, false);
             } else if ((item->shape == 0x4E6 || item->shape == 0x338 || item->shape == 0x385 || item->shape == 0x383) &&
-                       random_between(world, 0, 2) == 0) {
+                       rnd_between(world, 0, 2) == 0) {
                 if (auto* attack = dynamic_cast<AttackProcess*>(kernel.find_process(target, AttackProcess::kType)))
-                    attack->set_timed(kernel.ticks(), random_between(world, 0, 9));
+                    attack->set_timed(kernel.ticks(), crt_rnd(world, 10));
             }
         }
         return;
@@ -401,7 +403,7 @@ void apply_damage(Kernel& kernel, World& world, const AnimDat& anims, ObjId targ
         // Blown apart when the damage reaches a fraction of a damage roll of
         // the fire type (3/5 for type 3, 2/5 otherwise) and shape 0x576 fits.
         const dtable::FireType* ft = dtable::fire_type(fire_type);
-        int threshold = ft ? random_between(world, ft->min_damage(), ft->max_damage()) : 0;
+        int threshold = ft ? rnd_between(world, ft->min_damage(), ft->max_damage()) : 0;
         threshold = threshold * (fire_type == 3 ? 3 : 2) / 5;
         if (damage >= threshold) {
             // The original pushes the NPC out of the world for the check
@@ -412,14 +414,14 @@ void apply_damage(Kernel& kernel, World& world, const AnimDat& anims, ObjId targ
                 int turn = world.npc_direction(target);
                 world.set_shape(*item, 0x576);
                 set_pose(world, anims, target, 1);
-                const int spins = random_between(world, 0, 8);
+                const int spins = crt_rnd(world, 9);
                 if (turn & 1) turn = (turn + 1) & 0xF;
                 for (int i = 0; i < spins; ++i) {
-                    turn = (turn + 2 * random_between(world, -1, 1)) & 0xF;
+                    turn = (turn + 2 * rnd_between(world, -1, 1)) & 0xF;
                     do_anim(kernel, world, anims, target, 1, turn, 10000, false);
                 }
                 do_anim(kernel, world, anims, target, 0x12, kDirCurrent, 10000, false);
-                const int falls = random_between(world, 0, 2) + 1;
+                const int falls = crt_rnd(world, 3) + 1;
                 for (int i = 0; i < falls; ++i) do_anim(kernel, world, anims, target, 0x14, kDirCurrent, 10000, false);
                 do_anim(kernel, world, anims, target, 0x17, kDirCurrent, 10000, false);
                 // WPNCACHE_1160_01f0 (frame effects) and the scream: not reproduced.
@@ -456,7 +458,7 @@ void apply_damage(Kernel& kernel, World& world, const AnimDat& anims, ObjId targ
     }
     std::uint16_t action = 0x12;
     if (anims.action(item->shape, 0x14)) {
-        if (random_side) forward = random_between(world, 0, 1) == 0;
+        if (random_side) forward = crt_rnd(world, 2) == 0;
         if (forward) action = 0x14;
     }
     do_anim(kernel, world, anims, target, action, kDirCurrent);
@@ -467,9 +469,9 @@ void apply_damage(Kernel& kernel, World& world, const AnimDat& anims, ObjId targ
         static constexpr int kMan[] = {0x88, 0x8C, 0x8F};     // DETHUM01, 02, 05
         static constexpr int kWoman[] = {0xD8, 0x10};         // FW04, FEMSCRM3
         int cry;
-        if (fire_type == 0xF) cry = kElectrocuted[random_between(world, 0, 1)];
-        else if (!is_female(world, target)) cry = kMan[random_between(world, 0, 2)];
-        else cry = kWoman[random_between(world, 0, 1)];
+        if (fire_type == 0xF) cry = kElectrocuted[crt_rnd(world, 2)];
+        else if (!is_female(world, target)) cry = kMan[crt_rnd(world, 3)];
+        else cry = kWoman[crt_rnd(world, 2)];
         play_once(world, target, cry);
     }
     world.set_broken(*item);  // Item::I_setBroken
@@ -516,8 +518,14 @@ void ProjectileProcess::on_terminate() {
 // @orig 1140:1098 1140:1E09
 void ProjectileProcess::impact(ObjId hit) {
     if (hit != 0) {
+        // An NPC is hit from the shot's direction; an item from a random one
+        // (rand() * 8 / 0x8000, SPRITE_1140_1098), which explosives throw
+        // it along. Not reproduced there: the original only damages an item
+        // that is not fixed (TYPEFLAG byte 0 bit 0) after its hit event.
         const Item* item = world_.get(hit);
-        const int dir = item ? direction_8(pos_.x, pos_.y, item->x, item->y) : 0x10;
+        const int dir = !is_npc_id(hit) ? crt_rnd(world_, 8)
+                        : item          ? direction_8(pos_.x, pos_.y, item->x, item->y)
+                                        : 0x10;
         apply_damage(kernel(), world_, anims_, hit, shooter_, dir, damage_, fire_type_);
     }
     // SPRITE_1140_1e09: splash damage of the fire type around the impact,

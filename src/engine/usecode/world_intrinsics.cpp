@@ -22,17 +22,6 @@ std::uint16_t arg16(Args a, std::size_t pos) {
 
 }  // namespace
 
-// @orig 12D8:04FF
-std::uint16_t random_range(std::uint32_t& state, std::uint16_t lo, std::uint16_t hi) {
-    if (hi < lo) std::swap(lo, hi);
-    // xorshift32: the original LCG (SYSTEM.C random_next) is not reproduced yet.
-    state ^= state << 13;
-    state ^= state >> 17;
-    state ^= state << 5;
-    if (state == 0) state = 1;
-    return static_cast<std::uint16_t>(lo + state % (std::uint32_t{hi} - lo + 1));
-}
-
 // @orig 10E0:0000 10E0:0121
 void set_alert(World& world, bool on) {
     world.state.alert_active = on;
@@ -70,9 +59,10 @@ std::vector<std::uint16_t> register_world_intrinsics(UCMachine& m, World& w) {
 
     // Ultima8Engine::I_getCurrentTimerTick: kernel ticks (60 Hz).
     bind({0x0B4}, [](UCMachine& machine, UCProcess&, Args) { return machine.kernel().ticks(); });
-    // UCMachine::I_rndRange(lo, hi): arguments in reverse push order.
+    // UCMachine::I_rndRange(lo, hi): arguments in reverse push order, signed.
     bind({0x018}, [&s](UCMachine&, UCProcess&, Args a) -> std::uint32_t {
-        return random_range(s.random_state, arg16(a, 0), arg16(a, 2));
+        const auto lo = static_cast<std::int16_t>(arg16(a, 0)), hi = static_cast<std::int16_t>(arg16(a, 2));
+        return static_cast<std::uint16_t>(random_between(s.random_state, lo, hi));
     });
     bind({0x000}, [&s](UCMachine&, UCProcess&, Args) -> std::uint32_t { return s.alert_active; });
     bind({0x0B5}, [&w](UCMachine&, UCProcess&, Args) -> std::uint32_t {

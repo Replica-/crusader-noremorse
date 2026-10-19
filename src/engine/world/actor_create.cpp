@@ -8,7 +8,7 @@ namespace crusader {
 namespace {
 
 int rnd(World& w, int n) {
-    return n <= 1 ? 0 : static_cast<int>(random_range(w.state.random_state, 0, static_cast<std::uint16_t>(n - 1)));
+    return random_range(w.state.random_state, static_cast<std::uint16_t>(n));
 }
 
 void set_word(std::span<std::uint8_t> r, std::size_t at, std::uint16_t v) {

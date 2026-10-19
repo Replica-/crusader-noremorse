@@ -43,6 +43,7 @@ add_library(crusader_core
   src/core/language.cpp
   src/core/typeflags.cpp
   src/core/trig.cpp
+  src/core/random.cpp
   src/core/anim_dat.cpp
   src/core/sound_flex.cpp
   src/core/amf_module.cpp

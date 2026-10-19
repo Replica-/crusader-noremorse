@@ -36,7 +36,7 @@ PathfinderProcess::PathfinderProcess(World& world, const AnimDat& anims, ObjId n
       final_turn_(final_turn) {
     set_owner(npc);
     set_type(kType);
-    mirror_table_ = random_range(world.state.random_state, 0, 1) != 0;
+    mirror_table_ = crt_rand_below(world.state.crt_rand_state, 2) != 0;  // rand() * 2 / 0x8000
     if (const Item* target = world.get(item)) {
         goal_ = world.location(*target);
         const ShapeInfo* info = world.shape_info(target->shape);

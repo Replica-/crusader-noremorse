@@ -9,10 +9,7 @@ namespace crusader {
 namespace {
 
 // random_range (12D8:04FF): a draw in 0..n-1, 0 for n = 0.
-int draw(World& world, int n) {
-    const int r = random_range(world.state.random_state, 0, 0xFFFF);
-    return n > 0 ? r % n : 0;
-}
+int draw(World& world, int n) { return random_range(world.state.random_state, static_cast<std::uint16_t>(n)); }
 
 // Types 1, 3 and 6: a step within the block of `d` frames holding `f`.
 int block_step(int f, int d) { return (f + 1) % d + f - f % d; }

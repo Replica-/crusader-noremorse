@@ -14,6 +14,7 @@
 
 #include "core/flex.hpp"
 #include "core/palette.hpp"
+#include "core/random.hpp"
 #include "core/trig.hpp"
 #include "core/typeflags.hpp"
 #include "engine/process.hpp"
@@ -205,7 +206,10 @@ struct GameState {
     // DS:5FFE, set by intrinsic 0x092 and cleared by 0x094: a cutscene leaves
     // the colour cycling paused when it ends (player field +0xC2).
     bool movie_keeps_cycle_paused = false;
-    std::uint32_t random_state = 1;   // deterministic, seedable
+    // The two generators (core/random.hpp): SYSTEM.C's, saved with the
+    // game, and the C library's rand().
+    std::uint32_t random_state = kRandomStartState;
+    std::uint32_t crt_rand_state = kCrtRandStartState;
     // CameraProcess::I_moveTo / I_getCameraX..Z, usecode units.
     std::int32_t camera_x = 0, camera_y = 0, camera_z = 0;
     // Screen position of the view's top-left corner (DAT_2C41 / 2C43), set

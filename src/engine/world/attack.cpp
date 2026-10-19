@@ -21,11 +21,10 @@ namespace {
 constexpr std::uint16_t kTypesEndedBySetActivity[] = {0x204, ActorAnimProcess::kType, 0x258, 0x257,
                                                       0x255, AttackProcess::kType,    0x25F, 0x25E};
 
-// random_range(n) (SYSTEM.C 12D8:04FF) and the rand() * n / 0x8000 draws:
-// 0..n-1.
-int rnd(World& w, int n) {
-    return n <= 1 ? 0 : static_cast<int>(random_range(w.state.random_state, 0, static_cast<std::uint16_t>(n - 1)));
-}
+// 0..n-1: random_range(n) (SYSTEM.C 12D8:04FF), and the C library's
+// rand() * n / 0x8000 (core/random.hpp), each where the original uses it.
+int rnd(World& w, int n) { return random_range(w.state.random_state, static_cast<std::uint16_t>(n)); }
+int crt_rnd(World& w, int n) { return crt_rand_below(w.state.crt_rand_state, n); }
 
 std::uint16_t word_at(std::span<const std::uint8_t> r, std::size_t at) {
     return static_cast<std::uint16_t>(r[at] | r[at + 1] << 8);
@@ -152,7 +151,7 @@ void set_activity(Kernel& kernel, World& world, const AnimDat& anims, ObjId id, 
         auto process = std::make_unique<AttackProcess>(world, anims, id);
         AttackProcess& attack = *process;
         if (current == 8) attack.set_from_activity_8();
-        if (activity == 0xC) attack.set_timed(kernel.ticks(), rnd(world, 10));
+        if (activity == 0xC) attack.set_timed(kernel.ticks(), crt_rnd(world, 10));
         const Pid pid = kernel.add(std::move(process));
         // Constructor (ATTACK_1110_0000), the parts needing the kernel.
         if (word_at(r, npc::kTarget) != world.state.controlled_npc && world.state.controlled_npc == 1)
@@ -382,11 +381,11 @@ bool AttackProcess::bark(std::uint16_t shape) {
     static constexpr std::uint16_t kShape1B4[] = {0xC7, 0xCA, 0xC9};
     std::int16_t sound = -1;
     switch (shape) {
-    case 0x2FD: case 0x319: sound = static_cast<std::int16_t>(kGuard[rnd(world_, 6)]); break;
-    case 0x384: sound = static_cast<std::int16_t>(kShape384[rnd(world_, 6)]); break;
-    case 0x371: sound = static_cast<std::int16_t>(kShape371[rnd(world_, 4)]); break;
-    case 0x4D1: case 0x528: sound = static_cast<std::int16_t>(kShape4D1[rnd(world_, 4)]); break;
-    case 0x1B4: sound = static_cast<std::int16_t>(kShape1B4[rnd(world_, 3)]); break;
+    case 0x2FD: case 0x319: sound = static_cast<std::int16_t>(kGuard[crt_rnd(world_, 6)]); break;
+    case 0x384: sound = static_cast<std::int16_t>(kShape384[crt_rnd(world_, 6)]); break;
+    case 0x371: sound = static_cast<std::int16_t>(kShape371[crt_rnd(world_, 4)]); break;
+    case 0x4D1: case 0x528: sound = static_cast<std::int16_t>(kShape4D1[crt_rnd(world_, 4)]); break;
+    case 0x1B4: sound = static_cast<std::int16_t>(kShape1B4[crt_rnd(world_, 3)]); break;
     default: break;
     }
     if (sound == -1) return false;
@@ -507,7 +506,7 @@ void AttackProcess::run() {
         } else if (stance_action == 4) {
             if (rnd(world_, 3) == 0) {
                 if (rnd(world_, 3) == 0) {
-                    turn_to(k, world_, anims_, id, rnd(world_, 16), true, !weapon_drawn(world_, id));
+                    turn_to(k, world_, anims_, id, crt_rnd(world_, 16), true, !weapon_drawn(world_, id));
                     return;
                 }
                 if (!weapon_drawn(world_, id)) return;
@@ -548,7 +547,7 @@ void AttackProcess::run() {
     }
 
     if (target_dir == dir) {
-        const int roll = rnd(world_, 10);
+        const int roll = crt_rnd(world_, 10);
         if (!visible) {
             sleep(20);
             return;
@@ -576,7 +575,7 @@ void AttackProcess::run() {
         } else if (bark_timer(now) && (shape == 0x2DF || shape == 0x383)) {
             static constexpr std::uint16_t kShape2DF[] = {0x82, 0x84, 0x85};
             static constexpr std::uint16_t kShape383[] = {0x9B, 0x9C, 0x9D, 0x9E, 0x9F};
-            play_bark(static_cast<std::int16_t>(shape == 0x2DF ? kShape2DF[rnd(world_, 3)] : kShape383[rnd(world_, 5)]));
+            play_bark(static_cast<std::int16_t>(shape == 0x2DF ? kShape2DF[crt_rnd(world_, 3)] : kShape383[crt_rnd(world_, 5)]));
             return;
         }
         if (!weapon_drawn(world_, id)) {

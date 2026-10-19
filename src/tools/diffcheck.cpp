@@ -4,6 +4,7 @@
 // inputs go to the original routines in an emulator, and the results are
 // compared.
 
+#include "core/random.hpp"
 #include "engine/world/gravity.hpp"
 #include "engine/world/world.hpp"
 
@@ -30,6 +31,25 @@ const std::map<std::string, std::pair<std::size_t, Fn>>& functions() {
          {7, [](const auto& a) {
               return std::to_string(closest_direction_in_range(a[0], a[1], a[2], a[3], static_cast<int>(a[4]),
                                                                static_cast<int>(a[5]), static_cast<int>(a[6])));
+          }}},
+        // state low and high words, then the arguments -> result, state words.
+        {"random_range",
+         {3, [](const auto& a) {
+              std::uint32_t state = static_cast<std::uint32_t>(a[0] & 0xFFFF) | static_cast<std::uint32_t>(a[1] & 0xFFFF) << 16;
+              const int r = random_range(state, static_cast<std::uint16_t>(a[2]));
+              return std::to_string(r) + " " + std::to_string(state & 0xFFFF) + " " + std::to_string(state >> 16);
+          }}},
+        {"random_between",
+         {4, [](const auto& a) {
+              std::uint32_t state = static_cast<std::uint32_t>(a[0] & 0xFFFF) | static_cast<std::uint32_t>(a[1] & 0xFFFF) << 16;
+              const int r = random_between(state, static_cast<std::int16_t>(a[2]), static_cast<std::int16_t>(a[3]));
+              return std::to_string(r) + " " + std::to_string(state & 0xFFFF) + " " + std::to_string(state >> 16);
+          }}},
+        {"crt_rand",
+         {2, [](const auto& a) {
+              std::uint32_t state = static_cast<std::uint32_t>(a[0] & 0xFFFF) | static_cast<std::uint32_t>(a[1] & 0xFFFF) << 16;
+              const int r = crt_rand(state);
+              return std::to_string(r) + " " + std::to_string(state & 0xFFFF) + " " + std::to_string(state >> 16);
           }}},
         // from x y z, to x y z, speed, gravity -> the fields in the
         // original's order: gravity range max_range vx vy vz in_reach.

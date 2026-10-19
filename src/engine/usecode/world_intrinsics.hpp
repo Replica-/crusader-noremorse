@@ -10,9 +10,6 @@
 
 namespace crusader {
 
-// Pseudo-random number in [lo, hi] (bounds in either order) from `state`.
-std::uint16_t random_range(std::uint32_t& state, std::uint16_t lo, std::uint16_t hi);
-
 // World::I_setAlertActive / I_clrAlertActive (ITEMFIND.C 10E0:0000 / 0121):
 // the alert flag, and the alarm lights on the map follow it. Shapes 0x21,
 // 0x49, 0x174, 0x271 (frame 0 off, 1 on); the alarm box 0x477 keeps its

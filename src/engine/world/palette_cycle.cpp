@@ -53,7 +53,7 @@ void PaletteCycleProcess::tick() {
             }
         }
         if (kModes[i] == 1 && wrapped) {
-            for (std::uint8_t& v : c) v = static_cast<std::uint8_t>((v + random_range(state_->random_state, 0, 9)) & 0x3F);
+            for (std::uint8_t& v : c) v = static_cast<std::uint8_t>((v + random_range(state_->random_state, 10)) & 0x3F);
         }
         std::copy(c.begin(), c.end(), game.begin() + 3 * kEntries[i]);
     }

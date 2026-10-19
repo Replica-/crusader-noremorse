@@ -455,8 +455,8 @@ void Game::save_game(int slot) {
     flex.add(0, world_->saved_item_table());
     flex.add(1, world_->saved_item_lists());
     flex.add(10, world_->npc_table());
-    // Entry 20 (NPC_10f0_390d): the player block, its random seed taken
-    // just before (DS:7E12; the port's generator, not the original's).
+    // Entry 20 (NPC_10f0_390d): the player block, with the state of
+    // SYSTEM.C's generator taken just before (random_get_seed, DS:7E12).
     const GameState& s = world_->state;
     std::array<std::uint8_t, 0x15> player = s.player_block;
     auto put = [&](std::size_t at, std::uint32_t v, std::size_t width) {
@@ -1063,7 +1063,7 @@ bool Game::function_key(std::uint16_t code) {
         auto help = std::make_unique<HelpScreen>(
             gumps_, help_pictures_,
             [this](int n) {
-                return static_cast<int>(random_range(world_->state.random_state, 0, static_cast<std::uint16_t>(n - 1)));
+                return static_cast<int>(random_range(world_->state.random_state, static_cast<std::uint16_t>(n)));
             },
             [this](int sfx) {
                 if (audio_) audio_->play_sfx(sfx);
@@ -1277,7 +1277,7 @@ void Game::show_weasel(int level) {
     };
     hooks.play_movie = [this](const std::string& name) { play_weasel_movie(name); };
     hooks.random = [this](int n) {
-        return static_cast<int>(random_range(world_->state.random_state, 0, static_cast<std::uint16_t>(n - 1)));
+        return static_cast<int>(random_range(world_->state.random_state, static_cast<std::uint16_t>(n)));
     };
     auto gump = std::make_unique<WeaselGump>(*world_, gumps_, fonts_, std::move(stuff), level, weasel_intro_played_,
                                              !config_.no_weasel, std::move(hooks), kScreenWidth, kScreenHeight);

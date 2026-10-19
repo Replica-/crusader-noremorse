@@ -17,9 +17,10 @@ namespace {
 constexpr std::uint16_t kItemDamaged = 0x0100;   // broken by damage (ITEMDAM)
 constexpr std::uint16_t kItemExploded = 0x0040;  // SPRITE_1150_0891 ran
 
-int rnd(World& w, int n) {
-    return n <= 1 ? 0 : static_cast<int>(random_range(w.state.random_state, 0, static_cast<std::uint16_t>(n - 1)));
-}
+// random_range(n) (SYSTEM.C 12D8:04FF), and the C library's rand() * n /
+// 0x8000 (core/random.hpp), each where the original uses it.
+int rnd(World& w, int n) { return random_range(w.state.random_state, static_cast<std::uint16_t>(n)); }
+int crt_rnd(World& w, int n) { return crt_rand_below(w.state.crt_rand_state, n); }
 
 }  // namespace
 
@@ -127,7 +128,7 @@ void explode(Kernel& kernel, World& world, const AnimDat& anims, ObjId id, int s
     static constexpr std::uint16_t kSmall[] = {0x31C, 0x31F};
     static constexpr std::uint16_t kMedium[] = {0x326, 0x320, 0x321};
     static constexpr std::uint16_t kLarge[] = {0x324, 0x323, 0x325};
-    const std::uint16_t sprite = size == 0 ? kSmall[rnd(world, 2)] : size == 1 ? kMedium[rnd(world, 3)] : kLarge[rnd(world, 3)];
+    const std::uint16_t sprite = size == 0 ? kSmall[crt_rnd(world, 2)] : size == 1 ? kMedium[crt_rnd(world, 3)] : kLarge[crt_rnd(world, 3)];
     const ShapeInfo* info = world.shape_info(item->shape);
     const World::Point centre{item->x - (info ? info->footpad_x * 8 : 0), item->y - (info ? info->footpad_y * 8 : 0),
                               (item->z & 0xFF) + (info ? info->footpad_z * 4 : 0)};

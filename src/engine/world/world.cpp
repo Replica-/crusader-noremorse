@@ -346,7 +346,15 @@ std::size_t World::load_saved_items(const FlexArchive& save) {
             }
         }
     }
-
+    // An NPC of another map, in no cell, is kept off the map (ITEMCACH_10b0_04c9 unlinks it).
+    auto in_cell = [&](ObjId id) {
+        return std::ranges::any_of(cells_, [&](const auto& c) { return std::ranges::find(c, id) != c.end(); });
+    };
+    for (auto& [id, item] : items_) {
+        if (is_npc_id(id) && item.map_number != 0 && item.map_number != current_map_ && !(item.flags & kItemContained) && !in_cell(id)) {
+            item.off_map = true;
+        }
+    }
 
     // Entry 10: NPC table.
     const auto npcs = save.entry(10);
@@ -369,6 +377,9 @@ std::size_t World::load_saved_items(const FlexArchive& save) {
  = static_cast<std::uint16_t>(player[0x0B] | player[0x0C] << 8);
     if (player.size() >= 0x11) state.keycards = read_u32(player, 0x0D);
     if (player.size() >= 0x13) state.battery = static_cast<std::uint16_t>(player[0x11] | player[0x12] << 8);
+    // +4: the state of SYSTEM.C's generator (DS:7E12), set back by
+    // NPC_10f0_38dd through random_seed.
+    if (player.size() >= 0x08) state.random_state = random_seed(read_u32(player, 0x04));
 
     // Array 9 links items in lists: map grid cells (heads in entry 1), the
     // pending stack, and container contents, which start at the container's
