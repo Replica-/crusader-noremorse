@@ -49,6 +49,9 @@ public:
     // Port addition, written when switched off: "autosave", the game saves
     // itself (slot Game::kAutoSave) at the key moments of a mission.
     bool autosave = true;
+    // Port addition, written only when set: "togglerun", the Shift key switches
+    // running on and off at each press instead of running while it is held.
+    bool toggle_run = false;
     // Port addition, written when not 0: "viewzoom", the largest pixel size
     // (whole multiple) of the native view; 0 takes the biggest that fits the
     // window, 1 gives the finest picture.

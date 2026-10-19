@@ -12,7 +12,8 @@
 // (GameConfig::native_resolution): the view fills the screen, and its "zoom" row
 // (GameConfig::view_zoom): auto, then pixels of 1 to 4 screen pixels, and the
 // "sauvegarde auto" toggle (GameConfig::autosave): the game saves itself at the
-// key moments of a mission (Game::autosave).
+// key moments of a mission (Game::autosave), and the "course toggle" toggle
+// (GameConfig::toggle_run): Shift switches running on and off at each press.
 //
 // Look: the screen cleared, a small red framed window (colour 0x57) in the
 // middle, the title with the "+" icon in green, and one row per entry
@@ -42,7 +43,7 @@ void draw_plus_icon(Surface8& screen, int x, int y, int size, std::uint8_t colou
 class EnhancementsScreen {
 public:
     static constexpr int kPadRow = 0, kFollowRow = 1, kDirectionalRow = 2, kAimRow = 3, kNativeRow = 4,
-                              kZoomRow = 5, kAutosaveRow = 6, kBackRow = 7, kRows = 8;
+                              kZoomRow = 5, kAutosaveRow = 6, kRunRow = 7, kBackRow = 8, kRows = 9;
     static constexpr int kFont = 14;
 
     struct Rect {

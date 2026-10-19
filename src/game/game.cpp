@@ -934,7 +934,20 @@ void Game::on_key(const GameKeyEvent& e) {
             return;
         }
     }
-    combat_->handle_key(e);  // the Controller: movement, then fire keys
+    // Port addition (GameConfig::toggle_run): a Shift press flips running, and
+    // the Controller sees Shift held exactly while it is on.
+    GameKeyEvent ev = e;
+    if (config_.toggle_run) {
+        if ((e.scancode == 0x2A || e.scancode == 0x36) && !e.extended) {
+            if (e.pressed && e.count <= 1) run_toggled_ = !run_toggled_;
+            return;
+        }
+        ev.flags = static_cast<std::uint16_t>((e.flags & ~(kLeftShift | kRightShift)) |
+                                              (run_toggled_ ? kLeftShift : 0));
+    } else {
+        run_toggled_ = false;
+    }
+    combat_->handle_key(ev);  // the Controller: movement, then fire keys
     // WORLD_13e8_14b4 (World_on_key): Alt+X first, whatever the view is
     // doing (the item selection too). Escape opens the menu, except in
     // "stasis" (DS:5FFB, GameState::cru_stasis) and when DS:5FFC is not 1

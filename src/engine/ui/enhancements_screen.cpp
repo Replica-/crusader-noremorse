@@ -91,7 +91,7 @@ void EnhancementsScreen::draw(Surface8& screen) const {
         draw_rounded_box(screen, r.x0, r.y0, r.x1, r.y1, -1, static_cast<std::uint8_t>(tint));
         const TextWriter writer(*fonts_, kFont);
         if (row == kFollowRow || row == kDirectionalRow || row == kAimRow || row == kNativeRow || row == kZoomRow ||
-            row == kAutosaveRow) {
+            row == kAutosaveRow || row == kRunRow) {
             // The name on the left, its state on the right.
             std::string name;
             bool on = false;
@@ -108,6 +108,9 @@ void EnhancementsScreen::draw(Surface8& screen) const {
             } else if (row == kAutosaveRow) {
                 name = tr("SAUVEGARDE AUTO", "AUTOSAVE");
                 on = config_->autosave;
+            } else if (row == kRunRow) {
+                name = tr("COURSE PERMANENTE", "TOGGLE RUN");
+                on = config_->toggle_run;
             } else if (row == kNativeRow) {
                 name = tr("RESOLUTION NATIVE", "NATIVE RESOLUTION");
                 on = config_->native_resolution;
@@ -140,6 +143,8 @@ void EnhancementsScreen::activate(int row) {
         config_->view_zoom = (config_->view_zoom + 1) % (std::clamp(config_->view_zoom_limit, 1, 4) + 1);
     } else if (row == kAutosaveRow) {
         config_->autosave = !config_->autosave;
+    } else if (row == kRunRow) {
+        config_->toggle_run = !config_->toggle_run;
     } else if (row == kNativeRow) {
         config_->native_resolution = !config_->native_resolution;
     } else if (row == kAimRow) {
