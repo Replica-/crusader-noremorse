@@ -1,4 +1,6 @@
-# Crusader: No Remorse — DECOMP
+# Crusader: No Remorse — QOL, Enhancements, OpenGL
+
+> **Credit:** this project is a fork of the original decompilation / reimplementation by sebsebseb1982, [crusader-no-remorse-decomp](https://github.com/sebsebseb1982/crusader-no-remorse-decomp). All of the engine work it is built on is theirs; this fork adds quality-of-life changes, enhancements and an OpenGL-rendered layer on top of it (see *Recent improvements* below).
 
 <img src="docs/images/cover.png" alt="Cover" width="300">
 
