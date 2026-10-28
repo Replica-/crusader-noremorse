@@ -1927,8 +1927,7 @@ void Game::update_walk_path() {
         const Item* me = world_->get(1);
         if (!target || !me) {
             stop_walk_path();
-        } else if (std::max(std::abs(me->x - target->x), std::abs(me->y - target->y)) <= 64 &&
-                   item_in_range(*world_, path_item_)) {
+        } else if (item_in_range(*world_, path_item_)) {  // in reach is enough: stop walking and use it
             const ObjId id = path_item_;
             stop_walk_path();
             interact_item(*world_, id);
