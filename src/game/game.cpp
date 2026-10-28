@@ -25,6 +25,7 @@
 #include "engine/world/click_path.hpp"
 #include "engine/world/collision.hpp"
 #include "engine/world/projectile.hpp"
+#include "engine/world/loadout.hpp"
 #include "engine/world/pathfind.hpp"
 #include "engine/world/player_commands.hpp"
 #include "engine/world/actor_anim.hpp"
@@ -201,6 +202,8 @@ void Game::set_config(GameConfig config) {
 
 // @orig 1028:03F6
 void Game::reset_world() {
+    map_seen_.clear();  // a new level: nothing seen yet
+    map_ = MapOverlay{};
     // The sounds of the previous world go with it.
     if (audio_) {
         audio_->stop_all();
@@ -602,8 +605,8 @@ void Game::draw_autosave_icon(Surface8& screen) {
             floppy_.push_back(best);
         }
     }
-    // Top right, each pixel of the icon doubled.
-    const int x0 = kScreenWidth - kFloppyWidth * kFloppyScale - kFloppyMargin, y0 = kFloppyMargin;
+    // Top left, each pixel of the icon doubled.
+    const int x0 = kFloppyMargin, y0 = kFloppyMargin;
     for (int y = 0; y < kFloppyHeight * kFloppyScale; ++y) {
         for (int x = 0; x < kFloppyWidth * kFloppyScale; ++x) {
             const std::uint8_t index = floppy_[static_cast<std::size_t>(y / kFloppyScale * kFloppyWidth + x / kFloppyScale)];
@@ -662,7 +665,7 @@ void Game::set_globals(std::span<const std::uint8_t> bytes) {
 }
 
 // @orig 1028:0000
-void Game::new_game(int difficulty) {
+void Game::new_game(int difficulty, int map, bool all_items) {
     reset_world();
     // FLAG_1410_0051(0): the globals' initial values.
     {
@@ -698,10 +701,11 @@ void Game::new_game(int difficulty) {
         add_item_cru(*world_, world_->pop_to_coords(p.x, p.y, p.z), false);
     }
     if (world_->create(0x598, 0)) world_->pop_to_container(1);
+    pending_grant_ = all_items;  // given once the player is on the map (see update)
 
     // CameraProcess::I_setCenterOn(1), then the first mission.
     s.camera_target = 1;
-    start_teleport_to_egg(*kernel_, *world_, 1, kTeleportStartEgg, true);
+    start_teleport_to_egg(*kernel_, *world_, map > 0 ? map : 1, kTeleportStartEgg, true);
     s.status_bar_visible = true;
     apply_status_bar_mouse_range();
 }
@@ -750,9 +754,37 @@ void Game::update(std::uint32_t elapsed_us) {
         mouse_buttons_ = static_cast<std::uint16_t>(mouse_buttons_ | 1);
         mouse_queue_.press(false, cursor_.x(), cursor_.y(), 1);
     }
+    if (pending_holster_ && world_) {
+        if (!weapon_drawn(*world_, 1) || world_->is_dead(1) || world_->state.controlled_npc != 1) pending_holster_ = false;
+        else if (!actor_busy(*kernel_, 1)) {
+            do_anim(*kernel_, *world_, anims_, 1, 0xB, kDirCurrent);
+            pending_holster_ = false;
+        }
+    }
+    if (pending_draw_ && world_) {
+        if (weapon_drawn(*world_, 1) || world_->is_dead(1) || world_->state.controlled_npc != 1) pending_draw_ = false;
+        else if (!actor_busy(*kernel_, 1)) {
+            do_anim(*kernel_, *world_, anims_, 1, 7, kDirCurrent);
+            pending_draw_ = false;
+        }
+    }
+    update_demo();
+    if (pending_wheel_ && !pending_grant_ && world_ && !modal() && !movie_ && !world_->state.avatar_in_stasis && world_->get(1) && !world_->get(1)->off_map) {
+        const int kind = pending_wheel_ - 1;
+        pending_wheel_ = 0;
+        open_wheel(kind);
+    }
+    if (pending_grant_ && world_) {
+        if (const Item* p = world_->get(1); p && !p->off_map && p->map_number != 0 && !modal()) {
+            pending_grant_ = false;
+            grant_all_items();
+        }
+    }
     update_walk_path();
     update_path_preview();
-    if (fpv_on_) update_fpv();
+    if (world_ && !modal() && !movie_) update_seen();
+    if (map_.on && (map_.polys.empty() || ++map_refresh_ % 40 == 0)) build_map();  // (also when opened before the level was there)
+    else if (map_.on) update_map_markers();
     if (world_ && !modal() && !movie_) update_blood(static_cast<float>(elapsed_us) / 1e6f);
     if (world_ && free_pointer() && !world_->state.avatar_in_stasis && world_->state.controlled_npc == 1) {
         // A movement key held: never stop to turn (that interrupts the walk and
@@ -760,7 +792,7 @@ void Game::update(std::uint32_t elapsed_us) {
         const bool moving = w_held_ || remap_mod_[0x1F] || remap_mod_[0x1E] || remap_mod_[0x20] ||
                             remap_mod_[0x10] || remap_mod_[0x12];
         if (moving) {
-        } else if (!path_active_ && !world_->state.aim.active && !in_combat_stance(*world_, 1)) {
+        } else if (!path_active_ && !pending_draw_ && !world_->state.aim.active && !weapon_drawn(*world_, 1)) {
             // Weapon away: turn on the spot to face the pointer (when not busy).
             face_screen_point(*kernel_, *world_, anims_, pointer_x_, pointer_y_);
         } else if (!path_active_) {
@@ -1036,6 +1068,28 @@ void Game::on_key(const GameKeyEvent& e) {
         else if (const Palette* p = screen_->palette()) world_->state.screen_palette = *p;
         return;
     }
+    // Keyboard and mouse mode: Tab opens the weapon wheel, I the item wheel; while one is open the arrows and Enter pick, Escape or the
+    // same key closes it, and the other keys do nothing (their releases still go through, so no key stays held).
+    if (config_.keyboard_mouse) {
+        const bool tab = e.scancode == 0x0F && !e.extended, eye = e.scancode == 0x17 && !e.extended;
+        if (wheel_.on) {
+            if (e.pressed && e.count <= 1) {
+                const int n = static_cast<int>(wheel_.entries.size());
+                const bool right = e.extended && (e.scancode == 0x4D || e.scancode == 0x50);
+                const bool left = e.extended && (e.scancode == 0x4B || e.scancode == 0x48);
+                if (e.scancode == 0x01 && !e.extended) close_wheel();
+                else if (tab) { if (wheel_.kind == 0) close_wheel(); else open_wheel(0); }
+                else if (eye) { if (wheel_.kind == 1) close_wheel(); else open_wheel(1); }
+                else if (n > 0 && right) wheel_.hover = (wheel_.hover + 1) % n;
+                else if (n > 0 && left) wheel_.hover = wheel_.hover <= 0 ? n - 1 : wheel_.hover - 1;
+                else if (e.scancode == 0x1C || e.scancode == 0x39) choose_wheel_entry();
+            }
+            if (e.pressed) return;
+        } else if (tab || eye) {
+            if (e.pressed && e.count <= 1) open_wheel(tab ? 0 : 1);
+            if (e.pressed) return;
+        }
+    }
     // CRUSADER_1138_0896: '=' and '-' (scancodes 0x0D, 0x0C) step the music
     // volume, up to 0x30.
     if (e.pressed && audio_ && (e.scancode == 0x0D || e.scancode == 0x0C)) {
@@ -1085,13 +1139,9 @@ void Game::on_key(const GameKeyEvent& e) {
         }
         return;
     }
-    // Keyboard and mouse mode: F2 shows / hides the first person inset (instead of the options screen, which the
-    // Escape menu still opens).
-    if (config_.keyboard_mouse && e.scancode == 0x3C && !e.extended) {
-        if (e.pressed && e.count <= 1) {
-            fpv_on_ = !fpv_on_;
-            if (!fpv_on_) fpv_.clear();
-        }
+    // Keyboard and mouse mode: M shows / hides the mission map.
+    if (config_.keyboard_mouse && e.scancode == 0x32 && !e.extended) {
+        if (e.pressed && e.count <= 1) set_map(!map_.on);
         return;
     }
     combat_->handle_key(ev);  // the Controller: movement, then fire keys
@@ -1540,16 +1590,34 @@ void Game::mouse_button(int button, bool pressed, int x, int y) {
             mouse_queue_.release(false, cursor_.x(), cursor_.y(), 0);
             mouse_buttons_ = static_cast<std::uint16_t>(mouse_buttons_ & ~1);
             right_firing_ = false;
-        } else if (!right_drew_ && world_->state.controlled_npc == 1 && in_combat_stance(*world_, 1) &&
-                   !actor_busy(*kernel_, 1)) {
-            do_anim(*kernel_, *world_, anims_, 1, 0xB, kDirCurrent);  // a tap on a drawn weapon: put it away
+        } else if (!right_drew_ && world_->state.controlled_npc == 1 && (weapon_drawn(*world_, 1) || right_cancel_)) {
+            // A tap on a drawn weapon puts it away. Half way through drawing it, the draw is stopped and the holster plays at
+            // once, without waiting for the draw to finish.
+            if (right_cancel_) {
+                kernel_->fail_processes(1, ActorAnimProcess::kType, 1);
+                do_anim(*kernel_, *world_, anims_, 1, 0xB, kDirCurrent);
+            } else if (!actor_busy(*kernel_, 1)) {
+                do_anim(*kernel_, *world_, anims_, 1, 0xB, kDirCurrent);
+            }
         }
+        right_cancel_ = false;
         return;
     }
     if (pressed && free_pointer() && world_->state.controlled_npc == 1 && !world_->state.avatar_in_stasis &&
         !world_->state.selection.active) {
-        const bool drawn = in_combat_stance(*world_, 1);
-        if (button == 1 && !drawn) {
+        // The draw animation counts as drawn: pressing then puts the weapon back at once.
+        const ActorAnimProcess* now_anim = current_anim(*kernel_, 1);
+        const bool drawing = now_anim && now_anim->action() == 7;
+        const bool drawn = weapon_drawn(*world_, 1) || drawing;
+        if (button == 1) {
+            // With the weapon out, a left click puts it away first (half way through drawing it, at once) and then does what a click does
+            // with it away: walk to the spot, or walk up to the item and use it.
+            if (drawn) {
+                if (drawing) kernel_->fail_processes(1, ActorAnimProcess::kType, 1);
+                if (drawing || !actor_busy(*kernel_, 1)) do_anim(*kernel_, *world_, anims_, 1, 0xB, kDirCurrent);
+                else pending_holster_ = true;
+                pending_draw_ = false;
+            }
             stop_walk_path();
             // A second click close to the first, soon after: run there.
             const std::uint32_t now = kernel_->ticks();
@@ -1573,9 +1641,19 @@ void Game::mouse_button(int button, bool pressed, int x, int y) {
         if (button == 2) {
             stop_walk_path();
             right_drew_ = false;
-            if (!drawn && !actor_busy(*kernel_, 1)) {
-                do_anim(*kernel_, *world_, anims_, 1, 7, kDirCurrent);
+            right_cancel_ = drawing;  // a tap while the weapon is being drawn puts it away at once
+            if (pending_draw_) {  // a draw still waiting for the character: a second click cancels it
+                pending_draw_ = false;
                 right_drew_ = true;
+                right_consumed_ = true;
+                right_down_at_ = kernel_->ticks();
+                return;
+            }
+            if (!drawn) {
+                // The character is often in the middle of a turn or a step: the draw waits for it instead of being lost.
+                right_drew_ = true;
+                if (!actor_busy(*kernel_, 1)) do_anim(*kernel_, *world_, anims_, 1, 7, kDirCurrent);
+                else pending_draw_ = true;
             }
             right_consumed_ = true;
             right_down_at_ = kernel_->ticks();
@@ -1658,6 +1736,8 @@ void Game::draw_window(Surface8& screen, int x0, int y0, Draw&& draw) {
 
 // @orig 1188:19C1
 void Game::render(Surface8& screen, RenderStats* stats) {
+    view_w_ = screen.width;
+    view_h_ = screen.height;
     // A screen larger than 640 x 480 (native resolution) shows more of the
     // scene around the camera; everything else stays 640 x 480, centred.
     const bool large = screen.width >= kScreenWidth && screen.height >= kScreenHeight &&
@@ -1686,8 +1766,8 @@ void Game::render(Surface8& screen, RenderStats* stats) {
         return;
     }
     render_view(screen, stats);
+    draw_autosave_icon(screen);  // the top left corner of the whole screen
     draw_window(screen, ui_x_, ui_y_, [this](Surface8& s) {
-        draw_autosave_icon(s);
         if (message_) message_->draw(s);
         if (screen_) screen_->draw(s);
         cursor_.draw(s);
@@ -1726,6 +1806,7 @@ void Game::render_view(Surface8& screen, RenderStats* stats) {
         if (sprite.shape == 0) continue;
         const Shape* shape = shapes_.get(sprite.shape);
         if (!shape || sprite.frame >= shape->frames().size()) continue;
+        if (sprite.shape == kCrosshairShape && world_->state.aim.free) continue;  // replaced by the presenter's ring and dot
         shape->frames()[sprite.frame].draw(screen, ((sprite.x - sprite.y) >> 1) - s.view_left,
                                            ((sprite.x + sprite.y) >> 2) - sprite.z - s.view_top);
     }
@@ -1834,7 +1915,7 @@ void Game::update_walk_path() {
             do_anim(*kernel_, *world_, anims_, 1, 0x27, kDirCurrent);
         } else if (!r.empty() && (r[npc::kFlags13] & 0x04)) {
             do_anim(*kernel_, *world_, anims_, 1, 0x2E, kDirCurrent);
-        } else if (in_combat_stance(*world_, 1)) {
+        } else if (weapon_drawn(*world_, 1)) {
             do_anim(*kernel_, *world_, anims_, 1, 4, kDirCurrent);
         } else if (last == 1 || last == 0x24) {
             do_anim(*kernel_, *world_, anims_, 1, 0, kDirCurrent);
@@ -1929,7 +2010,7 @@ void Game::update_walk_path() {
     }
     const bool has_weapon = !record.empty() && (record[npc::kWeapon] | record[npc::kWeapon + 1]) != 0;
     // (with the weapon drawn a walk is the combat step, action 0x24)
-    const int walk = in_combat_stance(*world_, 1) || world_->state.aim.active ? 0x24 : 1;
+    const int walk = weapon_drawn(*world_, 1) || world_->state.aim.active ? 0x24 : 1;
     const int run_action = (running || run_start) ? (has_weapon ? 0x30 : 3) : 0x22;
     // A step of the animation moves the NPC far (a run several cells) along its direction, and a blocked
     // step makes it stop dead. So the step is simulated, frame by frame as the engine will play it, and
@@ -2102,7 +2183,27 @@ namespace crusader {
 // @orig none: port-only pointer of the keyboard and mouse mode
 Game::PointerOverlay Game::pointer_overlay() const {
     PointerOverlay out;
-    if (!world_ || !free_pointer() || (world_->state.aim.active && world_->state.aim.crosshair != -1)) return out;
+    if (!world_ || !config_.keyboard_mouse) return out;
+    if (map_.on || wheel_.on) {  // the map or a wheel takes the mouse: just the arrow
+        out.show = true;
+        out.x = static_cast<float>(pointer_x_);
+        out.y = static_cast<float>(pointer_y_);
+        return out;
+    }
+    if (!free_pointer()) return out;
+    if (world_->state.aim.active && world_->state.aim.crosshair != -1) {
+        // The weapon is drawn: the mouse is a target cursor (a ring and a dot with four short lines), as big as the picture
+        // the game used to draw there (2.2 times). It follows the mouse itself, whatever the crosshair is doing.
+        out.show = true;
+        out.x = static_cast<float>(pointer_x_);
+        out.y = static_cast<float>(pointer_y_);
+        out.ring = 30.0f;
+        if (const Shape* cursor = const_cast<Game*>(this)->shapes_.get(kCrosshairShape); cursor && !cursor->frames().empty()) {
+            const ShapeFrame& f = cursor->frames()[0];
+            out.ring = static_cast<float>(std::max(f.width, f.height)) * 2.2f;
+        }
+        return out;
+    }
     out.show = true;
     out.x = static_cast<float>(pointer_x_);
     out.y = static_cast<float>(pointer_y_);
@@ -2157,8 +2258,9 @@ void Game::debug_path_trace(int dx, int dy, bool draw_weapon, int frames) {
     path_run_ = std::getenv("PATH_TRACE_RUN") != nullptr;  // (the trace has no Shift key)
     path_stuck_ = 0;
     path_last_ = start;
+    std::printf("player carries %zu items; map %d\n", player->contents.size(), static_cast<int>(player->map_number));
     std::printf("start (%d,%d,%d) goal (%d,%d) stance=%d free_pointer=%d\n", start.x, start.y, start.z, path_goal_.x, path_goal_.y,
-                in_combat_stance(*world_, 1) ? 1 : 0, free_pointer() ? 1 : 0);
+                weapon_drawn(*world_, 1) ? 1 : 0, free_pointer() ? 1 : 0);
     for (int i = 0; i < frames; ++i) {
         // (the goal stays where it was: no pointer to follow)
         {  // the pointer is kept over the goal, wherever the camera has gone
@@ -2178,6 +2280,16 @@ void Game::debug_path_trace(int dx, int dy, bool draw_weapon, int frames) {
                         path_active_ ? 1 : 0, path_status().c_str());
         }
     }
+    {
+        const auto weapons = carried_weapons(*world_), items = carried_items(*world_);
+        int slotted = 0;
+        for (const auto& w : weapons) slotted += w.slot != 0 ? 1 : 0;
+        std::printf("loadout: %zu weapons (%d in slots), %zu items\n", weapons.size(), slotted, items.size());
+        for (const auto& w : weapons) std::printf("  weapon 0x%X slot %d active %d rounds %d  %s\n", w.shape, w.slot, w.active ? 1 : 0, w.quality, dtable::weapon_name(w.shape));
+        for (const auto& i : items) std::printf("  item 0x%X slot %d active %d x%d\n", i.shape, i.slot, i.active ? 1 : 0, i.quality);
+    }
+    std::printf("END: weapon_drawn=%d in_combat=%d in_combat_stance=%d last_anim=0x%X busy=%d\n", weapon_drawn(*world_, 1) ? 1 : 0,
+                in_combat(*world_, 1) ? 1 : 0, weapon_drawn(*world_, 1) ? 1 : 0, last_anim(), actor_busy(*kernel_, 1) ? 1 : 0);
 }
 
 }  // namespace crusader
@@ -2289,40 +2401,42 @@ void Game::draw_text_at(Surface8& screen, int x, int y, const std::string& text)
     TextWriter(fonts_, 4).print(screen, x, y, text);
 }
 
-// @orig none: port-only first person inset: a ray cast for each column, as Wolfenstein-style views do, over the
-// same collision the bullets use (the sweep of a bullet), from the character's eyes along its facing.
-void Game::update_fpv() {
-    constexpr int kColumns = 96;
-    constexpr float kFov = 1.5708f;  // 90 degrees
-    constexpr float kRange = 700.0f;
-    fpv_.clear();
-    const Item* me = world_ ? world_->get(1) : nullptr;
-    if (!me || modal() || movie_) return;
-    const int dir = world_->npc_direction(1) & 0xF;
-    const ShapeInfo* info = world_->shape_info(me->shape);
-    const World::Point from{static_cast<std::uint16_t>(me->x - (info ? info->footpad_x : 0) * 8),
-                            static_cast<std::uint16_t>(me->y - (info ? info->footpad_y : 0) * 8), (me->z & 0xFF) + 36};
-    // The facing: direction `dir`'s step vector on the map (the 16 directions are 22.5 degrees apart).
-    const float facing = std::atan2(static_cast<float>(kDirectionDy[dir]), static_cast<float>(kDirectionDx[dir]));
-    fpv_.resize(kColumns);
-    for (int i = 0; i < kColumns; ++i) {
-        const float rel = (static_cast<float>(i) / (kColumns - 1) - 0.5f) * kFov;
-        const float a = facing + rel;
-        const World::Point to{from.x + static_cast<int>(std::cos(a) * kRange), from.y + static_cast<int>(std::sin(a) * kRange), from.z};
-        const SweepResult r = sweep(*world_, kProjectileShape, 1, from, to, kSweepNoGround);
-        FpvColumn& c = fpv_[static_cast<std::size_t>(i)];
-        if (r.blocker == 0) continue;  // nothing in range: the column stays empty
-        const float dx = static_cast<float>(r.end.x - from.x), dy = static_cast<float>(r.end.y - from.y);
-        c.distance = std::max(8.0f, std::sqrt(dx * dx + dy * dy) * std::cos(rel));  // no fish-eye
-        const Item* hit = world_->get(r.blocker);
-        c.enemy = hit && is_npc_id(r.blocker) && !world_->is_dead(r.blocker);
-        const unsigned shape = hit ? hit->shape : 0;
-        const float shade = std::clamp(1.15f - c.distance / 800.0f, 0.22f, 1.0f);
-        int cr = 70 + static_cast<int>((shape * 53) % 90), cg = 70 + static_cast<int>((shape * 37) % 80), cb = 80 + static_cast<int>((shape * 29) % 70);
-        if (c.enemy) cr = 235, cg = 70, cb = 55;
-        c.r = static_cast<std::uint8_t>(cr * shade);
-        c.g = static_cast<std::uint8_t>(cg * shade);
-        c.b = static_cast<std::uint8_t>(cb * shade);
+
+}  // namespace crusader
+
+namespace crusader {
+}  // namespace crusader
+
+namespace crusader {
+
+// Every weapon with its ammunition and every inventory item, one of each (two clips of ammunition), all in the player's hands. The
+// game's slots hold five weapons and a few items; the rest are stashed in his contents, and the weapon and item wheels (Tab, I)
+// bring them into the slots (see loadout.hpp).
+// @orig none: port-only, for testing
+void Game::grant_all_items() {
+    const Item* p = world_->get(1);
+    if (!p) return;
+    auto give = [&](std::uint16_t shape, int count, std::uint16_t stash_quality) {
+        for (int i = 0; i < count; ++i) {
+            if (!world_->create(shape, 0)) return;
+            if (may_add_item(*world_, shape)) {
+                add_item_cru(*world_, world_->pop_to_coords(p->x, p->y, p->z), false);
+            } else {
+                stash_new_item(*world_, stash_quality);  // no slot for it: it is carried, out of any slot
+            }
+        }
+    };
+    std::vector<std::uint16_t> given;
+    for (std::uint16_t shape = 1; shape < 0x800; ++shape) {
+        if (dtable::weapon_index(shape) != 0) {
+            give(shape, 1, dtable::ammo_shape(shape) ? dtable::clip_size(shape) : 0);
+            if (const std::uint16_t ammo = dtable::ammo_shape(shape); ammo != 0 && std::find(given.begin(), given.end(), ammo) == given.end()) {
+                given.push_back(ammo);
+                give(ammo, 2, 2);
+            }
+        } else if (dtable::inventory_item_index(shape) != 0) {
+            give(shape, 1, 1);
+        }
     }
 }
 

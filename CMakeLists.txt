@@ -9,6 +9,10 @@ if(MSVC)
   add_compile_options(/W4 /permissive- /utf-8)
 else()
   add_compile_options(-Wall -Wextra -Wpedantic)
+  if(MINGW)
+    # A self-contained exe: the MinGW runtime (libgcc, libstdc++, winpthread) is linked in, so it runs without the MSYS2 bin folder on PATH.
+    add_link_options(-static)
+  endif()
 endif()
 
 # SDL2: use the system package when available (Linux distros), otherwise build it.
@@ -36,6 +40,7 @@ add_library(crusader_core
   src/core/xform.cpp
   src/core/weapon_overlay.cpp
   src/core/font.cpp
+  src/core/font_atlas.cpp
   src/core/game_config.cpp
   src/core/data_info.cpp
   src/core/iso_image.cpp
@@ -85,6 +90,7 @@ add_library(crusader_engine
   src/engine/world/actor_create.cpp
   src/engine/world/pathfind.cpp
   src/engine/world/click_path.cpp
+  src/engine/world/loadout.cpp
   src/engine/world/player_commands.cpp
   src/engine/world/item_anim.cpp
   src/engine/world/item_damage.cpp
@@ -116,6 +122,7 @@ add_library(crusader_engine
   src/engine/ui/credits.cpp
   src/engine/ui/gamepad_screen.cpp
   src/engine/ui/enhancements_screen.cpp
+  src/engine/ui/controls_screen.cpp
   src/engine/ui/movie_player.cpp
   src/engine/world/render.cpp)
 target_link_libraries(crusader_engine PUBLIC crusader_core)
@@ -125,11 +132,14 @@ add_library(crusader_platform
   src/platform/sdl_presenter.cpp
   src/platform/sdl_input.cpp
   src/platform/sdl_gamepad.cpp
-  src/platform/sdl_audio.cpp)
+  src/platform/sdl_audio.cpp
+  src/platform/sdl_map.cpp
+  src/platform/sdl_wheel.cpp
+  src/platform/sdl_text.cpp)
 target_link_libraries(crusader_platform PUBLIC crusader_engine ${SDL2_TARGET})
 
 # The game without platform code (testable headless), and its executable.
-add_library(crusader_game src/game/game.cpp)
+add_library(crusader_game src/game/game.cpp src/game/game_map.cpp src/game/game_wheel.cpp)
 target_link_libraries(crusader_game PUBLIC crusader_engine)
 
 if(WIN32)

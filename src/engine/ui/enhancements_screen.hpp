@@ -25,6 +25,7 @@
 #include "core/font.hpp"
 #include "core/game_config.hpp"
 #include "core/surface.hpp"
+#include "engine/ui/controls_screen.hpp"
 #include "engine/ui/gamepad_screen.hpp"
 
 #include <cstdint>
@@ -43,7 +44,7 @@ void draw_plus_icon(Surface8& screen, int x, int y, int size, std::uint8_t colou
 class EnhancementsScreen {
 public:
     static constexpr int kPadRow = 0, kFollowRow = 1, kDirectionalRow = 2, kAimRow = 3, kNativeRow = 4,
-                              kZoomRow = 5, kAutosaveRow = 6, kRunRow = 7, kKeyMouseRow = 8, kRollRow = 9, kBackRow = 10, kRows = 11;
+                              kZoomRow = 5, kAutosaveRow = 6, kRunRow = 7, kKeyMouseRow = 8, kRollRow = 9, kControlsRow = 10, kBackRow = 11, kRows = 12;
     static constexpr int kFont = 14;
 
     struct Rect {
@@ -77,6 +78,7 @@ private:
     int focus_ = 0;
     bool closed_ = false;
     std::unique_ptr<GamepadScreen> pad_;
+    std::unique_ptr<ControlsScreen> controls_;
 };
 
 }  // namespace crusader

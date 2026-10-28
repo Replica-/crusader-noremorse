@@ -101,13 +101,23 @@ int main(int argc, char** argv) {
     bool classic = false;  // --classic: the original 640 x 480 view, stretched to the window
     bool skip_movies = false;  // --skip-movies: no cutscenes or intro videos
     bool show_fps = true;  // the fps / renderer counter, top right (--no-fps hides it)
+    std::string shot_file;     // --shot FILE [--shot-after SECONDS]: save the picture of the window (a BMP) and quit
+    double shot_after = 6.0;
+    double pointer_fx = -1, pointer_fy = -1;  // --pointer FX FY: the pointer kept at this fraction of the window
+    bool demo_blood = false, demo_hit_bar = false, demo_hover = false;
+    int demo_walk_dx = 0, demo_walk_dy = 0;
+    int start_wheel = 0;  // --wheel 0 / 1: start with the weapon / item wheel open
+    int mission = 1;         // --mission N: with --new-game, start mission N
+    bool all_items = false;  // --all-items: with --new-game, every weapon, ammunition and item
+    bool start_map = false;  // --map: start with the mission map open
     bool path_test = false, path_gun = false;  // --path-test dx dy [--gun]: developer trace
+    bool start_gun = false;  // --gun: start with the weapon drawn
     int path_dx = 0, path_dy = 0;
     bool keyboard_mouse = false;  // --keyboard-mouse: the keyboard and mouse mode, whatever CRUSADER.CFG says
     double gamma = 1.0;
     std::int32_t scroll_x = 0, scroll_y = 0;
     bool walk = false, fire = false, menu = false, menu_load = false, menu_credits = false, menu_options = false, menu_gamepad = false,
-         menu_new = false;
+         menu_new = false, controls_screen = false;
     std::string png, wav, movie;
     int use = 0;
     MovieKind movie_kind = MovieKind::kCutscene;
@@ -126,11 +136,22 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--classic") == 0) classic = true;
         else if (std::strcmp(argv[i], "--skip-movies") == 0) skip_movies = true;
         else if (std::strcmp(argv[i], "--no-fps") == 0) show_fps = false;
+        else if (std::strcmp(argv[i], "--shot") == 0 && i + 1 < argc) shot_file = argv[++i];  // save the picture and quit
+        else if (std::strcmp(argv[i], "--shot-after") == 0 && i + 1 < argc) shot_after = std::stod(argv[++i]);
+        else if (std::strcmp(argv[i], "--pointer") == 0 && i + 2 < argc) { pointer_fx = std::stod(argv[++i]); pointer_fy = std::stod(argv[++i]); }
+        else if (std::strcmp(argv[i], "--demo-blood") == 0) demo_blood = true;
+        else if (std::strcmp(argv[i], "--demo-hitbar") == 0) demo_hit_bar = true;
+        else if (std::strcmp(argv[i], "--demo-hover") == 0) demo_hover = true;
+        else if (std::strcmp(argv[i], "--demo-walk") == 0 && i + 2 < argc) { demo_walk_dx = std::stoi(argv[++i]); demo_walk_dy = std::stoi(argv[++i]); }
+        else if (std::strcmp(argv[i], "--wheel") == 0 && i + 1 < argc) start_wheel = std::stoi(argv[++i]) + 1;
+        else if (std::strcmp(argv[i], "--mission") == 0 && i + 1 < argc) mission = std::stoi(argv[++i]);
+        else if (std::strcmp(argv[i], "--all-items") == 0) all_items = true;
+        else if (std::strcmp(argv[i], "--map") == 0) start_map = true;
         else if (std::strcmp(argv[i], "--path-test") == 0 && i + 2 < argc) {  // dx dy [gun]: trace of W towards a point
             path_test = true;
             path_dx = std::stoi(argv[++i]);
             path_dy = std::stoi(argv[++i]);
-        } else if (std::strcmp(argv[i], "--gun") == 0) path_gun = true;
+        } else if (std::strcmp(argv[i], "--gun") == 0) path_gun = start_gun = true;
         else if (std::strcmp(argv[i], "--keyboard-mouse") == 0) keyboard_mouse = true;
         else if (std::strcmp(argv[i], "--size") == 0 && i + 1 < argc) {  // with --png: the screen's size, e.g. 960x540
             std::sscanf(argv[++i], "%dx%d", &png_width, &png_height);
@@ -149,6 +170,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--menu-credits") == 0) menu = menu_credits = true;
         else if (std::strcmp(argv[i], "--menu-options") == 0) menu = menu_options = true;
         else if (std::strcmp(argv[i], "--menu-gamepad") == 0) menu = menu_options = menu_gamepad = true;
+        else if (std::strcmp(argv[i], "--controls-screen") == 0) controls_screen = true;
         else if (std::strcmp(argv[i], "--menu-new") == 0) menu = menu_new = true;
         else if (std::strcmp(argv[i], "--scroll") == 0 && i + 2 < argc) {
             scroll_x = std::stoi(argv[++i]);
@@ -174,9 +196,13 @@ int main(int argc, char** argv) {
         // (the movies, then the menu). The tools (--png, --movie) keep
         // loading save 1.
         const bool start_up = !new_game && !save_given && png.empty() && movie.empty();
-        if (new_game) game.new_game(0);
+        if (new_game) game.new_game(0, mission, all_items);
         else if (start_up) game.start_up();
         else game.load_save(save);
+        if (start_map) game.set_map(true);
+        if (start_wheel) game.request_wheel(start_wheel - 1);
+        game.set_demo(demo_blood, demo_hit_bar, demo_walk_dx, demo_walk_dy, demo_hover);
+        if (start_gun && !path_test) game.request_draw();
         if (path_test) {
             for (int i = 0; i < 60; ++i) game.update(kFrameUs);
             game.debug_path_trace(path_dx, path_dy, path_gun, 240);
@@ -233,6 +259,7 @@ int main(int argc, char** argv) {
                 game.key(0x1C, false, true, 0, 0x0D);
                 game.key(0x1C, false, false, 0);
             }
+            if (controls_screen) game.show_controls_screen();
             game.render(screen, &stats);
             write_png(png, screen, game.palette());
             std::printf("%s\n", diagnostics(game, stats, 0).c_str());
@@ -247,6 +274,7 @@ int main(int argc, char** argv) {
         game.set_config_file(data / "CRUSADER.CFG");
         SdlPresenter presenter(kWindowTitle, Game::kScreenWidth, Game::kScreenHeight, 2, fullscreen);
         presenter.set_gamma(gamma);
+        presenter.set_font(game.font_atlas());
         if (!classic && !fullscreen) presenter.maximize();
         // Native resolution: the game is drawn at the largest whole fraction of
         // the window that is still 640 x 480 or more, so the pixels keep their
@@ -286,6 +314,7 @@ int main(int argc, char** argv) {
         double tick_rate = 0;                     // game-loop (kernel) ticks per second
         std::uint32_t tick_mark = 0;
         std::uint64_t tick_mark_at = SDL_GetPerformanceCounter();
+        bool shot_requested = false;
         bool running = true;
         while (running) {
             const std::uint64_t pass_start = SDL_GetPerformanceCounter();
@@ -305,6 +334,33 @@ int main(int argc, char** argv) {
                 if (auto k = translate_key(ev)) {
                     if (pad_debug) std::printf("[key] sdl keyboard %02x%s %s\n", k->scancode, k->extended ? " ext" : "", k->pressed ? "down" : "up");
                     game.key(k->scancode, k->extended, k->pressed, k->flags, k->ascii);
+                }
+                // The weapon / item wheel takes the mouse while it is open: move to pick, left click to choose, right click to close.
+                if (game.wheel_overlay().on) {
+                    if (auto m = translate_mouse(ev)) {
+                        game.set_pointer(m->x, m->y);  // the arrow follows the mouse
+                        if (m->kind == MouseEvent::Kind::Move) game.wheel_mouse(0, m->x, m->y);
+                        else if (m->kind == MouseEvent::Kind::ButtonDown && m->button == 1) game.wheel_mouse(1, m->x, m->y);
+                        else if (m->kind == MouseEvent::Kind::ButtonDown && m->button == 2) game.wheel_mouse(2, m->x, m->y);
+                        continue;
+                    }
+                    if (ev.type == SDL_MOUSEWHEEL) continue;
+                }
+                // The mission map (M) takes the mouse while it is open: drag to pan, wheel to zoom, middle click to recentre.
+                if (game.map_overlay().on) {
+                    static int map_mx = 0, map_my = 0;
+                    if (ev.type == SDL_MOUSEWHEEL) {
+                        game.map_mouse(3, map_mx, map_my, ev.wheel.y);
+                        continue;
+                    }
+                    if (auto m = translate_mouse(ev)) {
+                        map_mx = m->x, map_my = m->y;
+                        game.set_pointer(m->x, m->y);  // the arrow follows the mouse over the map
+                        if (m->kind == MouseEvent::Kind::Move) game.map_mouse(0, m->x, m->y, 0);
+                        else if (m->button == 1) game.map_mouse(m->kind == MouseEvent::Kind::ButtonDown ? 1 : 2, m->x, m->y, 0);
+                        else if (m->button == 3 && m->kind == MouseEvent::Kind::ButtonDown) game.map_mouse(4, m->x, m->y, 0);
+                        continue;
+                    }
                 }
                 if (auto m = translate_mouse(ev)) {
                     if (relative_mouse) {
@@ -342,6 +398,7 @@ int main(int argc, char** argv) {
                 game.mouse_move(game.cursor().x() + dx, game.cursor().y() + dy);
             }
 
+            if (pointer_fx >= 0 && !demo_hover) game.set_pointer(static_cast<int>(pointer_fx * screen.width), static_cast<int>(pointer_fy * screen.height));
             game.update(static_cast<std::uint32_t>(seconds * 1'000'000));
             if (game.quit_requested()) running = false;
             // (keyboard and mouse mode: the pointer is absolute, not relative)
@@ -373,27 +430,19 @@ int main(int argc, char** argv) {
                 char line[128];
                 std::snprintf(line, sizeof line, "%.0f FPS  %s (%s)", fps, presenter.software_renderer() ? "SW" : "HW",
                               presenter.renderer_name().c_str());
-                game.draw_top_right_text(screen, line, 0, game.fpv_on() ? 212 : 0);
+                const float rx = static_cast<float>(screen.width) - 8.0f;
+                presenter.text(rx, 18.0f, line, 255, 255, 255, true);
                 // The game loop itself: the time its update and draw take (what it could run at without
                 // waiting for the display), and the game's own tick rate.
                 std::snprintf(line, sizeof line, "LOOP %.1f ms (%.0f/s max)  TICKS %.0f/s", work_ms,
                               work_ms > 0 ? 1000.0 / work_ms : 0.0, tick_rate);
-                game.draw_top_right_text(screen, line, 1, game.fpv_on() ? 212 : 0);
-                if (const std::string path = game.path_status(); !path.empty()) game.draw_top_right_text(screen, path, 2, game.fpv_on() ? 212 : 0);
+                presenter.text(rx, 34.0f, line, 210, 235, 255, true);
+                if (const std::string path = game.path_status(); !path.empty()) presenter.text(rx, 50.0f, path, 120, 255, 255, true);
             }
-            if (game.fpv_on()) game.draw_text_at(screen, screen.width - 208, 8 + 200 + 16, "FIRST PERSON  F2");
             presenter.set_debug_path(game.path_debug_screen());
-            {
-                // The first person inset (F2): a square in the top right corner.
-                constexpr float kSize = 200.0f;
-                std::vector<SdlPresenter::FpvColumn> columns;
-                if (game.fpv_on()) {
-                    for (const Game::FpvColumn& c : game.fpv_columns()) {
-                        columns.push_back({c.distance > 0 ? std::min(1.0f, 19000.0f / c.distance / kSize) : 0.0f, c.r, c.g, c.b});
-                    }
-                }
-                presenter.set_fpv(static_cast<float>(screen.width) - kSize - 8.0f, 8.0f, kSize, std::move(columns));
-            }
+            presenter.set_map(game.map_overlay().on ? &game.map_overlay() : nullptr);
+            presenter.set_wheel(game.wheel_overlay().on ? &game.wheel_overlay() : nullptr);
+            presenter.add_wheel_icons(game.take_wheel_icons());
             {
                 std::vector<SdlPresenter::BloodDot> dots;
                 for (const Game::BloodDotScreen& b : game.blood_screen()) dots.push_back({b.x, b.y, b.x0, b.y0, b.size, b.alpha, b.kind});
@@ -401,7 +450,7 @@ int main(int argc, char** argv) {
             }
             {
                 const Game::PointerOverlay p = game.pointer_overlay();
-                presenter.set_pointer(p.show, p.x, p.y, p.hover);
+                presenter.set_pointer(p.show, p.x, p.y, p.hover, p.ring);
             }
             {
                 std::vector<SdlPresenter::HitBar> bars;
@@ -412,7 +461,12 @@ int main(int argc, char** argv) {
                 const Game::LaserScreen laser = game.laser_screen();
                 presenter.set_laser(laser.on, laser.hit, laser.x0, laser.y0, laser.x1, laser.y1, laser.spread_x, laser.spread_y);
             }
+            if (!shot_file.empty() && SDL_GetTicks() / 1000.0 >= shot_after && !shot_requested) {
+                presenter.request_screenshot(shot_file);
+                shot_requested = true;
+            }
             presenter.present(screen, game.palette());
+            if (shot_requested && presenter.screenshot_done()) running = false;
         }
         print_faults(game);
         SDL_Quit();

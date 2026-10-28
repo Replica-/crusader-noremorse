@@ -4,8 +4,11 @@
 // (palette_write_hw): the game draws into a Surface8, this converts it with the
 // current palette and scales it to the window.
 
+#include "core/font_atlas.hpp"
 #include "core/palette.hpp"
 #include "core/surface.hpp"
+#include "engine/world/map_overlay.hpp"
+#include "engine/world/wheel_overlay.hpp"
 
 #include <array>
 #include <cstdint>
@@ -45,23 +48,29 @@ public:
     void set_hit_bars(std::vector<HitBar> bars) { hit_bars_ = std::move(bars); }
     // The mouse arrow, drawn on the graphics card (not from the game's palette), with a small green / red dot
     // beside it when it is over something that can be used (hover 1 in reach, 2 too far).
-    void set_pointer(bool show, float x, float y, int hover) { pointer_ = {show, x, y, hover}; }
+    // With `ring` above 0 it is the target cursor of a drawn weapon instead: a ring, a dot and four short lines, `ring` pixels across.
+    void set_pointer(bool show, float x, float y, int hover, float ring = 0) { pointer_ = {show, x, y, hover, ring}; }
     // Blood (view pixels): a streak while it flies (kind 0), a puff of mist (1), a flat splat on the floor (2).
     struct BloodDot {
         float x, y, x0, y0, size, alpha;
         int kind;
     };
     void set_blood(std::vector<BloodDot> dots) { blood_ = std::move(dots); }
-    // The first person inset: a square of `size` view pixels at (x, y), with one column per entry (height as a fraction of
-    // the square, 0 for an empty column, and its colour); an empty list hides it.
-    struct FpvColumn {
-        float height;
-        std::uint8_t r, g, b;
-    };
-    void set_fpv(float x, float y, float size, std::vector<FpvColumn> columns) {
-        fpv_x_ = x, fpv_y_ = y, fpv_size_ = size;
-        fpv_ = std::move(columns);
-    }
+    // Text drawn by the graphics card over everything, in any colour, with the game's font (`y` is the baseline).
+    // `text()` queues it for the next present().
+    // Saves what the next present() draws (the whole window, real pixels) as a BMP, for the README's pictures; done() once saved.
+    void request_screenshot(const std::string& path) { shot_path_ = path; shot_done_ = false; }
+    bool screenshot_done() const { return shot_done_; }
+    void set_font(const FontAtlas& atlas);
+    void text(float x, float y, const std::string& s, std::uint8_t r, std::uint8_t g, std::uint8_t b, bool right_aligned = false,
+              float scale = 1.0f);
+    float text_width(const std::string& s, float scale = 1.0f) const;
+    // The mission map over everything (null or off hides it).
+    void set_map(const MapOverlay* map) { map_ = map; }
+    // The weapon / item wheel over the game (null or off hides it).
+    void set_wheel(const WheelOverlay* wheel) { wheel_ = wheel; }
+    // The pictures of the wheel entries (each handed over once, by id).
+    void add_wheel_icons(std::vector<WheelIcon> icons);
     // Desktop fullscreen on / off (Alt+Enter).
     void toggle_fullscreen();
     // Size of the window's drawing area in real pixels.
@@ -89,14 +98,32 @@ private:
     void draw_hit_bars();
     void draw_pointer();
     void draw_blood();
-    void draw_fpv();
-    std::vector<FpvColumn> fpv_;
-    float fpv_x_ = 0, fpv_y_ = 0, fpv_size_ = 0;
+    const MapOverlay* map_ = nullptr;
+    void draw_map();
+    void draw_wheel();
+    const WheelOverlay* wheel_ = nullptr;
+    struct IconTexture {
+        SDL_Texture* texture = nullptr;
+        int width = 0, height = 0;
+    };
+    std::vector<IconTexture> wheel_icons_;
+    void draw_texts();
+    std::string shot_path_;
+    bool shot_done_ = false;
+    struct TextItem {
+        float x, y, scale;
+        std::string s;
+        std::uint8_t r, g, b;
+    };
+    std::vector<TextItem> texts_;
+    FontAtlas atlas_;
+    SDL_Texture* font_tex_ = nullptr;
     std::vector<BloodDot> blood_;
     struct Pointer {
         bool show = false;
         float x = 0, y = 0;
         int hover = 0;
+        float ring = 0;
     } pointer_;
 };
 

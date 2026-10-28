@@ -157,9 +157,14 @@ void pick_point(const World& world, int screen_x, int screen_y, ObjId ignore, st
         const World::Point at{x0 + 2 * h, y0 + 2 * h, h};
         ObjId solid = 0;
         if (!box_free(world, 1, 1, 1, mask, at, &solid, ignore) && solid != 0) {
-            x = static_cast<std::int16_t>(at.x);
-            y = static_cast<std::int16_t>(at.y);
-            z = static_cast<std::uint8_t>(h);
+            // The steps are two units; the surface may be one higher.
+            int top = h;
+            ObjId above = 0;
+            const World::Point up{x0 + 2 * (h + 1), y0 + 2 * (h + 1), h + 1};
+            if (!box_free(world, 1, 1, 1, mask, up, &above, ignore) && above != 0) top = h + 1;
+            x = static_cast<std::int16_t>(x0 + 2 * top);
+            y = static_cast<std::int16_t>(y0 + 2 * top);
+            z = static_cast<std::uint8_t>(top);
             return;
         }
     }
@@ -429,7 +434,10 @@ std::optional<LaserBeam> laser_beam(const World& world, const AnimDat& anims) {
         target.y = beam.from.y + dy * 1500 / longest;
     }
     const SweepResult r = sweep(world, kProjectileShape, id, beam.from, target, kSweepNoGround);
-    beam.to = r.blocker != 0 ? r.end : target;
+    // The dot is where the crosshair is, unless something is clearly in the way before it (the target itself lies on a
+    // surface, which the sweep reports as a hit a unit or two short of it).
+    const bool short_of_target = r.blocker != 0 && std::max(std::abs(r.end.x - target.x), std::abs(r.end.y - target.y)) > 24;
+    beam.to = short_of_target ? r.end : target;
     // "Hit": cut short well before the target (the target itself is on a surface).
     beam.hit = r.blocker != 0 && std::max(std::abs(beam.to.x - target.x), std::abs(beam.to.y - target.y)) > 24;
     // The weapon's accuracy at that distance, as fire_weapon will apply it.

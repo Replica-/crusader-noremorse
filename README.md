@@ -21,16 +21,35 @@ This repository contains **no game files**: you need your own copy of the origin
   - Zoom: choose the pixel size of the native view (Auto, or ×1 to ×4); ×1 gives the finest picture and the widest view
   - Autosave: the game saves itself when you pick up a keycard, open a door with a keycard or a code, open a chest with a code, start a level, and after each cutscene of the mission (a floppy disk shows in the corner). It uses its own slot, separate from your saves; load it from the last row of the load screen or press **F6**
 - Fullscreen toggle: press **Alt+Enter** at any time to switch between windowed and fullscreen.
-- **Keyboard and Mouse** mode (on by default; toggle it in Options → Enhancements):
-  - **W / S** walk forward / backward, **A / D** step left / right, **Q / E** roll left / right. With the weapon drawn, **W** steps forward instead of walking. A step or roll pressed during another animation is done as soon as the character is free.
-  - A free mouse pointer: the character faces it, and a drawn weapon aims exactly where it points, with no snapping to targets and no limit to a circle around the player. The weapon keeps its normal accuracy, so shots still scatter. The old targeting reticle (the **R** key) is gone.
-  - The crosshair is a dot with four lines that move apart as the shot gets less accurate, so it shows where the bullets can land. A soft red laser dot marks where the aim ends, and stops on whatever is in the way.
-  - **Left click** fires with the weapon drawn. With the weapon away it uses or picks up the item under the pointer (the pointer turns into a target symbol over such items, green when in reach, red when too far), or walks to the spot, so clicking never draws the weapon.
-  - **Right click** draws the weapon, and a tap puts it away again. Holding it fires. The right button no longer walks. **Space** is back to its original role.
-  - Click-to-walk uses an A* path search that goes round obstacles; hold **Shift** (or switch run on) to run along it. The route is drawn as a cyan debug line, including while you walk or run with the keys.
-  - A slim health bar appears above whatever you hit, for a few seconds.
+- **Keyboard and Mouse** mode (on by default; toggle it in Options → Enhancements). Options → Enhancements → *Keyboard + Mouse Controls* shows a picture of the keyboard and mouse with every shortcut:
+
+  ![Keyboard and mouse controls screen](docs/images/features/controls.png)
+
+  - **W** walks to the mouse cursor along an A* route that goes round obstacles (hold **Shift** to run). **A / D** step left / right, **S** steps back, **Q / E** roll left / right of the screen (the *Directional Roll* option), **C** kneels and stands up.
+  - A free mouse pointer: the character faces it, and a drawn weapon aims exactly where it points, with no snapping to targets. The weapon keeps its normal accuracy, so shots still scatter. The old targeting reticle (the **R** key) is gone.
+  - **Right click** draws the weapon, and a tap puts it away again (even half way through the draw). Holding it fires. **Left click** with the weapon away walks to the spot (double click runs) or walks up to an item and uses it; with the weapon out it puts the weapon away first and then does the same. **Space** fires as before.
+  - Once the weapon is drawn, the mouse becomes a thin ring with a dot and four short lines, and a red reticle shows where the bullets can land: its lines move apart as the shot gets less accurate, and a laser dot stops on whatever is in the way.
+
+    ![Target cursor and reticle](docs/images/features/crosshair.png)
+
+  - Over something you can use or pick up, the pointer gets a small dot: green when it is in reach, red when too far.
+
+    ![Pointer over a usable item](docs/images/features/hover-cursor.png)
+
+  - **Tab** opens a **weapon wheel** and **I** an **item wheel**, with the game's own icons. Pick with the mouse or the arrows and Enter. Weapons and items the game's slots cannot hold (the test missions give everything) are carried "stashed" and swap in when chosen.
+
+    ![Weapon wheel](docs/images/features/weapon-wheel.png)
+    ![Item wheel](docs/images/features/item-wheel.png)
+
+  - **M** opens the mission map: the part of the level you have seen, in the game's isometric orientation, zoomed on you. The mouse wheel zooms, dragging pans, middle click recentres. It marks you, enemies, key items, weapons and ammo, things to use, level triggers, doors (amber) and force fields (violet).
+
+    ![Mission map](docs/images/features/mission-map.png)
+
+  - Blood sprays from shot humans, away from the shooter, and the splats stay on the floor; whatever an enemy carried falls out of it when it dies. A slim health bar appears above whatever you hit.
+
+    ![Blood](docs/images/features/blood.png)
 - The game asks SDL for its OpenGL renderer (and falls back if it is not available). A small overlay in the top-right corner shows the FPS, hardware or software mode, the game loop's time per pass and tick rate (`--no-fps` hides it).
-- New command-line options: `--skip-movies` skips all videos, `--keyboard-mouse` forces the Keyboard and Mouse mode on for that run, `--no-fps` hides the overlay.
+- New command-line options: `--skip-movies` skips all videos, `--keyboard-mouse` forces the Keyboard and Mouse mode on for that run, `--no-fps` hides the overlay, and with `--new-game` `--mission N` starts map N (mission 2 is map 3) and `--all-items` gives every weapon, its ammunition and every inventory item (stashed, see the wheels). `--shot FILE [--shot-after SECONDS]` saves a picture of the window and quits.
 
 ## Planned improvements
 

@@ -35,6 +35,9 @@
 #include "engine/world/avatar_mover.hpp"
 #include "engine/world/combat_control.hpp"
 #include "core/weapon_overlay.hpp"
+#include "core/font_atlas.hpp"
+#include "engine/world/map_overlay.hpp"
+#include "engine/world/wheel_overlay.hpp"
 #include "engine/world/render.hpp"
 #include "engine/world/world.hpp"
 #include "engine/world/world_mouse.hpp"
@@ -43,6 +46,7 @@
 #include <deque>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -112,7 +116,9 @@ public:
     // MainActor::I_addItemCru) and a container (0x598) in his inventory.
     // Then a teleport to egg 0x1E of map 1 (SHAPHAND_1098_011f) loads the
     // first mission when the kernel runs.
-    void new_game(int difficulty);
+    // `map` is the mission to start (1 is the first); `all_items` puts every weapon, its ammunition and every inventory
+    // item in the player's hands (for testing).
+    void new_game(int difficulty, int map = 1, bool all_items = false);
 
     // Advances the clock by `elapsed_us` and runs one kernel slice. While the
     // menu is open, only the processes that run at any level do.
@@ -127,6 +133,8 @@ public:
     // Port addition: a line of small text against the top-right corner (the fps counter).
     void draw_top_right_text(Surface8& screen, const std::string& text, int line = 0, int inset = 0) const;
     void draw_text_at(Surface8& screen, int x, int y, const std::string& text) const;
+    // The game's small font as an atlas for the presenter's hardware text.
+    FontAtlas font_atlas() const { return build_font_atlas(fonts_, 4); }
     // The laser sight of a drawn weapon in view pixels (see laser_beam), for the presenter.
     struct LaserScreen {
         bool on = false, hit = false;
@@ -153,21 +161,37 @@ public:
         int kind;
     };
     std::vector<BloodDotScreen> blood_screen() const;
-    // First person inset (F2 in the keyboard and mouse mode): what a ray cast from the character's eyes meets,
-    // one column per ray (distance along the view, and a colour), or nothing while it is off.
-    struct FpvColumn {
-        float distance = 0;  // along the view axis, map units; 0 when nothing is in range
-        std::uint8_t r = 0, g = 0, b = 0;
-        bool enemy = false;
-    };
-    const std::vector<FpvColumn>& fpv_columns() const { return fpv_; }
-    bool fpv_on() const { return fpv_on_; }
+    // Mission map (M in the keyboard and mouse mode, or --map): the level seen from above in the isometric orientation, the
+    // walls and floors as diamonds, with markers for you, enemies, key items, weapons and ammunition, things to use, and
+    // triggers. Built when it opens; the markers follow the game.
+    const MapOverlay& map_overlay() const { return map_; }
+    void set_map(bool on);
+    void request_draw() { pending_draw_ = true; }
+    // Opens the keyboard and mouse controls screen on its own (for the README picture; the game reaches it from the options).
+    void show_controls_screen();
+    // Developer flags for the README pictures: blood bursts, a health bar, a walk with its route, the pointer over a usable item.
+    void set_demo(bool blood, bool hit_bar, int walk_dx, int walk_dy, bool hover_item) {
+        demo_blood_ = blood, demo_hit_bar_ = hit_bar, demo_walk_dx_ = walk_dx, demo_walk_dy_ = walk_dy, demo_hover_ = hover_item;
+        demo_walk_pending_ = walk_dx != 0 || walk_dy != 0;
+    }
+    // The weapon wheel (Tab) and the item wheel (I): a ring to choose from. `wheel_mouse`: kind 0 move, 1 left click (chooses), 2 right
+    // click (closes). `wheel_key` handles Escape, Tab, I, the arrows and Enter while a wheel is open.
+    const WheelOverlay& wheel_overlay() const { return wheel_; }
+    void request_wheel(int kind) { pending_wheel_ = kind + 1; }  // (--wheel) open it as soon as the player can act
+    void open_wheel(int kind);
+    void close_wheel();
+    // The icons of the entries the presenter has not been given yet (handed over once).
+    std::vector<WheelIcon> take_wheel_icons() { return std::move(wheel_icon_uploads_); }
+    void wheel_mouse(int kind, int x, int y);
+    // The mouse while the map is open: kind 0 move, 1 left down, 2 left up, 3 wheel (`wheel` notches), 4 recentre on you.
+    void map_mouse(int kind, int x, int y, int wheel);
     // The free pointer (keyboard and mouse mode), drawn by the presenter as a clean arrow: `hover` is 0 over
     // nothing, 1 over an item in reach, 2 over one that is too far. Not shown while the crosshair is the pointer.
     struct PointerOverlay {
         bool show = false;
         float x = 0, y = 0;
         int hover = 0;
+        float ring = 0;  // above 0: draw the target cursor of a drawn weapon this many pixels across, not the arrow
     };
     PointerOverlay pointer_overlay() const;
     // Where the 640 x 480 area starts in the last rendered screen; the mouse
@@ -371,6 +395,10 @@ private:
     bool right_consumed_ = false;         // the right button is held and handled here: its release is dropped
     bool right_drew_ = false;             // ... and its press drew the weapon (so its release does not put it away)
     bool right_firing_ = false;           // ... and it has been held long enough to fire
+    bool pending_draw_ = false;           // a right click wants the weapon drawn as soon as the character is free
+    bool right_cancel_ = false;           // the right button went down while the weapon was being drawn: a tap puts it away at once
+    bool pending_holster_ = false;        // a left click with the weapon out: it is put away as soon as the character is free
+    // (--gun) draws the weapon at the start.
     std::uint32_t right_down_at_ = 0;
     // Click-to-walk (keyboard and mouse mode, weapon away): replanned at every step.
     bool path_active_ = false;
@@ -406,9 +434,31 @@ private:
     std::vector<BloodParticle> blood_;
     std::uint32_t blood_seed_ = 12345;
     void update_blood(float seconds);
-    bool fpv_on_ = false;
-    std::vector<FpvColumn> fpv_;
-    void update_fpv();
+    bool pending_grant_ = false;
+    void grant_all_items();
+    MapOverlay map_;
+    std::vector<std::uint16_t> map_rare_triggers_;  // trigger shapes that occur only a few times: the ones that matter
+    void build_map();
+    void update_map_markers();
+    WheelOverlay wheel_;
+    int pending_wheel_ = 0;
+    bool demo_blood_ = false, demo_hit_bar_ = false, demo_hover_ = false, demo_walk_pending_ = false;
+    int demo_walk_dx_ = 0, demo_walk_dy_ = 0;
+    std::uint32_t demo_blood_at_ = 0;
+    void update_demo();
+    std::map<std::uint32_t, int> wheel_icon_ids_;  // (gump shape, frame) -> texture id
+    int wheel_icon_count_ = 0;
+    std::vector<WheelIcon> wheel_icon_uploads_;
+    int wheel_icon(int gump_shape, int frame);
+    void choose_wheel_entry();
+    std::vector<bool> map_seen_;  // 128 map-unit cells the view has shown (the map shows only those)
+    int map_seen_frame_ = 0;
+    int map_refresh_ = 0;
+    bool map_dragging_ = false;
+    int map_last_x_ = 0, map_last_y_ = 0;
+    int view_w_ = 640, view_h_ = 480;  // size of the last frame, for the map panel
+    void update_seen();
+    bool seen_at(float wx, float wy) const;
     void start_walk_to_pointer();
     void start_walk_to_item(ObjId item);
     void update_walk_path();

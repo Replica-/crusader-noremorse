@@ -104,13 +104,24 @@ void next_weapon(Kernel& kernel, World& world, const AnimDat& anims) {
     const int current = world.npc_word(kPlayer, npc::kWeapon);
     if (world.state.controlled_npc != kPlayer || current == 0) return;
     const int slot = find_slot(world, current, +1, kFirstWeaponSlot, kLastWeaponSlot);
-    if (slot == 0) return;
+    select_weapon_slot(kernel, world, anims, slot);
+}
+
+// @orig none: port-only (the weapon wheel); the body of next_weapon
+void select_weapon_slot(Kernel& kernel, World& world, const AnimDat& anims, int slot) {
+    if (slot < kFirstWeaponSlot || slot > kLastWeaponSlot || world.npc_equip(kPlayer, slot) == 0) return;
     world.set_npc_word(kPlayer, npc::kWeapon, static_cast<std::uint16_t>(slot));
     // The pose of the new weapon (CRUSADER_1138_32a8), 0x40 for none.
     std::uint16_t pose = 0x40;
     if (kneeling(world)) pose = weapon_keeps_actions(world) ? 0x2E : 0x2F;
     else if (!idle(world)) pose = weapon_keeps_actions(world) ? 4 : 0x25;
     if (pose != 0x40 && !actor_busy(kernel, kPlayer)) set_pose(world, anims, kPlayer, pose);
+}
+
+// @orig none: port-only (the item wheel)
+void select_item_slot(World& world, int slot) {
+    if (slot < kFirstItemSlot || slot > kLastItemSlotDown || world.npc_equip(kPlayer, slot) == 0) return;
+    world.set_npc_word(kPlayer, npc::kActiveItem, static_cast<std::uint16_t>(slot));
 }
 
 // @orig 13E8:0D5F

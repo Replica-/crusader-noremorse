@@ -74,6 +74,10 @@ bool player_may_act(const World& world);
 
 void previous_weapon(World& world);
 void next_weapon(Kernel& kernel, World& world, const AnimDat& anims);
+// Port addition (the weapon and item wheels): the weapon / item in `slot` becomes the active one (the weapon with the pose of the
+// new weapon, as next_weapon).
+void select_weapon_slot(Kernel& kernel, World& world, const AnimDat& anims, int slot);
+void select_item_slot(World& world, int slot);
 void previous_item(World& world);
 void next_item(World& world);
 void use_active_item(World& world);
