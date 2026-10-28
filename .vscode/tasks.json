@@ -1,0 +1,17 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build",
+            "type": "shell",
+            "command": "D:/development/msys64/usr/bin/bash.exe",
+            "args": [
+                "-lc",
+                "export PATH=/d/development/msys64/ucrt64/bin:$PATH; cd /d/development/crusader-noremorse && cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build"
+            ],
+            "options": { "env": { "MSYSTEM": "UCRT64", "CHERE_INVOKING": "1" } },
+            "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": ["$gcc"]
+        }
+    ]
+}

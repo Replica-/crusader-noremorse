@@ -1,0 +1,41 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "🔨▶️  Mission 1: Build & Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/crusader.exe",
+            "args": ["tools/release", "--new-game", "--skip-movies", "--keyboard-mouse"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "PATH", "value": "D:/development/msys64/ucrt64/bin;${env:PATH}" }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
+            "setupCommands": [
+                { "description": "Enable pretty-printing for gdb", "text": "-enable-pretty-printing", "ignoreFailures": true }
+            ],
+            "preLaunchTask": "build",
+            "presentation": { "group": "1 Mission 1", "order": 1 }
+        },
+        {
+            "name": "▶️  Mission 1: Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/crusader.exe",
+            "args": ["tools/release", "--new-game", "--skip-movies", "--keyboard-mouse"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "PATH", "value": "D:/development/msys64/ucrt64/bin;${env:PATH}" }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
+            "presentation": { "group": "1 Mission 1", "order": 2 }
+        }
+    ]
+}
