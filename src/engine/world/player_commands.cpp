@@ -199,11 +199,15 @@ void jump(Kernel& kernel, World& world, const AnimDat& anims) {
         return;
     }
     // Busy: a run alone becomes a running jump (KERNEL_11d8_151d, vfunc +0x0C).
-    if (kernel.count_processes(kPlayer, ActorAnimProcess::kType) != 1) return;
     ActorAnimProcess* anim = current_anim(kernel, kPlayer);
-    if (!anim || !running || anim->action() == kActionRunningJump) return;
-    anim->fail();
-    do_anim(kernel, world, anims, kPlayer, kActionRunningJump, kDirCurrent, 0);
+    const bool jumping = anim && (anim->action() == kActionJump || anim->action() == kActionRunningJump);
+    if (kernel.count_processes(kPlayer, ActorAnimProcess::kType) == 1 && anim && running && !jumping) {
+        anim->fail();
+        do_anim(kernel, world, anims, kPlayer, kActionRunningJump, kDirCurrent, 0);
+        return;
+    }
+    // Any other busy moment (a step, a turn): the jump is not lost, it is done when the player is free.
+    if (!jumping) world.state.jump_pending_until = kernel.ticks() + 20;
 }
 
 // @orig 13E8:14B4

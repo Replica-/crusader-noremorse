@@ -158,6 +158,8 @@ struct GameState {
     // DS:2889: target designation, on at start-up (data segment), toggled by
     // R. The original keeps it for the whole session, loads included.
     bool target_designation = false;  // (port: the targeting reticle is gone, shots go where the pointer is)
+    // Port addition: a jump asked for while the player was busy (a step, a turn) is done when he is free, within this tick.
+    std::uint32_t jump_pending_until = 0;
     // Port addition: health bars shown for a few seconds above what was hit (hit points before the first
     // hit of the series as the maximum). Filled in by apply_damage, drawn by the game.
     struct HitBar {

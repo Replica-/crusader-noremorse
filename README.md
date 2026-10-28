@@ -13,7 +13,7 @@ This repository contains **no game files**: you need your own copy of the origin
 
 ## Recent improvements
 
-- **Keyboard and Mouse** mode (on by default; toggle it in Options → Enhancements). Options → Enhancements → *Keyboard + Mouse Controls* shows a picture of the keyboard and mouse with every shortcut:
+- **Keyboard and Mouse** mode (on by default; toggle it in Options → Enhancements). **F1** opens a picture of the keyboard and mouse with every shortcut as its first screen (the original help follows it):
 
   ![Keyboard and mouse controls screen](docs/images/features/controls.png)
 

@@ -754,6 +754,14 @@ void Game::update(std::uint32_t elapsed_us) {
         mouse_buttons_ = static_cast<std::uint16_t>(mouse_buttons_ | 1);
         mouse_queue_.press(false, cursor_.x(), cursor_.y(), 1);
     }
+    if (world_ && world_->state.jump_pending_until != 0) {  // a jump asked for while busy
+        if (kernel_->ticks() > world_->state.jump_pending_until || world_->is_dead(1) || world_->state.controlled_npc != 1) {
+            world_->state.jump_pending_until = 0;
+        } else if (!actor_busy(*kernel_, 1)) {
+            world_->state.jump_pending_until = 0;
+            jump(*kernel_, *world_, anims_);
+        }
+    }
     if (pending_holster_ && world_) {
         if (!weapon_drawn(*world_, 1) || world_->is_dead(1) || world_->state.controlled_npc != 1) pending_holster_ = false;
         else if (!actor_busy(*kernel_, 1)) {
@@ -1270,29 +1278,35 @@ bool Game::function_key(std::uint16_t code) {
         return true;
     case '?':
     case gump_key::kF1: {
-        auto help = std::make_unique<HelpScreen>(
-            gumps_, help_pictures_,
-            [this](int n) {
-                return static_cast<int>(random_range(world_->state.random_state, static_cast<std::uint16_t>(n)));
-            },
-            [this](int sfx) {
-                if (audio_) audio_->play_sfx(sfx);
+        // The original help. `menu_entered`: the menu mode is already on (the controls screen came first).
+        auto open_help = [this](bool menu_entered) {
+            auto help = std::make_unique<HelpScreen>(
+                gumps_, help_pictures(),
+                [this](int n) {
+                    return static_cast<int>(random_range(world_->state.random_state, static_cast<std::uint16_t>(n)));
+                },
+                [this](int sfx) {
+                    if (audio_) audio_->play_sfx(sfx);
+                });
+            // 13E8:38E5: the menu mode, the palette faders stopped, the colour
+            // cycling paused (DS:6810 +0x40), cursor 0x27.
+            if (!menu_entered) enter_menu_mode();
+            kernel_->fail_processes(0, PaletteFaderProcess::kType, kernel_->level());
+            world_->state.cycle_paused = true;
+            cursor_.reset(HelpScreen::kCursor);
+            cursor_.show();
+            world_->state.screen_palette = *help->palette();
+            open_screen(std::move(help), [this](const ModalGump&) {
+                // 13E8:3AAE: the game palette, the colour cycling again.
+                cursor_.hide();
+                world_->state.screen_palette = world_->state.game_palette;
+                world_->state.cycle_paused = false;
+                leave_menu_mode();
             });
-        // 13E8:38E5: the menu mode, the palette faders stopped, the colour
-        // cycling paused (DS:6810 +0x40), cursor 0x27.
-        enter_menu_mode();
-        kernel_->fail_processes(0, PaletteFaderProcess::kType, kernel_->level());
-        world_->state.cycle_paused = true;
-        cursor_.reset(HelpScreen::kCursor);
-        cursor_.show();
-        world_->state.screen_palette = *help->palette();
-        open_screen(std::move(help), [this](const ModalGump&) {
-            // 13E8:3AAE: the game palette, the colour cycling again.
-            cursor_.hide();
-            world_->state.screen_palette = world_->state.game_palette;
-            world_->state.cycle_paused = false;
-            leave_menu_mode();
-        });
+        };
+        // Keyboard and mouse mode: the keyboard and mouse controls are the first screen, then the original help follows.
+        if (config_.keyboard_mouse) open_controls_screen([open_help] { open_help(true); });
+        else open_help(false);
         return true;
     }
     case gump_key::kF2:

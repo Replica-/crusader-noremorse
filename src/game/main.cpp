@@ -117,7 +117,7 @@ int main(int argc, char** argv) {
     double gamma = 1.0;
     std::int32_t scroll_x = 0, scroll_y = 0;
     bool walk = false, fire = false, menu = false, menu_load = false, menu_credits = false, menu_options = false, menu_gamepad = false,
-         menu_new = false, controls_screen = false;
+         menu_new = false, controls_screen = false, f1_test = false;
     std::string png, wav, movie;
     int use = 0;
     MovieKind movie_kind = MovieKind::kCutscene;
@@ -171,6 +171,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--menu-options") == 0) menu = menu_options = true;
         else if (std::strcmp(argv[i], "--menu-gamepad") == 0) menu = menu_options = menu_gamepad = true;
         else if (std::strcmp(argv[i], "--controls-screen") == 0) controls_screen = true;
+        else if (std::strcmp(argv[i], "--f1") == 0) f1_test = true;
         else if (std::strcmp(argv[i], "--menu-new") == 0) menu = menu_new = true;
         else if (std::strcmp(argv[i], "--scroll") == 0 && i + 2 < argc) {
             scroll_x = std::stoi(argv[++i]);
@@ -258,6 +259,16 @@ int main(int argc, char** argv) {
             if (menu_new) {  // Enter on "new game": the difficulty screen
                 game.key(0x1C, false, true, 0, 0x0D);
                 game.key(0x1C, false, false, 0);
+            }
+            if (f1_test) {  // F1, then Enter: the controls screen, then the original help (a second picture)
+                game.key(0x3B, false, true, 0);
+                game.key(0x3B, false, false, 0);
+                for (int i = 0; i < 5; ++i) game.update(kFrameUs);
+                game.render(screen, &stats);
+                write_png(png, screen, game.palette());
+                game.key(0x1C, false, true, 0, 0x0D);
+                game.key(0x1C, false, false, 0);
+                for (int i = 0; i < 5; ++i) game.update(kFrameUs);
             }
             if (controls_screen) game.show_controls_screen();
             game.render(screen, &stats);

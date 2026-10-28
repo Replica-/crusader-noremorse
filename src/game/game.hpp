@@ -169,6 +169,8 @@ public:
     void request_draw() { pending_draw_ = true; }
     // Opens the keyboard and mouse controls screen on its own (for the README picture; the game reaches it from the options).
     void show_controls_screen();
+    void open_controls_screen(std::function<void()> then);
+    const HelpScreen::Pictures& help_pictures();
     // Developer flags for the README pictures: blood bursts, a health bar, a walk with its route, the pointer over a usable item.
     void set_demo(bool blood, bool hit_bar, int walk_dx, int walk_dy, bool hover_item) {
         demo_blood_ = blood, demo_hit_bar_ = hit_bar, demo_walk_dx_ = walk_dx, demo_walk_dy_ = walk_dy, demo_hover_ = hover_item;
@@ -539,6 +541,7 @@ private:
     LoadScreen::Names save_names_;     // DS:7964
     CreditsData credits_data_;
     HelpScreen::Pictures help_pictures_;
+    std::optional<HelpScreen::Pictures> help_pictures_km_;  // the same with page 0 redrawn for the keyboard and mouse mode
     bool autosave_pending_ = false;    // request_autosave, until the player may act
     std::uint32_t autosave_due_ = 0;   // the kernel tick from which it can run
     bool run_toggled_ = false;         // GameConfig::toggle_run: running is switched on

@@ -124,3 +124,66 @@ void ControlsScreen::draw(Surface8& screen) const {
 }
 
 }  // namespace crusader
+
+namespace crusader {
+
+// @orig none: port-only help page
+void draw_updated_help_page(Surface8& picture, const Palette& palette, const FontSet& fonts) {
+    auto nearest = [&](int r, int g, int b) {
+        int best = 1, best_distance = 1 << 30;
+        for (int i = 1; i < 256; ++i) {
+            const Rgb& c = palette.colors[static_cast<std::size_t>(i)];
+            const int d = (c.r - r) * (c.r - r) + (c.g - g) * (c.g - g) + (c.b - b) * (c.b - b);
+            if (d < best_distance) best = i, best_distance = d;
+        }
+        return best;
+    };
+    const int red = nearest(230, 30, 30), green = nearest(60, 230, 70);
+    picture.clear(0);
+
+    struct Line {
+        const char* key;
+        const char* what;
+    };
+    const Line game[] = {
+        {"F1", "HELP SCREEN"},           {"F2", "OPTIONS SCREEN"},       {"F4", "QUICK LOAD"},
+        {"F5", "QUICK SAVE"},            {"F6", "LOAD THE AUTOSAVE"},    {"F8", "LOAD SCREEN"},
+        {"F9", "SAVE SCREEN"},           {"+", "INCREASE MUSIC VOLUME"}, {"-", "DECREASE MUSIC VOLUME"},
+        {"ESC", "GAME OR MAIN MENU"},    {"ALT X", "EXIT TO DOS"},       {"ALT ENTER", "FULLSCREEN ON / OFF"},
+    };
+    const Line player[] = {
+        {"W", "WALK TO THE CURSOR (HOLD)"},   {"SHIFT W", "RUN TO THE CURSOR"},      {"A  D", "STEP LEFT / RIGHT"},
+        {"S", "STEP BACK"},                   {"Q  E", "ROLL LEFT / RIGHT"},         {"C", "KNEEL / STAND UP"},
+        {"SPACE", "FIRE"},                    {"RIGHT CLICK", "DRAW / HOLSTER, HOLD FIRES"},
+        {"LEFT CLICK", "WALK THERE / USE AN ITEM"}, {"TAB", "WEAPON WHEEL"},         {"I", "ITEM WHEEL"},
+        {"M", "MISSION MAP"},                 {"U", "USE THE ACTIVE ITEM"},          {"B", "DETONATE BOMB"},
+        {"Z", "CENTER CAMERA"},               {"G", "GRAB EXPOSED ITEMS"},
+    };
+    auto heading = [&](int x, const char* text) {
+        print_tinted(picture, fonts, kBodyFont, x, 52, text, green);
+        hline(picture, x, 56, x + 150, static_cast<std::uint8_t>(green));
+    };
+    heading(62, "GAME CONTROL");
+    heading(330, "PLAYER INTERFACE");
+    auto key_box = [&](int x, int y, const char* label) {
+        const int width = TextWriter(fonts, kBodyFont).measure(label).width + 10;
+        draw_rounded_box(picture, x, y - 8, x + width - 1, y + 7, -1, static_cast<std::uint8_t>(red));
+        print_tinted(picture, fonts, kBodyFont, x + 5, y, label, red);
+        return width;
+    };
+    int y = 82;
+    for (const Line& l : game) {
+        key_box(62, y, l.key);
+        print_tinted(picture, fonts, kBodyFont, 150, y, l.what, green);
+        y += 22;
+    }
+    y = 82;
+    for (const Line& l : player) {
+        key_box(330, y, l.key);
+        print_tinted(picture, fonts, kBodyFont, 430, y, l.what, green);
+        y += 22;
+    }
+    print_tinted(picture, fonts, kBodyFont, 62, 440, "THE FULL PICTURE OF THE KEYBOARD AND MOUSE IS ON THE PREVIOUS SCREEN", green);
+}
+
+}  // namespace crusader

@@ -4,6 +4,7 @@
 #include "core/dtable.hpp"
 #include "engine/world/actor_anim.hpp"
 #include "engine/world/inventory.hpp"
+#include "engine/palette_fader.hpp"
 #include "engine/world/loadout.hpp"
 #include "engine/world/item_selection.hpp"
 
@@ -223,11 +224,45 @@ private:
 }  // namespace
 
 // @orig none: port-only
-void Game::show_controls_screen() {
+void Game::show_controls_screen() { open_controls_screen(nullptr); }
+
+// The keyboard and mouse controls, as a screen of its own. With `then`, it is run when the screen closes, in the menu mode still (the
+// F1 help opens this first and goes on to the original help screens).
+void Game::open_controls_screen(std::function<void()> then) {
     if (!world_ || modal()) return;
     enter_menu_mode();
+    kernel_->fail_processes(0, PaletteFaderProcess::kType, kernel_->level());
+    world_->state.cycle_paused = true;
     world_->state.screen_palette = menu_palette_;
-    open_screen(std::make_unique<ControlsGump>(fonts_), [this](const ModalGump&) { leave_menu_mode(); });
+    cursor_.reset(MouseCursor::kMenuArrow);
+    cursor_.show();
+    open_screen(std::make_unique<ControlsGump>(fonts_), [this, then = std::move(then)](const ModalGump&) {
+        if (then) {
+            then();
+            return;
+        }
+        cursor_.hide();
+        world_->state.screen_palette = world_->state.game_palette;
+        world_->state.cycle_paused = false;
+        leave_menu_mode();
+    });
+}
+
+}  // namespace crusader
+
+#include "engine/ui/controls_screen.hpp"
+
+namespace crusader {
+
+// The help pictures: the original's, or with the keys page redrawn for the keyboard and mouse mode.
+// @orig none: port-only
+const HelpScreen::Pictures& Game::help_pictures() {
+    if (!config_.keyboard_mouse) return help_pictures_;
+    if (!help_pictures_km_) {
+        help_pictures_km_ = help_pictures_;
+        if (auto& page = help_pictures_km_->pages[0]) draw_updated_help_page(page->picture, page->palette, fonts_);
+    }
+    return *help_pictures_km_;
 }
 
 }  // namespace crusader

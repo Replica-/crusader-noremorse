@@ -27,3 +27,13 @@ private:
 };
 
 }  // namespace crusader
+
+#include "core/palette.hpp"
+
+namespace crusader {
+
+// The first page of the original help screen (HELP1.DAT: the keys of the game) redrawn with the keys of the keyboard and mouse
+// mode, in its own colours: its picture cleared and the lists written on it, in the red and green nearest to the original's.
+void draw_updated_help_page(Surface8& picture, const Palette& palette, const FontSet& fonts);
+
+}  // namespace crusader

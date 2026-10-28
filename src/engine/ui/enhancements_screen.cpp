@@ -11,7 +11,7 @@ namespace {
 
 constexpr int kPanelX0 = 100, kPanelY0 = 84, kPanelX1 = 539, kPanelY1 = 448;
 constexpr int kTitleY = 120, kIconSize = 14, kIconGap = 8;
-constexpr int kRowX0 = 130, kRowX1 = 509, kRowY0 = 158, kRowStep = 22, kRowHeight = 20;
+constexpr int kRowX0 = 130, kRowX1 = 509, kRowY0 = 158, kRowStep = 25, kRowHeight = 22;
 constexpr int kTextDrop = 17, kRowPad = 18;  // glyphs hang from their baseline
 constexpr std::uint8_t kFrameColour = 0x57, kGreen = 0x0C, kDimGreen = 0x75;
 
@@ -70,10 +70,6 @@ EnhancementsScreen::Rect EnhancementsScreen::row_rect(int row) const {
 
 // @orig none: port-only enhancements window
 void EnhancementsScreen::draw(Surface8& screen) const {
-    if (controls_) {
-        controls_->draw(screen);
-        return;
-    }
     if (pad_) {
         pad_->draw(screen);
         return;
@@ -134,9 +130,7 @@ void EnhancementsScreen::draw(Surface8& screen) const {
                          tint);
             continue;
         }
-        const std::string label = row == kPadRow ? tr("MANETTE", "CONTROLLER")
-                                  : row == kControlsRow ? tr("CLAVIER + SOURIS", "KEYBOARD + MOUSE CONTROLS")
-                                                        : tr("RETOUR", "BACK");
+        const std::string label = row == kPadRow ? tr("MANETTE", "CONTROLLER") : tr("RETOUR", "BACK");
         const int width = writer.measure(label).width;
         print_tinted(screen, *fonts_, r.x0 + (r.x1 - r.x0 + 1 - width) / 2, r.y0 + kTextDrop, label, tint);
     }
@@ -145,10 +139,6 @@ void EnhancementsScreen::draw(Surface8& screen) const {
 // @orig none: port-only enhancements window
 void EnhancementsScreen::activate(int row) {
     focus_ = row;
-    if (row == kControlsRow) {
-        controls_ = std::make_unique<ControlsScreen>(*fonts_);
-        return;
-    }
     if (row == kPadRow) {
         pad_ = std::make_unique<GamepadScreen>(*fonts_, *config_, *pad_focus_);
     } else if (row == kFollowRow) {
@@ -176,11 +166,6 @@ void EnhancementsScreen::activate(int row) {
 
 // @orig none: port-only enhancements window
 void EnhancementsScreen::key(std::uint16_t code) {
-    if (controls_) {
-        controls_->key(code);
-        if (controls_->closed()) controls_.reset();
-        return;
-    }
     if (pad_) {
         pad_->key(code);
         if (pad_->closed()) pad_.reset();
@@ -200,11 +185,6 @@ void EnhancementsScreen::key(std::uint16_t code) {
 
 // @orig none: port-only enhancements window
 void EnhancementsScreen::mouse_down(int x, int y) {
-    if (controls_) {
-        controls_->mouse_down(x, y);
-        if (controls_->closed()) controls_.reset();
-        return;
-    }
     if (pad_) {
         pad_->mouse_down(x, y);
         if (pad_->closed()) pad_.reset();

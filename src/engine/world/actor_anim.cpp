@@ -16,6 +16,9 @@ namespace {
 
 // ANIMPRIM.C 016F: before walking, the controlled actor tests the whole half
 // stride, then the same stride from small offsets to either side. This lets
+// The jumps (standing 0x3A, running 0x38): their frames are never cut short, or the player is left in the air and falls.
+bool is_jump(std::uint16_t action) { return action == 0x3A || action == 0x38; }
+
 // both player input and scripted walks line up with a narrow doorway.
 // @orig 1158:016F
 bool walk_fits(const World& world, const AnimAction& a, ObjId actor, int dir, World::Point pos) {
@@ -173,6 +176,8 @@ void ActorAnimProcess::run() {
     // Port addition: the player's start of a run (actions 0x22, 0x23, 0x26) plays twice as fast, so the
     // change from standing to running is snappier.
     if (owner() == world_.state.controlled_npc && (action_ == 0x22 || action_ == 0x23 || action_ == 0x26)) ticks = (ticks + 1) / 2;
+    // Port addition: the player's jumps play a quarter faster, snappier and less floaty.
+    if (owner() == world_.state.controlled_npc && is_jump(action_)) ticks = std::max(1, ticks * 3 / 4);
     sleep(std::max(ticks, 1));
 }
 
@@ -240,6 +245,11 @@ bool ActorAnimProcess::step() {
             // fall check below makes the actor stumble.
             r = try_move(world_, owner(), target, kSweepSupportOnly | kSweepStepUp);
             if (!r.ok && r.blocker == 0) r = try_move(world_, owner(), target, kSweepNoGround);
+            // A jump landing against something: the landing goes on straight down instead (below), not stopped in the air.
+            if (!r.ok && r.blocker != 0 && is_jump(action_)) {
+                r = try_move(world_, owner(), {start.x, start.y, target.z}, kSweepSupportOnly | kSweepStepUp);
+                if (!r.ok && r.blocker == 0) r = try_move(world_, owner(), {start.x, start.y, target.z}, kSweepNoGround);
+            }
         } else {
             // A plain sweep; against an obstacle only the vertical part is kept.
             r = sweep(world_, item->shape, owner(), start, target, kSweepNoGround);
@@ -257,7 +267,7 @@ bool ActorAnimProcess::step() {
             reached = r.end;
         } else if (f->ground_check && r.blocker == 0) {
             reached = target;
-        } else if (flags & 0x08) {
+        } else if ((flags & 0x08) || is_jump(action_)) {  // (a jump blocked on the way down plays out in place: it must not end in the air)
             in_place_ = true;
             if (f->ground_check) reached = target;
         } else {
