@@ -169,7 +169,11 @@ void ActorAnimProcess::run() {
     }
     const Item* item = world_.get(owner());
     const AnimAction* a = item ? anims_.action(item->shape, action_) : nullptr;
-    sleep(a ? std::max<std::uint8_t>(a->ticks_per_frame(), 1) : 1);
+    int ticks = a ? std::max<std::uint8_t>(a->ticks_per_frame(), 1) : 1;
+    // Port addition: the player's start of a run (actions 0x22, 0x23, 0x26) plays twice as fast, so the
+    // change from standing to running is snappier.
+    if (owner() == world_.state.controlled_npc && (action_ == 0x22 || action_ == 0x23 || action_ == 0x26)) ticks = (ticks + 1) / 2;
+    sleep(std::max(ticks, 1));
 }
 
 // @orig 1158:1908
@@ -517,6 +521,20 @@ void ActorAnimProcess::on_terminate() {
     if (item && (item->z & 0xFF) != 254 && owner() == world_.state.controlled_npc) {
         enter_aim_mode(kernel(), world_, anims_);
     }
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+// @orig none: port-only, the whole stride of an action tested from the actor's place
+bool stride_fits(const World& world, const AnimDat& anims, ObjId actor, std::uint16_t action, int dir) {
+    const Item* item = world.get(actor);
+    const AnimAction* a = item ? anims.action(item->shape, action) : nullptr;
+    if (!a || a->frame_count() == 0 || world.npc_record(actor).empty()) return false;
+    dir &= 0xF;
+    if (!a->sixteen_directions() && (dir & 1)) dir = (dir - 1) & 0xF;
+    return walk_fits(world, *a, actor, dir, world.location(*item));
 }
 
 }  // namespace crusader

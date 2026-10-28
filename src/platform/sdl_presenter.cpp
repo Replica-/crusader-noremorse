@@ -120,7 +120,10 @@ void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
     SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
     draw_laser();
     draw_debug_path();
+    draw_blood();
+    draw_fpv();
     draw_hit_bars();
+    draw_pointer();
     SDL_RenderPresent(renderer_);
 }
 
@@ -248,6 +251,139 @@ void SdlPresenter::draw_hit_bars() {
         const SDL_FRect fill{x, y, kWidth * f, kHeight};
         SDL_RenderFillRectF(renderer_, &fill);
     }
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+void SdlPresenter::draw_pointer() {
+    if (!pointer_.show) return;
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    constexpr float kScale = 1.15f;
+    // The arrow, tip at the pointer: tip, left foot, inner notch, tail (two points), notch, right wing.
+    const SDL_FPoint shape[7] = {{0, 0}, {0, 16}, {4.4f, 12.2f}, {7.4f, 18.6f}, {10, 17.4f}, {7, 11}, {12, 11}};
+    static const int tri[5][3] = {{0, 1, 2}, {0, 2, 5}, {0, 5, 6}, {2, 3, 4}, {2, 4, 5}};
+    auto polygon = [&](float ox, float oy, SDL_Color c) {
+        SDL_Vertex v[7];
+        for (int i = 0; i < 7; ++i) v[i] = {{pointer_.x + ox + shape[i].x * kScale, pointer_.y + oy + shape[i].y * kScale}, c, {0, 0}};
+        int idx[15];
+        for (int t = 0; t < 5; ++t)
+            for (int k = 0; k < 3; ++k) idx[t * 3 + k] = tri[t][k];
+        SDL_RenderGeometry(renderer_, nullptr, v, 7, idx, 15);
+    };
+    const SDL_Color outline{0, 0, 0, 215}, fill{250, 250, 250, 255};
+    for (const SDL_FPoint& o : {SDL_FPoint{-1, 0}, SDL_FPoint{1, 0}, SDL_FPoint{0, -1}, SDL_FPoint{0, 1}, SDL_FPoint{1, 1}, SDL_FPoint{-1, -1}})
+        polygon(o.x, o.y, outline);
+    polygon(0, 0, fill);
+    if (pointer_.hover != 0) {
+        // The indicator: a dot with a dark rim at the lower right of the arrow, green when in reach, red when not.
+        const SDL_Color c = pointer_.hover == 1 ? SDL_Color{70, 230, 100, 255} : SDL_Color{235, 65, 55, 255};
+        auto disc = [&](float r, SDL_Color col) {
+            constexpr int kSegments = 18;
+            SDL_Vertex v[kSegments + 1];
+            int idx[kSegments * 3];
+            const float cx = pointer_.x + 17.0f, cy = pointer_.y + 18.0f;
+            v[0] = {{cx, cy}, col, {0, 0}};
+            for (int i = 0; i < kSegments; ++i) {
+                const float a = 6.2831853f * static_cast<float>(i) / kSegments;
+                v[i + 1] = {{cx + std::cos(a) * r, cy + std::sin(a) * r}, col, {0, 0}};
+                idx[i * 3] = 0;
+                idx[i * 3 + 1] = i + 1;
+                idx[i * 3 + 2] = (i + 1) % kSegments + 1;
+            }
+            SDL_RenderGeometry(renderer_, nullptr, v, kSegments + 1, idx, kSegments * 3);
+        };
+        disc(5.2f, SDL_Color{0, 0, 0, 215});
+        disc(3.8f, c);
+    }
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+// Blood, on the graphics card: drops are thin streaks, mist is soft red puffs, and what has landed is a flat
+// dark splat (an ellipse, the floor being seen at an angle) that fades away.
+void SdlPresenter::draw_blood() {
+    if (blood_.empty()) return;
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    auto disc = [&](float cx, float cy, float rx, float ry, SDL_Color centre, SDL_Color edge) {
+        constexpr int kSegments = 14;
+        SDL_Vertex v[kSegments + 1];
+        int idx[kSegments * 3];
+        v[0] = {{cx, cy}, centre, {0, 0}};
+        for (int i = 0; i < kSegments; ++i) {
+            const float a = 6.2831853f * static_cast<float>(i) / kSegments;
+            v[i + 1] = {{cx + std::cos(a) * rx, cy + std::sin(a) * ry}, edge, {0, 0}};
+            idx[i * 3] = 0;
+            idx[i * 3 + 1] = i + 1;
+            idx[i * 3 + 2] = (i + 1) % kSegments + 1;
+        }
+        SDL_RenderGeometry(renderer_, nullptr, v, kSegments + 1, idx, kSegments * 3);
+    };
+    auto alpha = [](float a) { return static_cast<Uint8>(std::clamp(a, 0.0f, 1.0f) * 255.0f); };
+    for (const BloodDot& d : blood_) {
+        if (d.kind == 2) {  // a splat
+            disc(d.x, d.y, d.size * 1.7f, d.size * 0.85f, SDL_Color{205, 14, 20, alpha(d.alpha)}, SDL_Color{150, 8, 14, alpha(d.alpha * 0.6f)});
+        } else if (d.kind == 1) {  // mist
+            disc(d.x, d.y, d.size, d.size, SDL_Color{240, 32, 32, alpha(d.alpha)}, SDL_Color{240, 32, 32, 0});
+        } else {  // a drop in flight: a streak from where it was to where it is
+            const float dx = d.x - d.x0, dy = d.y - d.y0;
+            const float len = std::sqrt(dx * dx + dy * dy);
+            const float nx = len > 0.01f ? -dy / len : 0.0f, ny = len > 0.01f ? dx / len : 1.0f;
+            const float w = d.size * 0.5f;
+            const SDL_Color c{230, 22, 26, alpha(d.alpha)}, tail{230, 22, 26, alpha(d.alpha * 0.2f)};
+            const SDL_Vertex v[4] = {{{d.x0 + nx * w, d.y0 + ny * w}, tail, {0, 0}},
+                                     {{d.x0 - nx * w, d.y0 - ny * w}, tail, {0, 0}},
+                                     {{d.x - nx * w, d.y - ny * w}, c, {0, 0}},
+                                     {{d.x + nx * w, d.y + ny * w}, c, {0, 0}}};
+            static const int idx[6] = {0, 1, 2, 0, 2, 3};
+            SDL_RenderGeometry(renderer_, nullptr, v, 4, idx, 6);
+            disc(d.x, d.y, w * 1.1f, w * 1.1f, c, c);
+        }
+    }
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+// The first person inset: a dark sky and floor, a column for each ray (walls, doors and enemies in their colours, shaded
+// by distance), a frame and a small cross in the middle.
+void SdlPresenter::draw_fpv() {
+    if (fpv_.empty()) return;
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    const float x = fpv_x_, y = fpv_y_, s = fpv_size_;
+    auto rect = [&](float rx, float ry, float rw, float rh, Uint8 r, Uint8 g, Uint8 b, Uint8 a) {
+        const SDL_FRect f{rx, ry, rw, rh};
+        SDL_SetRenderDrawColor(renderer_, r, g, b, a);
+        SDL_RenderFillRectF(renderer_, &f);
+    };
+    // Sky and floor, each in a few bands so it is not flat.
+    for (int i = 0; i < 8; ++i) {
+        const float band = s / 16.0f;
+        const Uint8 sky = static_cast<Uint8>(18 + i * 4), floor = static_cast<Uint8>(55 - i * 5);
+        rect(x, y + i * band, s, band + 1, sky, static_cast<Uint8>(sky + 6), static_cast<Uint8>(sky + 20), 225);
+        rect(x, y + s / 2 + i * band, s, band + 1, floor, static_cast<Uint8>(floor - 8), static_cast<Uint8>(floor - 14), 225);
+    }
+    const float w = s / static_cast<float>(fpv_.size());
+    for (std::size_t i = 0; i < fpv_.size(); ++i) {
+        const FpvColumn& c = fpv_[i];
+        if (c.height <= 0) continue;
+        const float h = std::clamp(c.height, 0.02f, 1.0f) * s;
+        rect(x + static_cast<float>(i) * w, y + (s - h) / 2, w + 0.6f, h, c.r, c.g, c.b, 245);
+    }
+    // The frame and the middle.
+    const SDL_FRect frame{x - 1, y - 1, s + 2, s + 2};
+    SDL_SetRenderDrawColor(renderer_, 235, 235, 235, 230);
+    SDL_RenderDrawRectF(renderer_, &frame);
+    SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 200);
+    SDL_RenderDrawLineF(renderer_, x + s / 2 - 5, y + s / 2, x + s / 2 + 5, y + s / 2);
+    SDL_RenderDrawLineF(renderer_, x + s / 2, y + s / 2 - 5, x + s / 2, y + s / 2 + 5);
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
 }
 

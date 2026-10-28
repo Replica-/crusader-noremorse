@@ -101,6 +101,8 @@ int main(int argc, char** argv) {
     bool classic = false;  // --classic: the original 640 x 480 view, stretched to the window
     bool skip_movies = false;  // --skip-movies: no cutscenes or intro videos
     bool show_fps = true;  // the fps / renderer counter, top right (--no-fps hides it)
+    bool path_test = false, path_gun = false;  // --path-test dx dy [--gun]: developer trace
+    int path_dx = 0, path_dy = 0;
     bool keyboard_mouse = false;  // --keyboard-mouse: the keyboard and mouse mode, whatever CRUSADER.CFG says
     double gamma = 1.0;
     std::int32_t scroll_x = 0, scroll_y = 0;
@@ -124,6 +126,11 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--classic") == 0) classic = true;
         else if (std::strcmp(argv[i], "--skip-movies") == 0) skip_movies = true;
         else if (std::strcmp(argv[i], "--no-fps") == 0) show_fps = false;
+        else if (std::strcmp(argv[i], "--path-test") == 0 && i + 2 < argc) {  // dx dy [gun]: trace of W towards a point
+            path_test = true;
+            path_dx = std::stoi(argv[++i]);
+            path_dy = std::stoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--gun") == 0) path_gun = true;
         else if (std::strcmp(argv[i], "--keyboard-mouse") == 0) keyboard_mouse = true;
         else if (std::strcmp(argv[i], "--size") == 0 && i + 1 < argc) {  // with --png: the screen's size, e.g. 960x540
             std::sscanf(argv[++i], "%dx%d", &png_width, &png_height);
@@ -170,6 +177,11 @@ int main(int argc, char** argv) {
         if (new_game) game.new_game(0);
         else if (start_up) game.start_up();
         else game.load_save(save);
+        if (path_test) {
+            for (int i = 0; i < 60; ++i) game.update(kFrameUs);
+            game.debug_path_trace(path_dx, path_dy, path_gun, 240);
+            return 0;
+        }
         if (!movie.empty()) game.play_movie(movie, movie_kind);
         Surface8 screen(png_width, png_height);
         RenderStats stats;
@@ -361,15 +373,36 @@ int main(int argc, char** argv) {
                 char line[128];
                 std::snprintf(line, sizeof line, "%.0f FPS  %s (%s)", fps, presenter.software_renderer() ? "SW" : "HW",
                               presenter.renderer_name().c_str());
-                game.draw_top_right_text(screen, line, 0);
+                game.draw_top_right_text(screen, line, 0, game.fpv_on() ? 212 : 0);
                 // The game loop itself: the time its update and draw take (what it could run at without
                 // waiting for the display), and the game's own tick rate.
                 std::snprintf(line, sizeof line, "LOOP %.1f ms (%.0f/s max)  TICKS %.0f/s", work_ms,
                               work_ms > 0 ? 1000.0 / work_ms : 0.0, tick_rate);
-                game.draw_top_right_text(screen, line, 1);
-                if (const std::string path = game.path_status(); !path.empty()) game.draw_top_right_text(screen, path, 2);
+                game.draw_top_right_text(screen, line, 1, game.fpv_on() ? 212 : 0);
+                if (const std::string path = game.path_status(); !path.empty()) game.draw_top_right_text(screen, path, 2, game.fpv_on() ? 212 : 0);
             }
+            if (game.fpv_on()) game.draw_text_at(screen, screen.width - 208, 8 + 200 + 16, "FIRST PERSON  F2");
             presenter.set_debug_path(game.path_debug_screen());
+            {
+                // The first person inset (F2): a square in the top right corner.
+                constexpr float kSize = 200.0f;
+                std::vector<SdlPresenter::FpvColumn> columns;
+                if (game.fpv_on()) {
+                    for (const Game::FpvColumn& c : game.fpv_columns()) {
+                        columns.push_back({c.distance > 0 ? std::min(1.0f, 19000.0f / c.distance / kSize) : 0.0f, c.r, c.g, c.b});
+                    }
+                }
+                presenter.set_fpv(static_cast<float>(screen.width) - kSize - 8.0f, 8.0f, kSize, std::move(columns));
+            }
+            {
+                std::vector<SdlPresenter::BloodDot> dots;
+                for (const Game::BloodDotScreen& b : game.blood_screen()) dots.push_back({b.x, b.y, b.x0, b.y0, b.size, b.alpha, b.kind});
+                presenter.set_blood(std::move(dots));
+            }
+            {
+                const Game::PointerOverlay p = game.pointer_overlay();
+                presenter.set_pointer(p.show, p.x, p.y, p.hover);
+            }
             {
                 std::vector<SdlPresenter::HitBar> bars;
                 for (const Game::HitBarScreen& b : game.hit_bars_screen()) bars.push_back({b.x, b.y, b.fraction, b.alpha});

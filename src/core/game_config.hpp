@@ -46,6 +46,9 @@ public:
     // forward / backward, A / D step aside), Q / E roll, the pointer stays
     // visible and free, and the NPC always faces it.
     bool keyboard_mouse = true;
+    // Port addition, written when switched off: "directionalroll", Q / E roll to the left / right of the screen
+    // (swapped when the character faces down it) instead of the character's own left / right.
+    bool directional_roll = true;
     // Port addition, written when switched off: "nativeresolution", the view
     // takes the whole screen (more scenery around the camera) instead of the
     // original 640 x 480.

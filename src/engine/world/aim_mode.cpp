@@ -8,6 +8,7 @@
 #include "engine/world/sprite_process.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <initializer_list>
 
@@ -182,10 +183,27 @@ void place_crosshair(World& world, const AnimDat& anims) {
     auto z = static_cast<std::uint8_t>(world.location(*npc).z + muzzle_height(world, anims, id, dir));
     if (aim.angle > 360) aim.angle = (22 * dir + 5 + 270) % 360;
     const TrigTables& trig = world.trig();
+    const std::int16_t centre_x = x, centre_y = y;
     // PFLOAT_12d0_02a7: 16.16 times 200, whole part.
     x = static_cast<std::int16_t>(x + ((static_cast<std::int64_t>(trig.cos_deg(aim.angle)) * kCrosshairDistance) >> 16));
     y = static_cast<std::int16_t>(y + ((static_cast<std::int64_t>(trig.sin_deg(aim.angle)) * kCrosshairDistance) >> 16));
-    if (aim.free) pick_point(world, aim.free_x, aim.free_y, id, x, y, z);  // exactly under the pointer
+    if (aim.free) {
+        // Keyboard and mouse mode: the crosshair is as far from the NPC as the point under the pointer, at
+        // that point's height, but at the angle it has swung round to so far (turn_aim_towards_pointer),
+        // so it cannot snap to the pointer.
+        std::int16_t px = 0, py = 0;
+        pick_point(world, aim.free_x, aim.free_y, id, px, py, z);
+        const double dx = px - centre_x, dy = py - centre_y;
+        constexpr double kPi = 3.14159265358979;
+        aim.target_angle = std::fmod(std::atan2(dy, dx) * 180.0 / kPi + 360.0, 360.0);
+        if (!aim.smooth_init) {  // from where the NPC faces
+            aim.smooth = (22 * dir + 5 + 270) % 360;
+            aim.smooth_init = true;
+        }
+        const double distance = std::sqrt(dx * dx + dy * dy);
+        x = static_cast<std::int16_t>(centre_x + std::lround(std::cos(aim.smooth * kPi / 180.0) * distance));
+        y = static_cast<std::int16_t>(centre_y + std::lround(std::sin(aim.smooth * kPi / 180.0) * distance));
+    }
     if (aim.crosshair == -1) aim.crosshair = world.state.screen_sprites.add(kCrosshairShape, 0, x, y, z);
     else world.state.screen_sprites.move(aim.crosshair, x, y, z);
     aim.crosshair_dirty = false;
@@ -373,7 +391,11 @@ void face_screen_point(Kernel& kernel, World& world, const AnimDat& anims, int s
     if (!npc || world.is_dead(id) || actor_busy(kernel, id) || world.state.aim.turns != 0) return;
     const int wanted = pointer_direction(world, screen_x, screen_y);
     if (wanted < 0 || wanted == npc_dir(world, id)) return;
-    do_anim(kernel, world, anims, id, kneeling(world, id) ? 0x2E : 0, wanted);
+    // At most four directions (90 degrees) a turn: it still takes a moment to come round.
+    const int current = npc_dir(world, id);
+    const int diff = ((wanted - current + 24) & 0xF) - 8;  // -8 .. 7, shortest way round
+    const int toward = std::abs(diff) <= 4 ? wanted : (current + (diff < 0 ? -4 : 4)) & 0xF;
+    do_anim(kernel, world, anims, id, kneeling(world, id) ? 0x2E : 0, toward);
 }
 
 // @orig none: port-only, a walk that follows the pointer
@@ -415,6 +437,20 @@ std::optional<LaserBeam> laser_beam(const World& world, const AnimDat& anims) {
         beam.spread = player_shot_spread(world, dtable::weapon(gun->shape).fire_type(), beam.from, beam.to, &beam.spread_z);
     }
     return beam;
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+// @orig none: port-only, the crosshair swings towards the pointer at a limited rate
+void turn_aim_towards_pointer(World& world, double seconds) {
+    constexpr double kDegreesPerSecond = 1000.0;
+    GameState::Aim& aim = world.state.aim;
+    if (!aim.free || !aim.active || !aim.smooth_init) return;
+    double diff = std::fmod(aim.target_angle - aim.smooth + 540.0, 360.0) - 180.0;
+    const double step = std::min(std::abs(diff), kDegreesPerSecond * seconds);
+    aim.smooth = std::fmod(aim.smooth + (diff < 0 ? -step : step) + 360.0, 360.0);
 }
 
 }  // namespace crusader

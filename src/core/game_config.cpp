@@ -56,6 +56,7 @@ GameConfig GameConfig::parse(std::string_view text) {
         else if (key == "nativeresolution") c.native_resolution = value != "false";
         else if (key == "autosave") c.autosave = value != "false";
         else if (key == "directionalaim") c.directional_aim = value == "true";
+        else if (key == "directionalroll") c.directional_roll = value != "false";
         else if (key == "keyboardmouse") c.keyboard_mouse = value != "false";
         else if (key == "togglerun") c.toggle_run = value == "true";
         else if (key == "padaim") c.pad.aim = std::clamp(number(value), 1, PadSettings::kAimLevels);
@@ -104,6 +105,8 @@ std::string GameConfig::text() const {
     else out.erase("autosave");
     if (directional_aim) out.set("directionalaim", "true");
     else out.erase("directionalaim");
+    if (!directional_roll) out.set("directionalroll", "false");
+    else out.erase("directionalroll");
     if (!keyboard_mouse) out.set("keyboardmouse", "false");
     else out.erase("keyboardmouse");
     if (toggle_run) out.set("togglerun", "true");

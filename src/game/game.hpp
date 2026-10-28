@@ -125,7 +125,8 @@ public:
     // stay 640 x 480 in the middle (see ui_x / ui_y for the mouse).
     void render(Surface8& screen, RenderStats* stats = nullptr);
     // Port addition: a line of small text against the top-right corner (the fps counter).
-    void draw_top_right_text(Surface8& screen, const std::string& text, int line = 0) const;
+    void draw_top_right_text(Surface8& screen, const std::string& text, int line = 0, int inset = 0) const;
+    void draw_text_at(Surface8& screen, int x, int y, const std::string& text) const;
     // The laser sight of a drawn weapon in view pixels (see laser_beam), for the presenter.
     struct LaserScreen {
         bool on = false, hit = false;
@@ -137,11 +138,38 @@ public:
     // the goal last), empty when no walk is under way; and a line of text about it.
     std::vector<std::pair<float, float>> path_debug_screen() const;
     std::string path_status() const;
+    // Developer trace (--path-test): draws the weapon if asked, then holds W towards a point (dx, dy) away and
+    // prints where the character goes for `frames` frames.
+    void debug_path_trace(int dx, int dy, bool draw_weapon, int frames);
     // Health bars above what was recently hit, in view pixels (see GameState::HitBar).
     struct HitBarScreen {
         float x, y, fraction, alpha;
     };
     std::vector<HitBarScreen> hit_bars_screen();
+    // Blood in the air and on the ground, in view pixels: a particle is drawn as a streak from (x0, y0) to (x, y)
+    // while it flies (kind 0), a soft puff (kind 1) or a flat splat (kind 2).
+    struct BloodDotScreen {
+        float x, y, x0, y0, size, alpha;
+        int kind;
+    };
+    std::vector<BloodDotScreen> blood_screen() const;
+    // First person inset (F2 in the keyboard and mouse mode): what a ray cast from the character's eyes meets,
+    // one column per ray (distance along the view, and a colour), or nothing while it is off.
+    struct FpvColumn {
+        float distance = 0;  // along the view axis, map units; 0 when nothing is in range
+        std::uint8_t r = 0, g = 0, b = 0;
+        bool enemy = false;
+    };
+    const std::vector<FpvColumn>& fpv_columns() const { return fpv_; }
+    bool fpv_on() const { return fpv_on_; }
+    // The free pointer (keyboard and mouse mode), drawn by the presenter as a clean arrow: `hover` is 0 over
+    // nothing, 1 over an item in reach, 2 over one that is too far. Not shown while the crosshair is the pointer.
+    struct PointerOverlay {
+        bool show = false;
+        float x = 0, y = 0;
+        int hover = 0;
+    };
+    PointerOverlay pointer_overlay() const;
     // Where the 640 x 480 area starts in the last rendered screen; the mouse
     // coordinates the game takes are relative to it.
     int ui_x() const { return ui_x_; }
@@ -346,6 +374,18 @@ private:
     std::uint32_t right_down_at_ = 0;
     // Click-to-walk (keyboard and mouse mode, weapon away): replanned at every step.
     bool path_active_ = false;
+    bool path_hold_ = false;      // the W key is steering it: the goal follows the pointer while it is held
+    ObjId path_item_ = 0;         // an item the walk is going to use or pick up on arrival
+    bool path_run_ = false;       // a double click: run there whatever Shift says
+    int path_best_ = 1 << 30;              // the closest to the goal (Chebyshev, map units) the character has been
+    World::Point path_goal_seen_{};        // the goal as of the last step (a moving goal resets path_best_)
+    unsigned path_bad_dirs_ = 0;           // directions that went nowhere from the current spot (bit per direction)
+    int path_step_dir_ = -1;               // the direction of the last step sent
+    std::uint32_t last_click_tick_ = 0;
+    int last_click_x_ = 0, last_click_y_ = 0;
+    bool w_held_ = false;         // W is down (keyboard and mouse mode)
+    bool pending_stand_ = false;  // W was released: stand once the current step is over
+    std::uint32_t path_wait_ = 0; // no replanning before this tick (after a failed attempt)
     World::Point path_goal_{};
     World::Point path_last_{};
     int path_stuck_ = 0;
@@ -356,12 +396,28 @@ private:
     std::vector<World::Point> preview_points_;  // A* route to the pointer while walking by keyboard (debug)
     std::uint32_t preview_at_ = 0;
     void update_path_preview();
+    struct BloodParticle {
+        float x, y, z, vx, vy, vz;
+        float ground = 0;
+        float age = 0, life = 1, size = 1;
+        int kind = 0;  // 0 flying drop, 1 mist, 2 splat
+        bool fading = false;  // a splat that is on its way out (the floor is full)
+    };
+    std::vector<BloodParticle> blood_;
+    std::uint32_t blood_seed_ = 12345;
+    void update_blood(float seconds);
+    bool fpv_on_ = false;
+    std::vector<FpvColumn> fpv_;
+    void update_fpv();
     void start_walk_to_pointer();
+    void start_walk_to_item(ObjId item);
     void update_walk_path();
     void stop_walk_path();
     // WASD / QE remapped to arrows with Alt or Ctrl: the modifier scancode
     // (0x38 / 0x1D) sent with each key, 0 when not held, for its release.
     std::uint8_t remap_mod_[128] = {};
+    bool remap_swapped_[128] = {};  // Q / E held with their sides swapped (see roll_keys_swapped)
+    bool roll_keys_swapped() const;
     // A remapped step / roll pressed while the NPC was busy (a turn, a step...): it is sent once the
     // NPC is free instead of waiting for the key repeat (a fifth of a second later).
     struct PendingMove {

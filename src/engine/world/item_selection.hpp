@@ -56,6 +56,10 @@ bool click_item(World& world, int screen_x, int screen_y);
 // The item the selection mode could offer (use or pick up) under a screen
 // position, in range of the player or not; 0 when none. `in_range` tells which.
 ObjId hover_item(const World& world, int screen_x, int screen_y, bool* in_range);
+// Whether the player is close enough to use or pick up `id` (the selection mode would offer it), and
+// doing so now (as S then Enter on it).
+bool item_in_range(const World& world, ObjId id);
+bool interact_item(World& world, ObjId id);
 // The game view's pass (13E8:2xxx, flag 0x100): the frame follows the
 // item; G picks it up.
 void selection_tick(World& world);

@@ -165,6 +165,14 @@ struct GameState {
         std::uint32_t at = 0;  // kernel tick of the last hit
     };
     std::unordered_map<ObjId, HitBar> hit_bars;
+    // Port addition: blood to spray, queued when a human is shot (the game turns each into particles). The
+    // direction (dx, dy, a unit vector on the map) is that of the shot, so the blood flies on away from the shooter.
+    struct BloodBurst {
+        std::int32_t x = 0, y = 0, z = 0;
+        float dx = 0, dy = 0;
+        int amount = 0;
+    };
+    std::vector<BloodBurst> blood_bursts;
     // The aiming mode of the controlled NPC and the designated target
     // (aim_mode.hpp). The original resets it when the Controller starts
     // (1138:3181), as the port does with every new game state.
@@ -185,6 +193,10 @@ struct GameState {
         // pointer, at this screen position, instead of 200 units from the NPC.
         bool free = false;
         int free_x = 0, free_y = 0;
+        // ... the angle the crosshair has swung to so far (it turns towards the pointer at a limited rate, so the
+        // character cannot snap round), the angle the pointer is at, and whether the first has been set.
+        double smooth = 0, target_angle = 0;
+        bool smooth_init = false;
     } aim;
     // The mouse turning the controlled NPC (world_mouse.hpp, 13E8:2A13):
     // set while the arrow key it sends is handled (DS:5FF6), with its rate

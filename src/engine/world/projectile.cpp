@@ -13,6 +13,7 @@
 #include "engine/world/gravity.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <array>
 #include <cstdlib>
 
@@ -264,15 +265,55 @@ Pid fire_weapon(Kernel& kernel, World& world, const AnimDat& anims, ObjId shoote
     return last;
 }
 
+// @orig none: port-only blood: a human that is shot sprays it on, away from where the shot came from
+void note_blood(World& world, const Item& victim, ObjId attacker, int dir, int damage) {
+    GameState::BloodBurst burst;
+    burst.x = victim.x;
+    burst.y = victim.y;
+    burst.z = victim.z & 0xFF;
+    float dx = 0, dy = 0;
+    if (const Item* shooter = world.get(attacker); shooter && shooter->id != victim.id) {
+        dx = static_cast<float>(victim.x - shooter->x);  // from the shooter through the victim
+        dy = static_cast<float>(victim.y - shooter->y);
+    }
+    if (dx == 0 && dy == 0) {
+        dx = kDirectionDx[dir & 0xF];
+        dy = kDirectionDy[dir & 0xF];
+    }
+    const float length = std::sqrt(dx * dx + dy * dy);
+    if (length == 0) return;
+    burst.dx = dx / length;
+    burst.dy = dy / length;
+    burst.amount = std::clamp(8 + damage / 3, 8, 40);
+    if (world.state.blood_bursts.size() < 64) world.state.blood_bursts.push_back(burst);
+}
+
 // @orig none: port-only health bar of what was hit (the hit points before and after the damage)
 void note_hit(World& world, ObjId id, int before, int after, std::uint32_t now) {
     constexpr std::uint32_t kSeries = 135;  // a hit after this long starts a new series (and maximum)
-    if (before <= 0 || id == world.state.controlled_npc || id == 1) return;
+    // Only what really lost hit points gets a bar (not a shielded, immortal or unaffected target).
+    if (before <= 0 || after >= before || id == world.state.controlled_npc || id == 1) return;
     GameState::HitBar& bar = world.state.hit_bars[id];
     bar.max = (bar.max == 0 || now - bar.at > kSeries) ? static_cast<std::uint16_t>(before)
                                                        : std::max<std::uint16_t>(bar.max, static_cast<std::uint16_t>(before));
     bar.hp = static_cast<std::uint16_t>(std::max(0, after));
     bar.at = now;
+}
+
+// @orig none: port-only, what a dead NPC carried falls out of it onto the tile it died on
+void drop_loot(Kernel& kernel, World& world, ObjId npc) {
+    if (npc == 1 || npc == world.state.controlled_npc) return;
+    const Item* body = world.get(npc);
+    if (!body || body->contents.empty()) return;
+    const std::vector<ObjId> loot = body->contents;
+    const std::int32_t x = body->x, y = body->y, z = body->z + 10;
+    for (ObjId id : loot) {
+        if (!world.get(id)) continue;
+        world.push(id);
+        if (!world.pop_to_coords(x, y, z)) continue;
+        // Thrown up and out a little, then it falls (gravity 2) and lands near the body.
+        hurl(kernel, world, id, rnd_between(world, -12, 12), rnd_between(world, -12, 12), rnd_between(world, 8, 16), 2);
+    }
 }
 
 // @orig 1130:026B
@@ -380,6 +421,9 @@ void apply_damage(Kernel& kernel, World& world, const AnimDat& anims, ObjId targ
     const int hp_before = world.npc_hp(target);
     const int hp = std::max(0, static_cast<int>(world.npc_hp(target)) - damage);
     note_hit(world, target, hp_before, hp, kernel.ticks());
+    if (damage > 0 && takes_full_bullet_damage(item->shape) && target != 1 && target != world.state.controlled_npc) {
+        note_blood(world, *item, attacker, dir, damage);
+    }
     record[0] = static_cast<std::uint8_t>(hp);
     record[1] = static_cast<std::uint8_t>(hp >> 8);
     if (hp != 0) {
@@ -413,6 +457,7 @@ void apply_damage(Kernel& kernel, World& world, const AnimDat& anims, ObjId targ
         if (target == 1) kernel.spawn<DeathSilence>(world);
         else set_controlled_npc(kernel, world, anims, 0);
     }
+    drop_loot(kernel, world, target);  // port addition: the loot falls from the body
     // Special deaths of humans (not the robot shapes), with VIOLENCE=1 (the
     // option string DS:0953 of the executable) where noted.
     const bool human = takes_full_bullet_damage(item->shape);

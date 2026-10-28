@@ -94,6 +94,9 @@ void aim_at_angle(Kernel& kernel, World& world, const AnimDat& anims, int angle)
 // Keyboard and mouse mode, weapon away: turns the idle controlled NPC on the spot
 // (stand, or kneeling stand) to face the screen position, when not busy.
 void face_screen_point(Kernel& kernel, World& world, const AnimDat& anims, int screen_x, int screen_y);
+// Keyboard and mouse mode, aiming: the crosshair turns towards the pointer by at most a set number of degrees
+// a second (turning the character with it), instead of snapping to it.
+void turn_aim_towards_pointer(World& world, double seconds);
 
 // The laser sight of a drawn weapon: from the muzzle to the crosshair, cut short at the
 // first thing in the way (`hit`). Nothing when the controlled NPC is not aiming.

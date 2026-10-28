@@ -43,6 +43,25 @@ public:
         float x, y, fraction, alpha;
     };
     void set_hit_bars(std::vector<HitBar> bars) { hit_bars_ = std::move(bars); }
+    // The mouse arrow, drawn on the graphics card (not from the game's palette), with a small green / red dot
+    // beside it when it is over something that can be used (hover 1 in reach, 2 too far).
+    void set_pointer(bool show, float x, float y, int hover) { pointer_ = {show, x, y, hover}; }
+    // Blood (view pixels): a streak while it flies (kind 0), a puff of mist (1), a flat splat on the floor (2).
+    struct BloodDot {
+        float x, y, x0, y0, size, alpha;
+        int kind;
+    };
+    void set_blood(std::vector<BloodDot> dots) { blood_ = std::move(dots); }
+    // The first person inset: a square of `size` view pixels at (x, y), with one column per entry (height as a fraction of
+    // the square, 0 for an empty column, and its colour); an empty list hides it.
+    struct FpvColumn {
+        float height;
+        std::uint8_t r, g, b;
+    };
+    void set_fpv(float x, float y, float size, std::vector<FpvColumn> columns) {
+        fpv_x_ = x, fpv_y_ = y, fpv_size_ = size;
+        fpv_ = std::move(columns);
+    }
     // Desktop fullscreen on / off (Alt+Enter).
     void toggle_fullscreen();
     // Size of the window's drawing area in real pixels.
@@ -68,6 +87,17 @@ private:
     std::vector<std::pair<float, float>> path_;
     std::vector<HitBar> hit_bars_;
     void draw_hit_bars();
+    void draw_pointer();
+    void draw_blood();
+    void draw_fpv();
+    std::vector<FpvColumn> fpv_;
+    float fpv_x_ = 0, fpv_y_ = 0, fpv_size_ = 0;
+    std::vector<BloodDot> blood_;
+    struct Pointer {
+        bool show = false;
+        float x = 0, y = 0;
+        int hover = 0;
+    } pointer_;
 };
 
 }  // namespace crusader

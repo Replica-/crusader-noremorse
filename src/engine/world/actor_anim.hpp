@@ -137,6 +137,10 @@ struct SimulatedStep {
 SimulatedStep simulate_step(const World& world, const AnimDat& anims, ObjId actor, std::uint16_t action, int dir,
                             World::Point& pos, ObjId goal);
 
+// Port addition: whether the WHOLE stride of `action` facing `dir` (every frame it will play, as the engine's own
+// check before a walk) is free from the actor's position. simulate_step only looks at the first frame.
+bool stride_fits(const World& world, const AnimDat& anims, ObjId actor, std::uint16_t action, int dir);
+
 // CRUSADER_1138_32a8: shows the first frame of `action` in the actor's
 // direction at once (last action = `action`, frame index 0).
 void set_pose(World& world, const AnimDat& anims, ObjId actor, std::uint16_t action);

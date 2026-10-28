@@ -27,6 +27,12 @@ std::pair<int, int> centre(const World& world, const Item& item) {
     return {static_cast<std::uint16_t>(item.x - fx * 8), static_cast<std::uint16_t>(item.y - fy * 8)};
 }
 
+// A container (a chest, a body) with nothing left in it offers nothing to use or take.
+bool emptied_container(const World& world, const Item& item) {
+    const ShapeInfo* info = world.shape_info(item.shape);
+    return info && (info->family == kFamilyContainer || info->family == kFamilyActorContainer) && item.contents.empty();
+}
+
 bool selectable(const World& world, const Item& item) {
     const ShapeInfo* info = world.shape_info(item.shape);
     return info && info->is(ShapeInfo::kSelectable);
@@ -121,6 +127,7 @@ std::vector<ObjId> nearby_items(const World& world) {
         const ShapeInfo* info = world.shape_info(item->shape);
         const int family = info ? info->family : 0;
         if (item->shape != kNotUsable && (family < 10 || family > 13) && !selectable(world, *item)) continue;
+        if (emptied_container(world, *item)) continue;
         const auto [cx, cy] = centre(world, *item);
         const int distance = std::max(std::abs(cx - px), std::abs(cy - py));
         const int z = item->z & 0xFF;
@@ -251,6 +258,7 @@ ObjId hover_item(const World& world, int screen_x, int screen_y, bool* in_range)
         const ShapeInfo* info = world.shape_info(item->shape);
         const int family = info ? info->family : 0;
         if (item->shape != kNotUsable && (family < 10 || family > 13) && !selectable(world, *item)) continue;
+        if (emptied_container(world, *item)) continue;
         const auto [cx, cy] = centre(world, *item);
         const auto ux = static_cast<std::int16_t>(cx), uy = static_cast<std::int16_t>(cy);
         const int sx = ((ux - uy) >> 1) - world.state.view_left;
@@ -263,6 +271,32 @@ ObjId hover_item(const World& world, int screen_x, int screen_y, bool* in_range)
         *in_range = std::find(near.begin(), near.end(), best) != near.end();
     }
     return best;
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+// @orig none: port-only, interaction by walking up to an item
+bool item_in_range(const World& world, ObjId id) {
+    const std::vector<ObjId> near = nearby_items(world);
+    return std::find(near.begin(), near.end(), id) != near.end();
+}
+
+// @orig none: port-only, interaction by walking up to an item
+bool interact_item(World& world, ObjId id) {
+    auto& sel = world.state.selection;
+    if (sel.active) return false;
+    const std::vector<ObjId> items = nearby_items(world);
+    const auto it = std::find(items.begin(), items.end(), id);
+    if (it == items.end()) return false;
+    sel.pick_all = false;
+    sel.items = items;
+    sel.chosen = 0;
+    sel.current = static_cast<int>(it - items.begin());
+    sel.active = true;
+    take(world);
+    return true;
 }
 
 }  // namespace crusader

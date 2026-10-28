@@ -43,7 +43,7 @@ void draw_plus_icon(Surface8& screen, int x, int y, int size, std::uint8_t colou
 class EnhancementsScreen {
 public:
     static constexpr int kPadRow = 0, kFollowRow = 1, kDirectionalRow = 2, kAimRow = 3, kNativeRow = 4,
-                              kZoomRow = 5, kAutosaveRow = 6, kRunRow = 7, kKeyMouseRow = 8, kBackRow = 9, kRows = 10;
+                              kZoomRow = 5, kAutosaveRow = 6, kRunRow = 7, kKeyMouseRow = 8, kRollRow = 9, kBackRow = 10, kRows = 11;
     static constexpr int kFont = 14;
 
     struct Rect {
