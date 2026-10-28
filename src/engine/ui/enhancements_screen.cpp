@@ -11,7 +11,7 @@ namespace {
 
 constexpr int kPanelX0 = 100, kPanelY0 = 84, kPanelX1 = 539, kPanelY1 = 426;
 constexpr int kTitleY = 120, kIconSize = 14, kIconGap = 8;
-constexpr int kRowX0 = 130, kRowX1 = 509, kRowY0 = 158, kRowStep = 30, kRowHeight = 24;
+constexpr int kRowX0 = 130, kRowX1 = 509, kRowY0 = 158, kRowStep = 27, kRowHeight = 23;
 constexpr int kTextDrop = 17, kRowPad = 18;  // glyphs hang from their baseline
 constexpr std::uint8_t kFrameColour = 0x57, kGreen = 0x0C, kDimGreen = 0x75;
 
@@ -91,7 +91,7 @@ void EnhancementsScreen::draw(Surface8& screen) const {
         draw_rounded_box(screen, r.x0, r.y0, r.x1, r.y1, -1, static_cast<std::uint8_t>(tint));
         const TextWriter writer(*fonts_, kFont);
         if (row == kFollowRow || row == kDirectionalRow || row == kAimRow || row == kNativeRow || row == kZoomRow ||
-            row == kAutosaveRow || row == kRunRow) {
+            row == kAutosaveRow || row == kRunRow || row == kKeyMouseRow) {
             // The name on the left, its state on the right.
             std::string name;
             bool on = false;
@@ -111,6 +111,9 @@ void EnhancementsScreen::draw(Surface8& screen) const {
             } else if (row == kRunRow) {
                 name = tr("COURSE PERMANENTE", "TOGGLE RUN");
                 on = config_->toggle_run;
+            } else if (row == kKeyMouseRow) {
+                name = tr("CLAVIER ET SOURIS", "KEYBOARD AND MOUSE");
+                on = config_->keyboard_mouse;
             } else if (row == kNativeRow) {
                 name = tr("RESOLUTION NATIVE", "NATIVE RESOLUTION");
                 on = config_->native_resolution;
@@ -145,6 +148,8 @@ void EnhancementsScreen::activate(int row) {
         config_->autosave = !config_->autosave;
     } else if (row == kRunRow) {
         config_->toggle_run = !config_->toggle_run;
+    } else if (row == kKeyMouseRow) {
+        config_->keyboard_mouse = !config_->keyboard_mouse;
     } else if (row == kNativeRow) {
         config_->native_resolution = !config_->native_resolution;
     } else if (row == kAimRow) {

@@ -68,6 +68,9 @@ public:
     static int direction(int x, int y);
 
     void draw(Surface8& screen) const;
+    // Port addition: the arrow at (x, y) whatever the cursor's state, for the
+    // free pointer of the keyboard and mouse mode.
+    void draw_arrow_at(Surface8& screen, int x, int y) const;
     std::size_t frame_count() const { return shape_.frames().size(); }
 
 private:

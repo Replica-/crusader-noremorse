@@ -80,4 +80,10 @@ void MouseCursor::draw(Surface8& screen) const {
     shape_.frames()[frame()].draw(screen, x_, y_);
 }
 
+// @orig none: port-only pointer of the keyboard and mouse mode
+void MouseCursor::draw_arrow_at(Surface8& screen, int x, int y) const {
+    if (shape_.frames().size() <= kMenuArrow) return;
+    shape_.frames()[kMenuArrow].draw(screen, x, y);
+}
+
 }  // namespace crusader

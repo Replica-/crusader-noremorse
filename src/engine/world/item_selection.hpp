@@ -49,6 +49,13 @@ void selection_key(World& world, std::uint16_t code);
 // A press of the left mouse button (13E8:2B74 with flag 0x100, not a double
 // click): as Enter.
 void selection_click(World& world);
+// Port addition (keyboard and mouse mode): a click at a screen position on an
+// item the selection mode would offer (near the player): it is used or picked
+// up, as with S then Enter. False when no such item is there.
+bool click_item(World& world, int screen_x, int screen_y);
+// The item the selection mode could offer (use or pick up) under a screen
+// position, in range of the player or not; 0 when none. `in_range` tells which.
+ObjId hover_item(const World& world, int screen_x, int screen_y, bool* in_range);
 // The game view's pass (13E8:2xxx, flag 0x100): the frame follows the
 // item; G picks it up.
 void selection_tick(World& world);

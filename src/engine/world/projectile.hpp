@@ -82,6 +82,11 @@ ObjId find_target(const World& world, ObjId shooter, int dir, bool sixteen_direc
 // higher -16 (f = 6) or -24 (f >= 7).
 World::Point aim_point(const World& world, ObjId shooter, ObjId target);
 
+// The half-width in x / y of the spread of a shot of the controlled NPC at `target` (fire_weapon
+// draws each coordinate within it); `z_spread` gets the one in z. 0 when the weapon has no spread.
+int player_shot_spread(const World& world, int fire_type, const World::Point& origin, const World::Point& target,
+                       int* z_spread = nullptr);
+
 // Item::I_fireWeapon. Returns the pid of the last projectile, 0 if none.
 Pid fire_weapon(Kernel& kernel, World& world, const AnimDat& anims, ObjId shooter, int dx, int dy, int dz,
                 int dir, int fire_type, bool aim);

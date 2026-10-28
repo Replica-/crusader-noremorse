@@ -10,6 +10,8 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 struct SDL_Window;
 struct SDL_Renderer;
@@ -29,6 +31,18 @@ public:
     void set_gamma(double gamma);
     void present(const Surface8& frame, const Palette& palette);
     void maximize();
+    // "opengl", "direct3d11", "software"... and whether it is the software renderer.
+    std::string renderer_name() const;
+    bool software_renderer() const;
+    // The laser sight drawn over the next frames (view pixels), cleared with on = false.
+    void set_laser(bool on, bool hit, float x0, float y0, float x1, float y1, float spread_x = 0, float spread_y = 0);
+    // The click-to-walk debug path (view pixels, goal last), empty to hide it.
+    void set_debug_path(const std::vector<std::pair<float, float>>& points) { path_ = points; }
+    // Health bars (centre x, y, fraction left 0..1, opacity 0..1), drawn over the frame.
+    struct HitBar {
+        float x, y, fraction, alpha;
+    };
+    void set_hit_bars(std::vector<HitBar> bars) { hit_bars_ = std::move(bars); }
     // Desktop fullscreen on / off (Alt+Enter).
     void toggle_fullscreen();
     // Size of the window's drawing area in real pixels.
@@ -45,6 +59,15 @@ private:
     std::array<std::uint8_t, 256> gamma_table_;
     int width_;
     int height_;
+    struct Laser {
+        bool on = false, hit = false;
+        float x0 = 0, y0 = 0, x1 = 0, y1 = 0, spread_x = 0, spread_y = 0;
+    } laser_;
+    void draw_laser();
+    void draw_debug_path();
+    std::vector<std::pair<float, float>> path_;
+    std::vector<HitBar> hit_bars_;
+    void draw_hit_bars();
 };
 
 }  // namespace crusader

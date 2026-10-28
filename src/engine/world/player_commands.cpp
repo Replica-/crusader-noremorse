@@ -235,15 +235,6 @@ bool player_command(Kernel& kernel, World& world, const AnimDat& anims, std::uin
     case 'B': case 'b':
         if (may_act) set_off_detpacs(world);
         return true;
-    case 'R': case 'r': {
-        // No condition: target designation on or off, and the message box.
-        bool& on = world.state.target_designation;
-        on = !on;
-        if (world.hooks().show_message)
-            world.hooks().show_message(on ? tr("DESIGNATION DE CIBLE ACTIVE.", "TARGETING RETICLE ACTIVE.")
-                                          : tr("DESIGNATION DE CIBLE INACTIVE.", "TARGETING RETICLE INACTIVE."));
-        return true;
-    }
     case 0x420:  // Ctrl+D
         if (world.state.controlled_npc == kPlayer && may_act) drop_weapon(kernel, world, anims);
         return true;

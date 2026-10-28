@@ -101,15 +101,13 @@ void selection_click(World& world) {
     take(world);
 }
 
-// @orig 13E8:33D9
-void start_selection(World& world, bool pick_all) {
-    auto& sel = world.state.selection;
-    sel.pick_all = pick_all;
-    sel.items.clear();
-    sel.chosen = 0;
-    sel.current = -1;
+namespace {
+
+// The items the selection mode offers: nearest first (see the header).
+std::vector<ObjId> nearby_items(const World& world) {
+    std::vector<ObjId> items;
     const Item* player = world.get(kPlayer);
-    if (!player) return;
+    if (!player) return items;
     const auto [px, py] = centre(world, *player);
     const int pz = player->z & 0xFF;
     struct Candidate {
@@ -131,7 +129,21 @@ void start_selection(World& world, bool pick_all) {
     }
     // A bubble sort: nearest first, in item order between equals.
     std::stable_sort(found.begin(), found.end(), [](const Candidate& a, const Candidate& b) { return a.distance < b.distance; });
-    for (const Candidate& c : found) sel.items.push_back(c.id);
+    for (const Candidate& c : found) items.push_back(c.id);
+    return items;
+}
+
+}  // namespace
+
+// @orig 13E8:33D9
+void start_selection(World& world, bool pick_all) {
+    auto& sel = world.state.selection;
+    sel.pick_all = pick_all;
+    sel.items.clear();
+    sel.chosen = 0;
+    sel.current = -1;
+    if (!world.get(kPlayer)) return;
+    sel.items = nearby_items(world);
     if (sel.items.empty()) {
         sel.pick_all = false;
         finish(world);
@@ -191,6 +203,66 @@ void selection_tick(World& world) {
         sel.chosen = id;
         finish(world);
     }
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+// @orig none: port-only click on an item (keyboard and mouse mode)
+bool click_item(World& world, int screen_x, int screen_y) {
+    constexpr int kHitRadius = 28;
+    auto& sel = world.state.selection;
+    if (sel.active) return false;
+    const std::vector<ObjId> items = nearby_items(world);
+    int best = -1, best_distance = kHitRadius * kHitRadius + 1;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        const Item* item = world.get(items[i]);
+        if (!item) continue;
+        const auto [cx, cy] = centre(world, *item);
+        const auto ux = static_cast<std::int16_t>(cx), uy = static_cast<std::int16_t>(cy);
+        const int sx = ((ux - uy) >> 1) - world.state.view_left;
+        const int sy = (static_cast<std::uint16_t>(ux + uy) >> 2) - world.state.view_top - (item->z & 0xFF) - 8;
+        const int d = (sx - screen_x) * (sx - screen_x) + (sy - screen_y) * (sy - screen_y);
+        if (d < best_distance) best = static_cast<int>(i), best_distance = d;
+    }
+    if (best < 0) return false;
+    sel.pick_all = false;
+    sel.items = items;
+    sel.chosen = 0;
+    sel.current = best;
+    sel.active = true;
+    take(world);  // as Enter on the item: used if selectable, else picked up
+    return true;
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+// @orig none: port-only hover target (keyboard and mouse mode)
+ObjId hover_item(const World& world, int screen_x, int screen_y, bool* in_range) {
+    constexpr int kHitRadius = 28;
+    ObjId best = 0;
+    int best_distance = kHitRadius * kHitRadius + 1;
+    for (ObjId id = kFirstItem; id <= kLastItem; ++id) {
+        const Item* item = world.get(id);
+        if (!item || item->sprite_only || (item->z & 0xFF) == 254 || (item->flags & kItemContained)) continue;
+        const ShapeInfo* info = world.shape_info(item->shape);
+        const int family = info ? info->family : 0;
+        if (item->shape != kNotUsable && (family < 10 || family > 13) && !selectable(world, *item)) continue;
+        const auto [cx, cy] = centre(world, *item);
+        const auto ux = static_cast<std::int16_t>(cx), uy = static_cast<std::int16_t>(cy);
+        const int sx = ((ux - uy) >> 1) - world.state.view_left;
+        const int sy = (static_cast<std::uint16_t>(ux + uy) >> 2) - world.state.view_top - (item->z & 0xFF) - 8;
+        const int d = (sx - screen_x) * (sx - screen_x) + (sy - screen_y) * (sy - screen_y);
+        if (d < best_distance) best = id, best_distance = d;
+    }
+    if (best != 0 && in_range) {
+        const std::vector<ObjId> near = nearby_items(world);
+        *in_range = std::find(near.begin(), near.end(), best) != near.end();
+    }
+    return best;
 }
 
 }  // namespace crusader

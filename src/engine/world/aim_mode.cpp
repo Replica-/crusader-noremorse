@@ -1,11 +1,14 @@
 #include "engine/world/aim_mode.hpp"
 
+#include "core/dtable.hpp"
 #include "engine/world/actor_anim.hpp"
 #include "engine/world/attack.hpp"
+#include "engine/world/collision.hpp"
 #include "engine/world/projectile.hpp"
 #include "engine/world/sprite_process.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <initializer_list>
 
 namespace crusader {
@@ -138,6 +141,34 @@ void leave_aim_mode(Kernel& kernel, World& world) {
     aim.target = 0;
 }
 
+namespace {
+// Keyboard and mouse mode: the 3D point under a screen position. The screen
+// maps ((x - y) / 2, (x + y) / 4 - z), so the pixel is a line P(z) = (x0 + 2 z,
+// y0 + 2 z, z); walking down it from the top, the first solid thing met (not
+// the NPC itself) is what the pointer is over, else the ground at z 0.
+void pick_point(const World& world, int screen_x, int screen_y, ObjId ignore, std::int16_t& x, std::int16_t& y,
+                std::uint8_t& z) {
+    const int u = 2 * (screen_x + world.state.view_left);
+    const int w = 4 * (screen_y + world.state.view_top);
+    const int x0 = (u + w) / 2, y0 = (w - u) / 2;
+    const std::uint16_t mask = collision_mask(world.shape_info(kProjectileShape));
+    for (int h = 250; h >= 0; h -= 2) {
+        const World::Point at{x0 + 2 * h, y0 + 2 * h, h};
+        ObjId solid = 0;
+        if (!box_free(world, 1, 1, 1, mask, at, &solid, ignore) && solid != 0) {
+            x = static_cast<std::int16_t>(at.x);
+            y = static_cast<std::int16_t>(at.y);
+            z = static_cast<std::uint8_t>(h);
+            return;
+        }
+    }
+    x = static_cast<std::int16_t>(x0);
+    y = static_cast<std::int16_t>(y0);
+    z = 0;
+}
+
+}  // namespace
+
 // @orig 1138:0708
 void place_crosshair(World& world, const AnimDat& anims) {
     GameState::Aim& aim = world.state.aim;
@@ -148,12 +179,13 @@ void place_crosshair(World& world, const AnimDat& anims) {
     std::int16_t x = static_cast<std::int16_t>(npc->x - (info ? info->footpad_x : 0) * 8);  // getCX
     std::int16_t y = static_cast<std::int16_t>(npc->y - (info ? info->footpad_y : 0) * 8);  // getCY
     const int dir = npc_dir(world, id);
-    const auto z = static_cast<std::uint8_t>(world.location(*npc).z + muzzle_height(world, anims, id, dir));
+    auto z = static_cast<std::uint8_t>(world.location(*npc).z + muzzle_height(world, anims, id, dir));
     if (aim.angle > 360) aim.angle = (22 * dir + 5 + 270) % 360;
     const TrigTables& trig = world.trig();
     // PFLOAT_12d0_02a7: 16.16 times 200, whole part.
     x = static_cast<std::int16_t>(x + ((static_cast<std::int64_t>(trig.cos_deg(aim.angle)) * kCrosshairDistance) >> 16));
     y = static_cast<std::int16_t>(y + ((static_cast<std::int64_t>(trig.sin_deg(aim.angle)) * kCrosshairDistance) >> 16));
+    if (aim.free) pick_point(world, aim.free_x, aim.free_y, id, x, y, z);  // exactly under the pointer
     if (aim.crosshair == -1) aim.crosshair = world.state.screen_sprites.add(kCrosshairShape, 0, x, y, z);
     else world.state.screen_sprites.move(aim.crosshair, x, y, z);
     aim.crosshair_dirty = false;
@@ -235,7 +267,7 @@ void aim_at_angle(Kernel& kernel, World& world, const AnimDat& anims, int angle)
 std::optional<World::Point> crosshair_aim(const World& world, int z) {
     const ScreenSprite* cross = world.state.screen_sprites.get(world.state.aim.crosshair);
     if (!cross) return std::nullopt;
-    return World::Point{cross->x, cross->y, z & 0xFF};
+    return World::Point{cross->x, cross->y, world.state.aim.free ? cross->z : z & 0xFF};
 }
 
 // @orig 1138:0459
@@ -312,6 +344,77 @@ void DumbTimer::run() {
         check_designation(kernel(), world_, anims_);
         world_.state.aim.timer_at = now;
     }
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+// @orig none: port-only facing of the pointer
+int pointer_direction(const World& world, int screen_x, int screen_y) {
+    const Item* npc = world.get(world.state.controlled_npc);
+    if (!npc) return -1;
+    // The point of the NPC's own plane that projects under the pointer.
+    const int z = npc->z & 0xFF;
+    const int u = 2 * (screen_x + world.state.view_left);
+    const int v = 4 * (screen_y + world.state.view_top + z);
+    const int px = (u + v) / 2, py = (v - u) / 2;
+    const ShapeInfo* info = world.shape_info(npc->shape);
+    const std::int32_t cx = static_cast<std::uint16_t>(npc->x - (info ? info->footpad_x : 0) * 8);
+    const std::int32_t cy = static_cast<std::uint16_t>(npc->y - (info ? info->footpad_y : 0) * 8);
+    if (std::abs(px - cx) + std::abs(py - cy) < 16) return -1;
+    return direction_16(cx, cy, static_cast<std::uint16_t>(px), static_cast<std::uint16_t>(py));
+}
+
+// @orig none: port-only facing of the pointer with the weapon away
+void face_screen_point(Kernel& kernel, World& world, const AnimDat& anims, int screen_x, int screen_y) {
+    const ObjId id = world.state.controlled_npc;
+    const Item* npc = world.get(id);
+    if (!npc || world.is_dead(id) || actor_busy(kernel, id) || world.state.aim.turns != 0) return;
+    const int wanted = pointer_direction(world, screen_x, screen_y);
+    if (wanted < 0 || wanted == npc_dir(world, id)) return;
+    do_anim(kernel, world, anims, id, kneeling(world, id) ? 0x2E : 0, wanted);
+}
+
+// @orig none: port-only, a walk that follows the pointer
+bool redirect_animation(Kernel& kernel, World& world, int dir) {
+    ActorAnimProcess* anim = current_anim(kernel, world.state.controlled_npc);
+    if (!anim || dir < 0 || anim->direction() == dir) return false;
+    anim->set_direction(dir);
+    return true;
+}
+
+// @orig none: port-only laser sight
+std::optional<LaserBeam> laser_beam(const World& world, const AnimDat& anims) {
+    const GameState::Aim& aim = world.state.aim;
+    const ObjId id = world.state.controlled_npc;
+    const Item* npc = world.get(id);
+    const ScreenSprite* cross = aim.active ? world.state.screen_sprites.get(aim.crosshair) : nullptr;
+    if (!npc || !cross || world.is_dead(id)) return std::nullopt;
+    const ShapeInfo* info = world.shape_info(npc->shape);
+    const int dir = npc_dir(world, id);
+    // From just in front of the NPC, at the muzzle's height.
+    LaserBeam beam;
+    const int muzzle_z = (world.location(*npc).z + muzzle_height(world, anims, id, dir)) & 0xFF;
+    beam.from = {static_cast<std::uint16_t>(npc->x - (info ? info->footpad_x : 0) * 8) + kDirectionDx[dir] * 8,
+                 static_cast<std::uint16_t>(npc->y - (info ? info->footpad_y : 0) * 8) + kDirectionDy[dir] * 8, muzzle_z};
+    World::Point target{cross->x, cross->y, cross->z};
+    // Not a very long sweep: the beam stops at 1500 units.
+    const std::int32_t dx = target.x - beam.from.x, dy = target.y - beam.from.y;
+    const std::int32_t longest = std::max(std::abs(dx), std::abs(dy));
+    if (longest > 1500) {
+        target.x = beam.from.x + dx * 1500 / longest;
+        target.y = beam.from.y + dy * 1500 / longest;
+    }
+    const SweepResult r = sweep(world, kProjectileShape, id, beam.from, target, kSweepNoGround);
+    beam.to = r.blocker != 0 ? r.end : target;
+    // "Hit": cut short well before the target (the target itself is on a surface).
+    beam.hit = r.blocker != 0 && std::max(std::abs(beam.to.x - target.x), std::abs(beam.to.y - target.y)) > 24;
+    // The weapon's accuracy at that distance, as fire_weapon will apply it.
+    if (const Item* gun = world.get(world.active_weapon(id))) {
+        beam.spread = player_shot_spread(world, dtable::weapon(gun->shape).fire_type(), beam.from, beam.to, &beam.spread_z);
+    }
+    return beam;
 }
 
 }  // namespace crusader

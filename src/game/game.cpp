@@ -22,6 +22,8 @@
 #include "engine/ui/weasel_gump.hpp"
 #include "engine/ui/shape_dialog.hpp"
 #include "engine/world/item_selection.hpp"
+#include "engine/world/click_path.hpp"
+#include "engine/world/pathfind.hpp"
 #include "engine/world/player_commands.hpp"
 #include "engine/world/actor_anim.hpp"
 #include "engine/world/inventory.hpp"
@@ -204,7 +206,7 @@ void Game::reset_world() {
     }
     machine_.reset();
     // DS:2889 is not part of a game.
-    const bool target_designation = world_ ? world_->state.target_designation : true;
+    const bool target_designation = world_ ? world_->state.target_designation : false;
     world_.reset();
     kernel_ = std::make_unique<Kernel>();
     machine_ = std::make_unique<UCMachine>(*kernel_, usecode_);
@@ -347,6 +349,54 @@ void Game::pad_button(int button) {
 }
 
 void Game::key(std::uint8_t scancode, bool extended, bool pressed, std::uint16_t flags, std::uint8_t ascii) {
+    // Port addition (GameConfig::keyboard_mouse): W / S walk forward / backward
+    // (Up / Down), A / D step aside (Alt + Left / Right), Q / E roll (Ctrl +
+    // Left / Right), the original's own key combinations.
+    if (!extended && scancode < 128) {
+        struct Remap {
+            std::uint8_t from, to, modifier;
+            std::uint16_t flag;
+        };
+        static constexpr Remap kRemap[] = {
+            {0x11, 0x48, 0, 0},                {0x1F, 0x50, 0, 0},
+            {0x1E, 0x4B, 0x38, kLeftAlt | kAlt}, {0x20, 0x4D, 0x38, kLeftAlt | kAlt},
+            {0x10, 0x4B, 0x1D, kLeftCtrl | kCtrl}, {0x12, 0x4D, 0x1D, kLeftCtrl | kCtrl},
+        };
+        for (Remap r : kRemap) {
+            if (r.from != scancode) continue;
+            if (pressed) {
+                if (!remap_mod_[scancode] && !free_pointer()) break;
+                stop_walk_path();  // the keys take over from a click-to-walk
+                // With the weapon drawn, W steps forward (Alt + Up, action 0x24)
+                // instead of walking; a repeat keeps the mapping of the press.
+                const std::uint8_t held = remap_mod_[scancode];
+                if (held) {
+                    r.modifier = held > 1 ? held : 0;
+                    r.flag = held == 0x38 ? kLeftAlt | kAlt : held == 0x1D ? kLeftCtrl | kCtrl : 0;
+                } else if (r.from == 0x11 && world_ && in_combat_stance(*world_, 1)) {
+                    r = {0x11, 0x48, 0x38, kLeftAlt | kAlt};
+                }
+                if (!held && r.modifier) {
+                    keyboard_.key(r.modifier, false, true, static_cast<std::uint16_t>(flags | r.flag), 0, kernel_->ticks());
+                }
+                remap_mod_[scancode] = r.modifier ? r.modifier : 1;
+                if (!held && r.modifier && world_ && actor_busy(*kernel_, 1)) {
+                    pending_move_ = {r.from, r.to, static_cast<std::uint16_t>(flags | r.flag)};
+                }
+                keyboard_.key(r.to, true, true, static_cast<std::uint16_t>(flags | r.flag), 0, kernel_->ticks());
+            } else if (remap_mod_[scancode]) {
+                const std::uint8_t held = remap_mod_[scancode];
+                const std::uint16_t flag = held == 0x38 ? kLeftAlt | kAlt : held == 0x1D ? kLeftCtrl | kCtrl : 0;
+                keyboard_.key(r.to, true, false, static_cast<std::uint16_t>(flags | flag), 0, kernel_->ticks());
+                if (held > 1) keyboard_.key(held, false, false, flags, 0, kernel_->ticks());
+                remap_mod_[scancode] = 0;
+                if (pending_move_.source == scancode) pending_move_ = {};
+            } else {
+                break;
+            }
+            return;
+        }
+    }
     keyboard_.key(scancode, extended, pressed, flags, ascii, kernel_->ticks());
 }
 
@@ -641,6 +691,62 @@ void Game::update(std::uint32_t elapsed_us) {
         // Screen east is the world angle 315 degrees, north 225: 315 - screen.
         aim_at_angle(*kernel_, *world_, anims_, static_cast<int>(std::lround(315.0 - aim_stick_deg_)));
     }
+    // Keyboard and mouse mode: the NPC faces the free pointer (the angle on
+    // the screen from the NPC to the pointer, as for the aiming stick).
+    if (world_) {
+        GameState::Aim& aim = world_->state.aim;
+        aim.free = free_pointer();
+        aim.free_x = pointer_x_;
+        aim.free_y = pointer_y_;
+        if (aim.free && aim.active) place_crosshair(*world_, anims_);  // under the pointer, whatever its distance
+    }
+    // A step or roll pressed during another animation: do it as soon as the NPC is free.
+    if (pending_move_.source && world_ && !modal() && !movie_) {
+        if (!remap_mod_[pending_move_.source]) {
+            pending_move_ = {};
+        } else if (!actor_busy(*kernel_, 1)) {
+            GameKeyEvent e;
+            e.scancode = pending_move_.to;
+            e.extended = true;
+            e.pressed = true;
+            e.count = 1;
+            e.flags = pending_move_.flags;
+            e.time = kernel_->ticks();
+            pending_move_ = {};
+            on_key(e);
+        }
+    }
+    // Right button held for a fifth of a second: fire until it is released.
+    if (right_consumed_ && !right_firing_ && free_pointer() && kernel_->ticks() - right_down_at_ >= 10) {
+        right_firing_ = true;
+        mouse_buttons_ = static_cast<std::uint16_t>(mouse_buttons_ | 1);
+        mouse_queue_.press(false, cursor_.x(), cursor_.y(), 1);
+    }
+    update_walk_path();
+    update_path_preview();
+    if (world_ && free_pointer() && !world_->state.avatar_in_stasis && world_->state.controlled_npc == 1) {
+        // A movement key held: never stop to turn (that interrupts the walk and
+        // makes it stutter); W alone steers the running step towards the pointer.
+        const bool moving = remap_mod_[0x11] || remap_mod_[0x1F] || remap_mod_[0x1E] || remap_mod_[0x20] ||
+                            remap_mod_[0x10] || remap_mod_[0x12];
+        if (moving) {
+            if (remap_mod_[0x11]) redirect_animation(*kernel_, *world_, pointer_direction(*world_, pointer_x_, pointer_y_));
+        } else if (!path_active_ && !world_->state.aim.active && !in_combat_stance(*world_, 1)) {
+            // Weapon away: turn on the spot to face the pointer (when not busy).
+            face_screen_point(*kernel_, *world_, anims_, pointer_x_, pointer_y_);
+        } else if (!path_active_) {
+            if (const Item* player = world_->get(1)) {
+                const auto ux = static_cast<std::int16_t>(player->x), uy = static_cast<std::int16_t>(player->y);
+                const int sx = ((ux - uy) >> 1) - world_->state.view_left;
+                const int sy = (static_cast<std::uint16_t>(ux + uy) >> 2) - world_->state.view_top - (player->z & 0xFF) - 20;
+                const double dx = pointer_x_ - sx, dy = pointer_y_ - sy;
+                if (dx * dx + dy * dy > 64) {
+                    const double deg = std::atan2(-dy, dx) * 180.0 / 3.14159265358979;
+                    aim_at_angle(*kernel_, *world_, anims_, static_cast<int>(std::lround(315.0 - deg)));
+                }
+            }
+        }
+    }
     // Outside the kernel slice: a key repeat can choose a save from within it.
     if (pending_load_) {
         const int slot = pending_load_;
@@ -728,6 +834,7 @@ void Game::play_movie(const std::string& name, MovieKind kind) {
 
 // @orig 1468:03E3 1468:3ABC
 void Game::start_movie(const std::string& name, MovieKind kind, Surface8 screen) {
+    if (skip_movies_) return;  // port addition: --skip-movies
     const std::filesystem::path base = data_ / "FLICS" / movie_base_name(name);
     std::filesystem::path avi = base;
     avi += ".AVI";
@@ -1378,6 +1485,48 @@ void Game::mouse_button(int button, bool pressed, int x, int y) {
     const std::uint16_t bit = button == 1 ? 1 : 2;
     mouse_buttons_ = static_cast<std::uint16_t>(pressed ? mouse_buttons_ | bit : mouse_buttons_ & ~bit);
     cursor_.move_to(x, y);
+    // Keyboard and mouse mode. Left: with the weapon away, a click uses or picks up the item under
+    // the pointer (else walks there) and never draws the weapon; with it drawn, it fires as usual.
+    // Right: a press draws the weapon, or puts it away on release when it was already drawn and the
+    // button was only tapped; held (a fifth of a second), it fires until released. The releases of
+    // the clicks handled here are dropped with them.
+    if (!pressed && button == 1 && click_consumed_) {
+        click_consumed_ = false;
+        return;
+    }
+    if (!pressed && button == 2 && right_consumed_) {
+        right_consumed_ = false;
+        if (right_firing_) {
+            mouse_queue_.release(false, cursor_.x(), cursor_.y(), 0);
+            mouse_buttons_ = static_cast<std::uint16_t>(mouse_buttons_ & ~1);
+            right_firing_ = false;
+        } else if (!right_drew_ && world_->state.controlled_npc == 1 && in_combat_stance(*world_, 1) &&
+                   !actor_busy(*kernel_, 1)) {
+            do_anim(*kernel_, *world_, anims_, 1, 0xB, kDirCurrent);  // a tap on a drawn weapon: put it away
+        }
+        return;
+    }
+    if (pressed && free_pointer() && world_->state.controlled_npc == 1 && !world_->state.avatar_in_stasis &&
+        !world_->state.selection.active) {
+        const bool drawn = in_combat_stance(*world_, 1);
+        if (button == 1 && !drawn) {
+            stop_walk_path();
+            if (!click_item(*world_, pointer_x_, pointer_y_)) start_walk_to_pointer();
+            click_consumed_ = true;
+            return;
+        }
+        if (button == 2) {
+            stop_walk_path();
+            right_drew_ = false;
+            if (!drawn && !actor_busy(*kernel_, 1)) {
+                do_anim(*kernel_, *world_, anims_, 1, 7, kDirCurrent);
+                right_drew_ = true;
+            }
+            right_consumed_ = true;
+            right_down_at_ = kernel_->ticks();
+            return;
+        }
+    }
     if (!modal()) {
         if (pressed) mouse_queue_.press(button == 2, cursor_.x(), cursor_.y(), mouse_buttons_);
         else mouse_queue_.release(button == 2, cursor_.x(), cursor_.y(), mouse_buttons_);
@@ -1417,6 +1566,8 @@ void Game::dispatch_mouse() {
         // Queued in play, but a menu or a screen opened since: the original
         // gives them to it; the port's menus had theirs directly.
         if (!mouse_in_play()) continue;
+        // The free pointer aims by itself: its motion turns nothing.
+        if (config_.keyboard_mouse && e->kind() == MouseInput::kMotionKind) continue;
         any = true;
         world_->state.mouse_turn.speed = config_.mouse_speed;
         if (world_mouse_->event(*e)) cursor_.move_to(WorldMouse::kCentreX, WorldMouse::kCentreY);
@@ -1449,6 +1600,38 @@ void Game::draw_window(Surface8& screen, int x0, int y0, Draw&& draw) {
     draw(window_);
     copy_block(window_, 0, 0, screen, x0, y0, kScreenWidth, kScreenHeight);
 }
+
+namespace {
+
+// The palette index closest to an 8-bit colour.
+std::uint8_t nearest_colour(const Palette& palette, int r, int g, int b) {
+    int best = 0, best_distance = 1 << 30;
+    for (int i = 1; i < 256; ++i) {
+        const Rgb& c = palette.colors[static_cast<std::size_t>(i)];
+        const int d = (c.r - r) * (c.r - r) + (c.g - g) * (c.g - g) + (c.b - b) * (c.b - b);
+        if (d < best_distance) best = i, best_distance = d;
+    }
+    return static_cast<std::uint8_t>(best);
+}
+
+// The target symbol of the keyboard and mouse mode: a ring with four ticks
+// and a centre dot, centred on (cx, cy).
+void draw_target_symbol(Surface8& screen, int cx, int cy, std::uint8_t colour) {
+    auto put = [&](int x, int y) {
+        if (x >= 0 && y >= 0 && x < screen.width && y < screen.height) screen.row(y)[x] = colour;
+    };
+    for (int y = -11; y <= 11; ++y) {
+        for (int x = -11; x <= 11; ++x) {
+            const int d = x * x + y * y;
+            const bool ring = d >= 56 && d <= 90;                                   // radius ~7.5 to 9.5
+            const bool tick = (std::abs(x) <= 1 && std::abs(y) >= 5 && std::abs(y) <= 11) ||
+                              (std::abs(y) <= 1 && std::abs(x) >= 5 && std::abs(x) <= 11);
+            if (ring || tick || d <= 2) put(cx + x, cy + y);
+        }
+    }
+}
+
+}  // namespace
 
 // @orig 1188:19C1
 void Game::render(Surface8& screen, RenderStats* stats) {
@@ -1486,6 +1669,20 @@ void Game::render(Surface8& screen, RenderStats* stats) {
         if (screen_) screen_->draw(s);
         cursor_.draw(s);
     });
+    // The free pointer, over the whole view.
+    // (the crosshair is the pointer while aiming)
+    if (free_pointer() && !(world_->state.aim.active && world_->state.aim.crosshair != -1)) {
+        // Over an item the player could use or pick up: the target symbol, green
+        // when it is in range, red when it is too far.
+        bool in_range = false;
+        if (world_->state.controlled_npc == 1 && !world_->state.selection.active &&
+            hover_item(*world_, pointer_x_, pointer_y_, &in_range) != 0) {
+            draw_target_symbol(screen, pointer_x_, pointer_y_,
+                               in_range ? nearest_colour(palette(), 40, 255, 40) : nearest_colour(palette(), 255, 40, 40));
+        } else {
+            cursor_.draw_arrow_at(screen, pointer_x_, pointer_y_);
+        }
+    }
 }
 
 // @orig 1188:12F1
@@ -1545,6 +1742,221 @@ void Game::render_view(Surface8& screen, RenderStats* stats) {
 void Game::move_camera(std::int32_t dx, std::int32_t dy) {
     const GameState& s = world_->state;
     world_->set_camera(s.camera_x + dx, s.camera_y + dy, s.camera_z);
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+// @orig none: port-only debug overlay
+void Game::draw_top_right_text(Surface8& screen, const std::string& text, int line) const {
+    constexpr int kFont = 4, kMargin = 6, kBaseline = 16;
+    TextWriter writer(fonts_, kFont);
+    const int width = writer.measure(text).width;
+    writer.print(screen, screen.width - width - kMargin, kBaseline + line * 16, text);
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+// @orig none: port-only laser sight
+Game::LaserScreen Game::laser_screen() const {
+    LaserScreen out;
+    if (!world_ || modal() || movie_) return out;
+    const auto beam = laser_beam(*world_, anims_);
+    if (!beam) return out;
+    const GameState& s = world_->state;
+    auto project = [&](const World::Point& p, float& x, float& y) {
+        const auto ux = static_cast<std::int16_t>(p.x), uy = static_cast<std::int16_t>(p.y);
+        x = static_cast<float>(((ux - uy) >> 1) - s.view_left);
+        y = static_cast<float>((static_cast<std::uint16_t>(ux + uy) >> 2) - p.z - s.view_top);
+    };
+    project(beam->from, out.x0, out.y0);
+    project(beam->to, out.x1, out.y1);
+    out.hit = beam->hit;
+    // x / y spread s is a diamond of half-width s and half-height s / 2 on the screen, plus the z spread.
+    out.spread_x = static_cast<float>(beam->spread);
+    out.spread_y = static_cast<float>(beam->spread) / 2.0f + static_cast<float>(beam->spread_z);
+    out.on = true;
+    return out;
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+// @orig none: port-only click-to-walk
+void Game::start_walk_to_pointer() {
+    const Item* player = world_->get(1);
+    if (!player) return;
+    // The point of the player's plane under the pointer.
+    const int u = 2 * (pointer_x_ + world_->state.view_left);
+    const int v = 4 * (pointer_y_ + world_->state.view_top + (player->z & 0xFF));
+    path_goal_ = World::Point{(u + v) / 2, (v - u) / 2, player->z};
+    path_active_ = true;
+    path_stuck_ = 0;
+    path_last_ = world_->location(*player);
+    path_points_.clear();
+}
+
+// @orig none: port-only click-to-walk
+void Game::stop_walk_path() {
+    path_active_ = false;
+    path_points_.clear();
+}
+
+// One step of the walk, when the NPC is free: replan from where it stands, then walk towards
+// the farthest of the next nodes that a straight walk still reaches.
+// @orig none: port-only click-to-walk
+void Game::update_walk_path() {
+    if (!path_active_) return;
+    const Item* player = world_->get(1);
+    if (!player || world_->is_dead(1) || world_->state.controlled_npc != 1 || world_->state.avatar_in_stasis) {
+        stop_walk_path();
+        return;
+    }
+    if (actor_busy(*kernel_, 1)) return;
+    // Running (Shift held, or toggled on) uses the same path: the run start, then the run, as the
+    // movement keys do; arriving while running ends the run.
+    const auto record = world_->npc_record(1);
+    const std::uint16_t last =
+        record.empty() ? 0 : static_cast<std::uint16_t>(record[npc::kLastAnim] | record[npc::kLastAnim + 1] << 8);
+    const bool running = last == 3 || last == 0x30 || last == 0x31 || last == 0x38;
+    const bool run_start = last == 0x26 || last == 0x22 || last == 0x23;
+    const bool want_run = (keyboard_.flags() & (kLeftShift | kRightShift)) || (config_.toggle_run && run_toggled_);
+    const World::Point pos = world_->location(*player);
+    if (std::max(std::abs(pos.x - path_goal_.x), std::abs(pos.y - path_goal_.y)) <= 20) {
+        if (running || run_start) do_anim(*kernel_, *world_, anims_, 1, 0x27, kDirCurrent);
+        stop_walk_path();
+        return;
+    }
+    // Stuck: three steps in a row that went nowhere.
+    if (std::max(std::abs(pos.x - path_last_.x), std::abs(pos.y - path_last_.y)) < 2) ++path_stuck_;
+    else path_stuck_ = 0;
+    path_last_ = pos;
+    if (path_stuck_ >= 3) {
+        stop_walk_path();
+        return;
+    }
+    const PlannedPath plan = plan_path(*world_, 1, pos, path_goal_);
+    path_expanded_ = plan.expanded;
+    path_reaches_ = plan.reaches_goal;
+    path_points_.assign(1, pos);
+    path_points_.insert(path_points_.end(), plan.points.begin(), plan.points.end());
+    if (plan.points.empty()) {
+        stop_walk_path();
+        return;
+    }
+    std::size_t pick = 0;
+    for (std::size_t i = std::min<std::size_t>(plan.points.size() - 1, 5) + 1; i-- > 0;) {
+        if (straight_walk_ok(*world_, 1, pos, plan.points[i])) {
+            pick = i;
+            break;
+        }
+    }
+    const World::Point& to = plan.points[pick];
+    const bool has_weapon = !record.empty() && (record[npc::kWeapon] | record[npc::kWeapon + 1]) != 0;
+    const int action = !want_run ? 1 : (running || run_start) ? (has_weapon ? 0x30 : 3) : 0x22;
+    do_anim(*kernel_, *world_, anims_, 1, static_cast<std::uint16_t>(action), direction_16(pos.x, pos.y, to.x, to.y));
+}
+
+std::vector<std::pair<float, float>> Game::path_debug_screen() const {
+    std::vector<std::pair<float, float>> out;
+    const std::vector<World::Point>& points = path_active_ ? path_points_ : preview_points_;
+    if (points.empty() || !world_) return out;
+    const GameState& s = world_->state;
+    auto project = [&](const World::Point& p) {
+        const auto ux = static_cast<std::int16_t>(p.x), uy = static_cast<std::int16_t>(p.y);
+        return std::pair<float, float>{static_cast<float>(((ux - uy) >> 1) - s.view_left),
+                                       static_cast<float>((static_cast<std::uint16_t>(ux + uy) >> 2) - (p.z & 0xFF) - s.view_top)};
+    };
+    for (const World::Point& p : points) out.push_back(project(p));
+    out.push_back(project(path_active_ ? path_goal_ : pointer_goal()));
+    return out;
+}
+
+std::string Game::path_status() const {
+    if (!path_active_ && preview_points_.empty()) return {};
+    if (!path_active_) {
+        return "ROUTE " + std::to_string(preview_points_.size() - 1) + " nodes, " + std::to_string(path_expanded_) + " searched" +
+               (path_reaches_ ? "" : ", NO WAY (closest)");
+    }
+    return "PATH " + std::to_string(path_points_.size() > 0 ? path_points_.size() - 1 : 0) + " nodes, " +
+           std::to_string(path_expanded_) + " searched" + (path_reaches_ ? "" : ", NO WAY (closest)");
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+// @orig none: port-only health bars of what was hit
+std::vector<Game::HitBarScreen> Game::hit_bars_screen() {
+    constexpr std::uint32_t kShown = 135, kFade = 30;  // ticks
+    std::vector<HitBarScreen> out;
+    if (!world_ || modal() || movie_) return out;
+    const GameState& s = world_->state;
+    const std::uint32_t now = kernel_->ticks();
+    for (auto it = world_->state.hit_bars.begin(); it != world_->state.hit_bars.end();) {
+        const GameState::HitBar& bar = it->second;
+        const Item* item = world_->get(it->first);
+        if (!item || now - bar.at > kShown || bar.max == 0) {
+            it = world_->state.hit_bars.erase(it);
+            continue;
+        }
+        const ShapeInfo* info = world_->shape_info(item->shape);
+        // Above the top of the thing: its feet plus its height (1 unit of z is 1 pixel), plus a margin.
+        const bool person = is_npc_id(it->first);
+        const int height = person ? 54 : std::clamp((info ? info->footpad_z : 2) * 8, 16, 90);
+        const int fx = info ? info->footpad_x : 0, fy = info ? info->footpad_y : 0;
+        const auto ux = static_cast<std::int16_t>(item->x - fx * 8), uy = static_cast<std::int16_t>(item->y - fy * 8);
+        HitBarScreen b;
+        b.x = static_cast<float>(((ux - uy) >> 1) - s.view_left);
+        b.y = static_cast<float>((static_cast<std::uint16_t>(ux + uy) >> 2) - (item->z & 0xFF) - s.view_top - height - 6);
+        b.fraction = std::clamp(static_cast<float>(bar.hp) / static_cast<float>(bar.max), 0.0f, 1.0f);
+        b.alpha = now - bar.at > kShown - kFade ? static_cast<float>(kShown - (now - bar.at)) / kFade : 1.0f;
+        out.push_back(b);
+        ++it;
+    }
+    return out;
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+// @orig none: port-only click-to-walk
+World::Point Game::pointer_goal() const {
+    const Item* player = world_->get(1);
+    const int z = player ? player->z : 0;
+    const int u = 2 * (pointer_x_ + world_->state.view_left);
+    const int v = 4 * (pointer_y_ + world_->state.view_top + (z & 0xFF));
+    return World::Point{(u + v) / 2, (v - u) / 2, z};
+}
+
+// While walking or running by keyboard (no click-to-walk), the A* route from the player to the pointer
+// is planned a few times a second and only shown (debug): the keys still decide where it goes.
+// @orig none: port-only debug overlay
+void Game::update_path_preview() {
+    const Item* player = world_ ? world_->get(1) : nullptr;
+    const auto record = player ? world_->npc_record(1) : std::span<std::uint8_t>{};
+    const std::uint16_t last =
+        record.empty() ? 0 : static_cast<std::uint16_t>(record[npc::kLastAnim] | record[npc::kLastAnim + 1] << 8);
+    const bool running = last == 3 || last == 0x30 || last == 0x31 || last == 0x38 || last == 0x22 || last == 0x23 || last == 0x26;
+    const bool moving = remap_mod_[0x11] || remap_mod_[0x1F] || remap_mod_[0x1E] || remap_mod_[0x20] || running;
+    if (!player || path_active_ || !free_pointer() || !moving || world_->is_dead(1)) {
+        preview_points_.clear();
+        return;
+    }
+    const std::uint32_t now = kernel_->ticks();
+    if (!preview_points_.empty() && now - preview_at_ < 8) return;
+    preview_at_ = now;
+    const World::Point pos = world_->location(*player);
+    const PlannedPath plan = plan_path(*world_, 1, pos, pointer_goal());
+    path_expanded_ = plan.expanded;
+    path_reaches_ = plan.reaches_goal;
+    preview_points_.assign(1, pos);
+    preview_points_.insert(preview_points_.end(), plan.points.begin(), plan.points.end());
 }
 
 }  // namespace crusader

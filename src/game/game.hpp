@@ -124,6 +124,24 @@ public:
     // shows more around the camera, and the menus, screens, films and cursor
     // stay 640 x 480 in the middle (see ui_x / ui_y for the mouse).
     void render(Surface8& screen, RenderStats* stats = nullptr);
+    // Port addition: a line of small text against the top-right corner (the fps counter).
+    void draw_top_right_text(Surface8& screen, const std::string& text, int line = 0) const;
+    // The laser sight of a drawn weapon in view pixels (see laser_beam), for the presenter.
+    struct LaserScreen {
+        bool on = false, hit = false;
+        float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+        float spread_x = 0, spread_y = 0;  // half-extents on the screen of where shots may land
+    };
+    LaserScreen laser_screen() const;
+    // Click-to-walk, for the debug overlay: the planned path as view pixels (the NPC first,
+    // the goal last), empty when no walk is under way; and a line of text about it.
+    std::vector<std::pair<float, float>> path_debug_screen() const;
+    std::string path_status() const;
+    // Health bars above what was recently hit, in view pixels (see GameState::HitBar).
+    struct HitBarScreen {
+        float x, y, fraction, alpha;
+    };
+    std::vector<HitBarScreen> hit_bars_screen();
     // Where the 640 x 480 area starts in the last rendered screen; the mouse
     // coordinates the game takes are relative to it.
     int ui_x() const { return ui_x_; }
@@ -158,6 +176,11 @@ public:
         aim_stick_deg_ = screen_deg;
     }
     bool mouse_in_play() const { return !modal() && !movie_; }
+    // Keyboard and mouse mode (GameConfig::keyboard_mouse): true while the free
+    // pointer is used, i.e. in play with the option on. main() feeds it the
+    // pointer in screen pixels (not clamped to 640 x 480).
+    bool free_pointer() const { return config_.keyboard_mouse && mouse_in_play(); }
+    void set_pointer(int screen_x, int screen_y) { pointer_x_ = screen_x, pointer_y_ = screen_y; }
     const WorldMouse& world_mouse() const { return *world_mouse_; }
 
     // In-game menu (Escape, WORLD_13e8_10c3). Closing it with "quit" sets
@@ -196,6 +219,8 @@ public:
     // movie is over, update() plays it instead of running the kernel, and
     // render() shows it.
     void play_movie(const std::string& name, MovieKind kind);
+    // Port addition (--skip-movies): every movie is skipped, as if its file were missing.
+    void set_skip_movies(bool skip) { skip_movies_ = skip; }
     const MoviePlayer* movie() const { return movie_.get(); }
 
     // ComputerGump::I_readComputer (computer_gump.hpp): the text on the
@@ -235,6 +260,8 @@ public:
     // options screen writes it to `path` (config_save); nothing is written
     // until a path is given.
     const GameConfig& config() const { return config_; }
+    // Port addition (--keyboard-mouse): forces the keyboard and mouse mode on for this run.
+    void force_keyboard_mouse() { config_.keyboard_mouse = true; }
     // Replaces it, the sound settings applied (tests).
     void set_config(GameConfig config);
     // Port addition: the biggest pixel size the window allows (the enhancements window stops there).
@@ -311,6 +338,36 @@ private:
     AnimDat anims_;
     bool aim_stick_ = false;
     double aim_stick_deg_ = 0;
+    int pointer_x_ = 0, pointer_y_ = 0;  // free pointer, screen pixels
+    bool click_consumed_ = false;         // a click used an item: its release is dropped
+    bool right_consumed_ = false;         // the right button is held and handled here: its release is dropped
+    bool right_drew_ = false;             // ... and its press drew the weapon (so its release does not put it away)
+    bool right_firing_ = false;           // ... and it has been held long enough to fire
+    std::uint32_t right_down_at_ = 0;
+    // Click-to-walk (keyboard and mouse mode, weapon away): replanned at every step.
+    bool path_active_ = false;
+    World::Point path_goal_{};
+    World::Point path_last_{};
+    int path_stuck_ = 0;
+    int path_expanded_ = 0;
+    bool path_reaches_ = true;
+    std::vector<World::Point> path_points_;  // the NPC, then the nodes (debug)
+    World::Point pointer_goal() const;  // the point of the player's plane under the pointer
+    std::vector<World::Point> preview_points_;  // A* route to the pointer while walking by keyboard (debug)
+    std::uint32_t preview_at_ = 0;
+    void update_path_preview();
+    void start_walk_to_pointer();
+    void update_walk_path();
+    void stop_walk_path();
+    // WASD / QE remapped to arrows with Alt or Ctrl: the modifier scancode
+    // (0x38 / 0x1D) sent with each key, 0 when not held, for its release.
+    std::uint8_t remap_mod_[128] = {};
+    // A remapped step / roll pressed while the NPC was busy (a turn, a step...): it is sent once the
+    // NPC is free instead of waiting for the key repeat (a fifth of a second later).
+    struct PendingMove {
+        std::uint8_t source = 0, to = 0;
+        std::uint16_t flags = 0;
+    } pending_move_;
     WeaponOverlay weapon_overlay_;
     Palette palette_;
     UsecodeFile usecode_;
@@ -386,6 +443,7 @@ private:
     bool end_credits_pending_ = false; // Game::I_playCredits: its process has not run yet
     bool end_credits_ = false;         // the credits running are the end of the game's
     std::vector<std::string> next_movies_;  // Game_start: movies to play after the current one
+    bool skip_movies_ = false;
     std::unique_ptr<MessageGump> message_;
     Process* message_process_ = nullptr;  // modal placeholder, owned by the kernel
     std::unique_ptr<ModalGump> screen_;

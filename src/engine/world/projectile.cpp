@@ -181,6 +181,18 @@ World::Point aim_point(const World& world, ObjId shooter, ObjId target) {
     return {static_cast<std::uint16_t>(item->x - fx * 8), static_cast<std::uint16_t>(item->y - fy * 8), z & 0xFF};
 }
 
+// @orig none: port-only, the spread of fire_weapon for the reticle
+int player_shot_spread(const World& world, int fire_type, const World::Point& origin, const World::Point& target,
+                       int* z_spread) {
+    const dtable::FireType* ft = dtable::fire_type(fire_type);
+    int spread = 0;
+    if (ft && !ft->no_spread()) {
+        spread = std::min(chebyshev(origin, target) / spread_divisor(world, world.state.controlled_npc, fire_type, 0), kMaxSpread);
+    }
+    if (z_spread) *z_spread = std::min(spread / 3, kMaxZSpread);
+    return spread;
+}
+
 // @orig 1130:11DA
 Pid fire_weapon(Kernel& kernel, World& world, const AnimDat& anims, ObjId shooter, int dx, int dy, int dz,
                 int dir, int fire_type, bool aim) {
@@ -215,21 +227,10 @@ Pid fire_weapon(Kernel& kernel, World& world, const AnimDat& anims, ObjId shoote
         return 0;
     }
 
-    // Target: for the controlled NPC, the tracked item in the direction of
-    // the shot (TRACKER_1128_0158, 16 directions when the shooter's last
-    // action has them); for others, the controlled NPC.
+    // Target: the controlled NPC never locks onto one (its shots fly to the crosshair, which is
+    // where the pointer is); other shooters aim at the controlled NPC.
     ObjId target_item = 0;
-    if (aim) {
-        if (shooter == world.state.controlled_npc) {
-            const auto record = world.npc_record(shooter);
-            const std::uint16_t last =
-                record.empty() ? 0 : static_cast<std::uint16_t>(record[npc::kLastAnim] | record[npc::kLastAnim + 1] << 8);
-            const AnimAction* action = anims.action(item->shape, last);
-            target_item = find_target(world, shooter, dir, action && action->sixteen_directions());
-        } else {
-            target_item = world.state.controlled_npc;
-        }
-    }
+    if (aim && shooter != world.state.controlled_npc) target_item = world.state.controlled_npc;
     // A shot of the controlled NPC enters the aiming mode; without a target,
     // it then flies towards the crosshair (SPRITE_1140_0e88), with spread, at
     // the muzzle's height (param_4 already holds the shooter's z + dz).
@@ -263,6 +264,17 @@ Pid fire_weapon(Kernel& kernel, World& world, const AnimDat& anims, ObjId shoote
     return last;
 }
 
+// @orig none: port-only health bar of what was hit (the hit points before and after the damage)
+void note_hit(World& world, ObjId id, int before, int after, std::uint32_t now) {
+    constexpr std::uint32_t kSeries = 135;  // a hit after this long starts a new series (and maximum)
+    if (before <= 0 || id == world.state.controlled_npc || id == 1) return;
+    GameState::HitBar& bar = world.state.hit_bars[id];
+    bar.max = (bar.max == 0 || now - bar.at > kSeries) ? static_cast<std::uint16_t>(before)
+                                                       : std::max<std::uint16_t>(bar.max, static_cast<std::uint16_t>(before));
+    bar.hp = static_cast<std::uint16_t>(std::max(0, after));
+    bar.at = now;
+}
+
 // @orig 1130:026B
 void apply_damage(Kernel& kernel, World& world, const AnimDat& anims, ObjId target, ObjId attacker, int dir,
                   int damage, int fire_type) {
@@ -284,7 +296,10 @@ void apply_damage(Kernel& kernel, World& world, const AnimDat& anims, ObjId targ
     damage = std::clamp(damage, 1, 250);
 
     if (!is_npc_id(target)) {
+        const int hp_before = item->hit_points;
         hit_item(kernel, world, anims, target, damage, fire_type);
+        const Item* after = world.get(target);
+        note_hit(world, target, hp_before, after ? after->hit_points : 0, kernel.ticks());
         // Explosives (types 3, 4) throw items that have a weight (TYPEFLAG
         // byte 7) along the hit's direction: tables DS:26F8 / DS:2718 times
         // 10..25 (y drawn first), gravity 2.
@@ -362,7 +377,9 @@ void apply_damage(Kernel& kernel, World& world, const AnimDat& anims, ObjId targ
         }
     }
     if (record[npc::kFlags13] & 0x02) damage = 0;  // immortal (NPC_10f0_214b)
+    const int hp_before = world.npc_hp(target);
     const int hp = std::max(0, static_cast<int>(world.npc_hp(target)) - damage);
+    note_hit(world, target, hp_before, hp, kernel.ticks());
     record[0] = static_cast<std::uint8_t>(hp);
     record[1] = static_cast<std::uint8_t>(hp >> 8);
     if (hp != 0) {

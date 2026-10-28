@@ -42,6 +42,10 @@ public:
     // Port addition, written only when set: "directionalaim", the right stick
     // puts the crosshair in the direction it points.
     bool directional_aim = false;
+    // Port addition, written when switched off: "keyboardmouse", WASD walks (W / S
+    // forward / backward, A / D step aside), Q / E roll, the pointer stays
+    // visible and free, and the NPC always faces it.
+    bool keyboard_mouse = true;
     // Port addition, written when switched off: "nativeresolution", the view
     // takes the whole screen (more scenery around the camera) instead of the
     // original 640 x 480.

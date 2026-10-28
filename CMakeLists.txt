@@ -84,6 +84,7 @@ add_library(crusader_engine
   src/engine/world/activity.cpp
   src/engine/world/actor_create.cpp
   src/engine/world/pathfind.cpp
+  src/engine/world/click_path.cpp
   src/engine/world/player_commands.cpp
   src/engine/world/item_anim.cpp
   src/engine/world/item_damage.cpp

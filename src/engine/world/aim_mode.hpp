@@ -91,6 +91,23 @@ void turn_crosshair(Kernel& kernel, World& world, const AnimDat& anims, std::uin
 // turns the NPC to face it with its combat stance, when it is not busy. Does
 // nothing out of the aiming mode.
 void aim_at_angle(Kernel& kernel, World& world, const AnimDat& anims, int angle);
+// Keyboard and mouse mode, weapon away: turns the idle controlled NPC on the spot
+// (stand, or kneeling stand) to face the screen position, when not busy.
+void face_screen_point(Kernel& kernel, World& world, const AnimDat& anims, int screen_x, int screen_y);
+
+// The laser sight of a drawn weapon: from the muzzle to the crosshair, cut short at the
+// first thing in the way (`hit`). Nothing when the controlled NPC is not aiming.
+struct LaserBeam {
+    World::Point from{}, to{};
+    bool hit = false;
+    int spread = 0, spread_z = 0;  // where the shots land: within this of `to` (x / y, and z)
+};
+std::optional<LaserBeam> laser_beam(const World& world, const AnimDat& anims);
+
+// The 16-direction from the controlled NPC to a screen position (-1 when too close), and a
+// running animation turned that way (a held walk follows the pointer without stopping).
+int pointer_direction(const World& world, int screen_x, int screen_y);
+bool redirect_animation(Kernel& kernel, World& world, int dir);
 
 std::optional<World::Point> crosshair_aim(const World& world, int z);
 

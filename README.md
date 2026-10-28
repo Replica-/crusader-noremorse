@@ -21,6 +21,16 @@ This repository contains **no game files**: you need your own copy of the origin
   - Zoom: choose the pixel size of the native view (Auto, or ×1 to ×4); ×1 gives the finest picture and the widest view
   - Autosave: the game saves itself when you pick up a keycard, open a door with a keycard or a code, open a chest with a code, start a level, and after each cutscene of the mission (a floppy disk shows in the corner). It uses its own slot, separate from your saves; load it from the last row of the load screen or press **F6**
 - Fullscreen toggle: press **Alt+Enter** at any time to switch between windowed and fullscreen.
+- **Keyboard and Mouse** mode (on by default; toggle it in Options → Enhancements):
+  - **W / S** walk forward / backward, **A / D** step left / right, **Q / E** roll left / right. With the weapon drawn, **W** steps forward instead of walking. A step or roll pressed during another animation is done as soon as the character is free.
+  - A free mouse pointer: the character faces it, and a drawn weapon aims exactly where it points, with no snapping to targets and no limit to a circle around the player. The weapon keeps its normal accuracy, so shots still scatter. The old targeting reticle (the **R** key) is gone.
+  - The crosshair is a dot with four lines that move apart as the shot gets less accurate, so it shows where the bullets can land. A soft red laser dot marks where the aim ends, and stops on whatever is in the way.
+  - **Left click** fires with the weapon drawn. With the weapon away it uses or picks up the item under the pointer (the pointer turns into a target symbol over such items, green when in reach, red when too far), or walks to the spot, so clicking never draws the weapon.
+  - **Right click** draws the weapon, and a tap puts it away again. Holding it fires. The right button no longer walks. **Space** is back to its original role.
+  - Click-to-walk uses an A* path search that goes round obstacles; hold **Shift** (or switch run on) to run along it. The route is drawn as a cyan debug line, including while you walk or run with the keys.
+  - A slim health bar appears above whatever you hit, for a few seconds.
+- The game asks SDL for its OpenGL renderer (and falls back if it is not available). A small overlay in the top-right corner shows the FPS, hardware or software mode, the game loop's time per pass and tick rate (`--no-fps` hides it).
+- New command-line options: `--skip-movies` skips all videos, `--keyboard-mouse` forces the Keyboard and Mouse mode on for that run, `--no-fps` hides the overlay.
 
 ## Planned improvements
 
@@ -80,6 +90,8 @@ ctest --test-dir build -C Release --output-on-failure
 ```
 
 If SDL2 is installed on your system, the build uses it (`libsdl2-dev` on Linux). Otherwise, SDL2 is downloaded and built automatically.
+
+On Windows the project also builds with MSYS2 (UCRT64: `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release`, then `cmake --build build`).
 
 The tests in `tests/` do not require game data. The end-to-end tests in `e2e/` use the original game data and are registered only when it is found (`-DCRUSADER_DATA_DIR=…`; defaults to `data/`). Tests that load saved games read them from `-DCRUSADER_TEST_SAVES_DIR=…` and are skipped if that directory is absent. `us_data_tests` runs when US game data is found (`-DCRUSADER_US_DATA_DIR=…`; defaults to `data_us/`).
 
