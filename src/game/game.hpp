@@ -36,6 +36,7 @@
 #include "engine/world/combat_control.hpp"
 #include "core/weapon_overlay.hpp"
 #include "core/font_atlas.hpp"
+#include "engine/world/jump_overlay.hpp"
 #include "engine/world/map_overlay.hpp"
 #include "engine/world/wheel_overlay.hpp"
 #include "engine/world/render.hpp"
@@ -172,6 +173,7 @@ public:
     void open_controls_screen(std::function<void()> then);
     const HelpScreen::Pictures& help_pictures();
     // Developer flags for the README pictures: blood bursts, a health bar, a walk with its route, the pointer over a usable item.
+    void set_demo_jump(int dx, int dy, bool go) { demo_jump_dx_ = dx, demo_jump_dy_ = dy, demo_jump_go_ = go; }
     void set_demo(bool blood, bool hit_bar, int walk_dx, int walk_dy, bool hover_item) {
         demo_blood_ = blood, demo_hit_bar_ = hit_bar, demo_walk_dx_ = walk_dx, demo_walk_dy_ = walk_dy, demo_hover_ = hover_item;
         demo_walk_pending_ = walk_dx != 0 || walk_dy != 0;
@@ -179,6 +181,7 @@ public:
     // The weapon wheel (Tab) and the item wheel (I): a ring to choose from. `wheel_mouse`: kind 0 move, 1 left click (chooses), 2 right
     // click (closes). `wheel_key` handles Escape, Tab, I, the arrows and Enter while a wheel is open.
     const WheelOverlay& wheel_overlay() const { return wheel_; }
+    const JumpPreview& jump_preview() const { return jump_preview_; }
     void request_wheel(int kind) { pending_wheel_ = kind + 1; }  // (--wheel) open it as soon as the player can act
     void open_wheel(int kind);
     void close_wheel();
@@ -415,6 +418,13 @@ private:
     int last_click_x_ = 0, last_click_y_ = 0;
     bool w_held_ = false;         // W is down (keyboard and mouse mode)
     bool pending_stand_ = false;  // W was released: stand once the current step is over
+    // Targeted jump: J held shows the landing, J released jumps there (game_jump.cpp).
+    bool jump_held_ = false;
+    std::uint32_t jump_down_at_ = 0;
+    World::Point jump_landing_{};
+    JumpPreview jump_preview_;
+    bool jump_key(const GameKeyEvent& e);
+    void update_jump_preview();
     std::uint32_t path_wait_ = 0; // no replanning before this tick (after a failed attempt)
     World::Point path_goal_{};
     World::Point path_last_{};
@@ -444,6 +454,9 @@ private:
     void update_map_markers();
     WheelOverlay wheel_;
     int pending_wheel_ = 0;
+    int demo_jump_dx_ = 0, demo_jump_dy_ = 0, demo_jump_stage_ = 0;
+    bool demo_jump_go_ = false;
+    std::uint32_t demo_jump_at_ = 0;
     bool demo_blood_ = false, demo_hit_bar_ = false, demo_hover_ = false, demo_walk_pending_ = false;
     int demo_walk_dx_ = 0, demo_walk_dy_ = 0;
     std::uint32_t demo_blood_at_ = 0;

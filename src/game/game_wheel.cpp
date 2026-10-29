@@ -186,6 +186,25 @@ void Game::update_demo() {
         path_last_ = world_->location(*me);
         path_points_.clear();
     }
+    if ((demo_jump_dx_ != 0 || demo_jump_dy_ != 0) && demo_jump_stage_ < 2) {  // J held, the pointer a way off
+        const GameState& s = world_->state;
+        const auto ux = static_cast<std::int16_t>(me->x + demo_jump_dx_), uy = static_cast<std::int16_t>(me->y + demo_jump_dy_);
+        pointer_x_ = ((ux - uy) >> 1) - s.view_left;
+        pointer_y_ = (static_cast<std::uint16_t>(ux + uy) >> 2) - s.view_top - (me->z & 0xFF);
+        if (demo_jump_stage_ == 0) {
+            config_.keyboard_mouse = true;
+            jump_held_ = true;
+            jump_down_at_ = now - 20;
+            demo_jump_at_ = now;
+            demo_jump_stage_ = 1;
+        } else if (demo_jump_go_ && now - demo_jump_at_ > 150) {
+            GameKeyEvent e;
+            e.scancode = 0x24;
+            e.pressed = false;
+            jump_key(e);
+            demo_jump_stage_ = 2;
+        }
+    }
     if (demo_hover_) {  // the pointer over the nearest item in reach
         for (ObjId id = 0x100; id <= 0x27FF; ++id) {
             const Item* item = world_->get(id);

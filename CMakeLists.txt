@@ -83,6 +83,7 @@ add_library(crusader_engine
   src/engine/world/collision.cpp
   src/engine/world/avatar_mover.cpp
   src/engine/world/gravity.cpp
+  src/engine/world/jump.cpp
   src/engine/world/combat_control.cpp
   src/engine/world/projectile.cpp
   src/engine/world/attack.cpp
@@ -135,11 +136,12 @@ add_library(crusader_platform
   src/platform/sdl_audio.cpp
   src/platform/sdl_map.cpp
   src/platform/sdl_wheel.cpp
+  src/platform/sdl_jump.cpp
   src/platform/sdl_text.cpp)
 target_link_libraries(crusader_platform PUBLIC crusader_engine ${SDL2_TARGET})
 
 # The game without platform code (testable headless), and its executable.
-add_library(crusader_game src/game/game.cpp src/game/game_map.cpp src/game/game_wheel.cpp)
+add_library(crusader_game src/game/game.cpp src/game/game_map.cpp src/game/game_wheel.cpp src/game/game_jump.cpp)
 target_link_libraries(crusader_game PUBLIC crusader_engine)
 
 if(WIN32)

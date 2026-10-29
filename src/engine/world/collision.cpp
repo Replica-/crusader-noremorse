@@ -146,7 +146,8 @@ struct Sweep {
 // @orig 1018:0000
 std::uint16_t collision_mask(const ShapeInfo* info) {
     std::uint16_t m = 0x8000;
-    if (info && info->is(ShapeInfo::kSolid)) m |= 1;
+    // Port addition: weapons (family 10) lying about never block anyone.
+    if (info && info->is(ShapeInfo::kSolid) && info->family != 10) m |= 1;
     if (info && info->is(ShapeInfo::kDamaging)) m |= 0x20;
     return m;
 }

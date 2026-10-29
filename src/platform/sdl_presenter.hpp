@@ -7,6 +7,7 @@
 #include "core/font_atlas.hpp"
 #include "core/palette.hpp"
 #include "core/surface.hpp"
+#include "engine/world/jump_overlay.hpp"
 #include "engine/world/map_overlay.hpp"
 #include "engine/world/wheel_overlay.hpp"
 
@@ -71,6 +72,8 @@ public:
     void set_wheel(const WheelOverlay* wheel) { wheel_ = wheel; }
     // The pictures of the wheel entries (each handed over once, by id).
     void add_wheel_icons(std::vector<WheelIcon> icons);
+    // The targeted jump's preview (a dashed arc and a ghost of the player), null or off hides it.
+    void set_jump(const JumpPreview* jump) { jump_ = jump; }
     // Desktop fullscreen on / off (Alt+Enter).
     void toggle_fullscreen();
     // Size of the window's drawing area in real pixels.
@@ -102,6 +105,10 @@ private:
     void draw_map();
     void draw_wheel();
     const WheelOverlay* wheel_ = nullptr;
+    void draw_jump();
+    const JumpPreview* jump_ = nullptr;
+    SDL_Texture* jump_tex_ = nullptr;
+    std::uint32_t jump_key_ = 0;
     struct IconTexture {
         SDL_Texture* texture = nullptr;
         int width = 0, height = 0;

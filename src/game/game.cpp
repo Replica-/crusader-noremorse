@@ -754,6 +754,7 @@ void Game::update(std::uint32_t elapsed_us) {
         mouse_buttons_ = static_cast<std::uint16_t>(mouse_buttons_ | 1);
         mouse_queue_.press(false, cursor_.x(), cursor_.y(), 1);
     }
+    update_jump_preview();
     if (world_ && world_->state.jump_pending_until != 0) {  // a jump asked for while busy
         if (kernel_->ticks() > world_->state.jump_pending_until || world_->is_dead(1) || world_->state.controlled_npc != 1) {
             world_->state.jump_pending_until = 0;
@@ -1152,6 +1153,8 @@ void Game::on_key(const GameKeyEvent& e) {
         if (e.pressed && e.count <= 1) set_map(!map_.on);
         return;
     }
+    // Keyboard and mouse mode: J tapped jumps blind, J held shows the landing and jumps there on release.
+    if (jump_key(e)) return;
     combat_->handle_key(ev);  // the Controller: movement, then fire keys
     // WORLD_13e8_14b4 (World_on_key): Alt+X first, whatever the view is
     // doing (the item selection too). Escape opens the menu, except in

@@ -105,7 +105,8 @@ int main(int argc, char** argv) {
     double shot_after = 6.0;
     double pointer_fx = -1, pointer_fy = -1;  // --pointer FX FY: the pointer kept at this fraction of the window
     bool demo_blood = false, demo_hit_bar = false, demo_hover = false;
-    int demo_walk_dx = 0, demo_walk_dy = 0;
+    int demo_walk_dx = 0, demo_walk_dy = 0, demo_jump_dx = 0, demo_jump_dy = 0;
+    bool demo_jump_go = false;
     int start_wheel = 0;  // --wheel 0 / 1: start with the weapon / item wheel open
     int mission = 1;         // --mission N: with --new-game, start mission N
     bool all_items = false;  // --all-items: with --new-game, every weapon, ammunition and item
@@ -142,6 +143,8 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--demo-blood") == 0) demo_blood = true;
         else if (std::strcmp(argv[i], "--demo-hitbar") == 0) demo_hit_bar = true;
         else if (std::strcmp(argv[i], "--demo-hover") == 0) demo_hover = true;
+        else if (std::strcmp(argv[i], "--demo-jump") == 0 && i + 2 < argc) { demo_jump_dx = std::stoi(argv[++i]); demo_jump_dy = std::stoi(argv[++i]); }
+        else if (std::strcmp(argv[i], "--demo-jump-go") == 0) demo_jump_go = true;
         else if (std::strcmp(argv[i], "--demo-walk") == 0 && i + 2 < argc) { demo_walk_dx = std::stoi(argv[++i]); demo_walk_dy = std::stoi(argv[++i]); }
         else if (std::strcmp(argv[i], "--wheel") == 0 && i + 1 < argc) start_wheel = std::stoi(argv[++i]) + 1;
         else if (std::strcmp(argv[i], "--mission") == 0 && i + 1 < argc) mission = std::stoi(argv[++i]);
@@ -203,6 +206,7 @@ int main(int argc, char** argv) {
         if (start_map) game.set_map(true);
         if (start_wheel) game.request_wheel(start_wheel - 1);
         game.set_demo(demo_blood, demo_hit_bar, demo_walk_dx, demo_walk_dy, demo_hover);
+        game.set_demo_jump(demo_jump_dx, demo_jump_dy, demo_jump_go);
         if (start_gun && !path_test) game.request_draw();
         if (path_test) {
             for (int i = 0; i < 60; ++i) game.update(kFrameUs);
@@ -454,6 +458,7 @@ int main(int argc, char** argv) {
             presenter.set_map(game.map_overlay().on ? &game.map_overlay() : nullptr);
             presenter.set_wheel(game.wheel_overlay().on ? &game.wheel_overlay() : nullptr);
             presenter.add_wheel_icons(game.take_wheel_icons());
+            presenter.set_jump(game.jump_preview().on ? &game.jump_preview() : nullptr);
             {
                 std::vector<SdlPresenter::BloodDot> dots;
                 for (const Game::BloodDotScreen& b : game.blood_screen()) dots.push_back({b.x, b.y, b.x0, b.y0, b.size, b.alpha, b.kind});

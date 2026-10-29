@@ -178,6 +178,7 @@ void ActorAnimProcess::run() {
     if (owner() == world_.state.controlled_npc && (action_ == 0x22 || action_ == 0x23 || action_ == 0x26)) ticks = (ticks + 1) / 2;
     // Port addition: the player's jumps play a quarter faster, snappier and less floaty.
     if (owner() == world_.state.controlled_npc && is_jump(action_)) ticks = std::max(1, ticks * 3 / 4);
+    if (frame_ticks_ > 0) ticks = frame_ticks_;
     sleep(std::max(ticks, 1));
 }
 
@@ -296,7 +297,7 @@ bool ActorAnimProcess::step() {
         world_.hooks().fire_weapon(owner(), f->muzzle_a, f->muzzle_b, f->muzzle_z, dir_);
         if (!world_.get(owner())) return false;
     }
-    if (f->ground_check && fall_if_unsupported(start, reached)) return false;
+    if (f->ground_check && !driven_ && fall_if_unsupported(start, reached)) return false;
     return true;
 }
 

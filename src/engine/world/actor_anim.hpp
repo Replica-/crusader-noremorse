@@ -80,6 +80,10 @@ public:
     // 1158:2E55: a turning animation of the controlled NPC (+0x40), counted
     // in DS:288A; its end lets the aiming mode back (1158:2E66).
     void mark_turning();
+    // Port addition: the animation only shows its frames, something else (the targeted jump) moves the actor: no steps, no
+    // fall check. `set_frame_ticks` makes every frame last that many ticks.
+    void set_in_place(bool in_place) { in_place_ = in_place; driven_ = in_place; }
+    void set_frame_ticks(int ticks) { frame_ticks_ = ticks; }
 
 protected:
     void run() override;
@@ -101,6 +105,8 @@ private:
     bool blocked_ = false;
     bool in_place_ = false;  // +0x3B: an unstoppable action blocked, the rest plays in place
     bool turning_ = false;
+    bool driven_ = false;
+    int frame_ticks_ = 0;
 };
 
 // CRUSADER_1130_2105, applied first by Actor::I_doAnim: the action an actor

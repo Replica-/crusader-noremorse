@@ -37,6 +37,10 @@ This repository contains **no game files**: you need your own copy of the origin
 
     ![Mission map](docs/images/features/mission-map.png)
 
+  - **J** jumps: a tap is the original blind jump. Hold it and a dashed arc, a ring and a see-through copy of your character show where you will land, following the mouse (up to about 256 units away, never into walls or objects); release to jump there, whatever the distance or angle. Weapons lying on the floor no longer block you.
+
+    ![Targeted jump preview](docs/images/features/jump.png)
+
   - Blood sprays from shot humans, away from the shooter, and the splats stay on the floor; whatever an enemy carried falls out of it when it dies. A slim health bar appears above whatever you hit.
 
     ![Blood](docs/images/features/blood.png)

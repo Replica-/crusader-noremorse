@@ -47,6 +47,7 @@ SdlPresenter::SdlPresenter(const std::string& title, int width, int height, int 
 
 SdlPresenter::~SdlPresenter() {
     if (font_tex_) SDL_DestroyTexture(font_tex_);
+    if (jump_tex_) SDL_DestroyTexture(jump_tex_);
     for (IconTexture& i : wheel_icons_) {
         if (i.texture) SDL_DestroyTexture(i.texture);
     }
@@ -122,6 +123,7 @@ void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
 
     SDL_RenderClear(renderer_);
     SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
+    draw_jump();
     draw_laser();
     draw_debug_path();
     draw_blood();
