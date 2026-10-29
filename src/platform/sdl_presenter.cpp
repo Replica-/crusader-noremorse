@@ -2,8 +2,10 @@
 
 #include <SDL.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <stdexcept>
 
 namespace crusader {
@@ -46,6 +48,7 @@ SdlPresenter::SdlPresenter(const std::string& title, int width, int height, int 
 }
 
 SdlPresenter::~SdlPresenter() {
+    clear_scene_textures();
     if (font_tex_) SDL_DestroyTexture(font_tex_);
     if (jump_tex_) SDL_DestroyTexture(jump_tex_);
     if (colours_tex_) SDL_DestroyTexture(colours_tex_);
@@ -96,6 +99,7 @@ void SdlPresenter::warp_mouse(int x, int y) {
 }
 
 void SdlPresenter::set_gamma(double gamma) {
+    ++gamma_version_;
     if (!(gamma > 0)) gamma = 1.0;
     for (std::size_t i = 0; i < gamma_table_.size(); ++i) {
         gamma_table_[i] = static_cast<std::uint8_t>(std::lround(255.0 * std::pow(i / 255.0, 1.0 / gamma)));
@@ -112,6 +116,9 @@ void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
         const Rgb& c = palette.colors[i];
         lut[i] = 0xFF000000u | Uint32{gamma_table_[c.r]} << 16 | Uint32{gamma_table_[c.g]} << 8 | gamma_table_[c.b];
     }
+    // With a hardware scene, the key colour of the frame is clear, so the scene shows through.
+    if (scene_) lut[kSceneKey] = 0;
+    SDL_SetTextureBlendMode(texture_, scene_ ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE);
 
     void* pixels = nullptr;
     int pitch = 0;
@@ -127,7 +134,9 @@ void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
     }
     SDL_UnlockTexture(texture_);
 
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
     SDL_RenderClear(renderer_);
+    if (scene_) draw_scene(palette);
     SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
     draw_player_layer(palette);
     draw_player_sprite(palette);
@@ -481,5 +490,79 @@ void SdlPresenter::draw_blood() {
 
 namespace crusader {
 
+void SdlPresenter::clear_scene_textures() {
+    for (auto& entry : scene_textures_) {
+        if (entry.second.texture) SDL_DestroyTexture(entry.second.texture);
+    }
+    scene_textures_.clear();
+}
+
+// The hardware scene: the pictures in order as textures made from the palette, and the splats of blood on the floor.
+// A change of palette (a fade, a colour cycle) or of gamma makes the textures again as they are next needed.
+// @orig none: port-only hardware scene
+void SdlPresenter::draw_scene(const Palette& palette) {
+    if (!scene_) return;
+    if (scene_gamma_version_ != gamma_version_ || std::memcmp(scene_colours_.data(), palette.colors.data(), sizeof(Rgb) * 256) != 0) {
+        clear_scene_textures();
+        std::memcpy(scene_colours_.data(), palette.colors.data(), sizeof(Rgb) * 256);
+        scene_gamma_version_ = gamma_version_;
+    }
+    if (scene_textures_.size() > 8000) clear_scene_textures();  // far more than a scene shows: start again
+    std::array<Uint32, 256> lut;
+    for (std::size_t i = 0; i < lut.size(); ++i) {
+        const Rgb& c = palette.colors[i];
+        lut[i] = 0xFF000000u | Uint32{gamma_table_[c.r]} << 16 | Uint32{gamma_table_[c.g]} << 8 | gamma_table_[c.b];
+    }
+    std::vector<Uint32> pixels;
+    for (const SceneCmd& cmd : *scene_) {
+        if (!cmd.frame) {  // a splat of blood on the floor
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+            constexpr int kSegments = 14;
+            SDL_Vertex v[kSegments + 1];
+            int idx[kSegments * 3];
+            const auto alpha = [](float a) { return static_cast<Uint8>(std::clamp(a, 0.0f, 1.0f) * 255.0f); };
+            const float cx = static_cast<float>(cmd.x), cy = static_cast<float>(cmd.y);
+            v[0] = {{cx, cy}, SDL_Color{205, 14, 20, alpha(cmd.alpha)}, {0, 0}};
+            for (int i = 0; i < kSegments; ++i) {
+                const float a = 6.2831853f * static_cast<float>(i) / kSegments;
+                v[i + 1] = {{cx + std::cos(a) * cmd.rx, cy + std::sin(a) * cmd.ry}, SDL_Color{150, 8, 14, alpha(cmd.alpha * 0.6f)}, {0, 0}};
+                idx[i * 3] = 0;
+                idx[i * 3 + 1] = i + 1;
+                idx[i * 3 + 2] = (i + 1) % kSegments + 1;
+            }
+            SDL_RenderGeometry(renderer_, nullptr, v, kSegments + 1, idx, kSegments * 3);
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+            continue;
+        }
+        const ShapeFrame& f = *cmd.frame;
+        if (f.width <= 0 || f.height <= 0) continue;
+        const std::uintptr_t key = reinterpret_cast<std::uintptr_t>(cmd.frame) << 1 | (cmd.mirrored ? 1u : 0u);
+        auto found = scene_textures_.find(key);
+        if (found == scene_textures_.end()) {
+            Surface8 scratch(f.width, f.height);
+            scratch.clear(kSceneKey);
+            f.draw(scratch, cmd.mirrored ? f.width - 1 - f.xoff : f.xoff, f.yoff, cmd.mirrored);
+            pixels.resize(scratch.pixels.size());
+            for (std::size_t i = 0; i < pixels.size(); ++i) {
+                pixels[i] = scratch.pixels[i] == kSceneKey ? 0u : lut[scratch.pixels[i]];
+            }
+            SceneTexture t;
+            t.w = f.width, t.h = f.height;
+            t.texture = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, f.width, f.height);
+            if (t.texture) {
+                SDL_UpdateTexture(t.texture, nullptr, pixels.data(), f.width * static_cast<int>(sizeof(Uint32)));
+                SDL_SetTextureBlendMode(t.texture, SDL_BLENDMODE_BLEND);
+                SDL_SetTextureScaleMode(t.texture, SDL_ScaleModeNearest);
+            }
+            found = scene_textures_.emplace(key, t).first;
+        }
+        const SceneTexture& t = found->second;
+        if (!t.texture) continue;
+        // Windows, force fields: the original blends them through a table; here they are simply half see-through.
+        SDL_SetTextureAlphaMod(t.texture, cmd.translucent ? 150 : 255);
+        const SDL_Rect dst{cmd.x, cmd.y, t.w, t.h};
+        SDL_RenderCopy(renderer_, t.texture, nullptr, &dst);
+    }
+}
 
 }  // namespace crusader

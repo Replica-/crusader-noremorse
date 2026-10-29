@@ -41,6 +41,10 @@ bool markable(const World& world, ObjId id) {
 
 int npc_dir(const World& world, ObjId id) { return world.npc_direction(id) & 0xF; }
 
+// Port addition: the barrels the laser snaps to like an enemy (the explosive one, 0xAA, and the plain one, 0x1FD).
+constexpr ObjId kFirstItem = 0x100, kLastItem = 0x27FF;
+bool is_barrel(std::uint16_t shape) { return shape == 0xAA || shape == 0x1FD; }
+
 // TRACKER_1128_0158 for the controlled NPC, in 16 directions.
 ObjId target_in(const World& world, int dir) { return find_target(world, world.state.controlled_npc, dir, true); }
 
@@ -171,6 +175,50 @@ void pick_point(const World& world, int screen_x, int screen_y, ObjId ignore, st
     x = static_cast<std::int16_t>(x0);
     y = static_cast<std::int16_t>(y0);
     z = 0;
+}
+
+// Keyboard and mouse mode: the living NPC (not `self`) whose box the pointer's line passes through, with the point on
+// it nearest the camera. Only NPC boxes are tested, so a wall that partly hides the NPC on the screen does not take the
+// pointer; the beam's own sweep then decides whether the wall is in the way.
+ObjId npc_under_pointer(const World& world, int screen_x, int screen_y, ObjId self, World::Point& at) {
+    const int u = 2 * (screen_x + world.state.view_left);
+    const int w = 4 * (screen_y + world.state.view_top);
+    const int x0 = (u + w) / 2, y0 = (w - u) / 2;
+    // The pointer's line (x0 + 2 h, y0 + 2 h, h) need not pass through the box: a robot or a tall enemy is drawn well beyond
+    // its footprint, so a line that passes within kMargin of the box counts, and the aim point is the nearest point of the
+    // box to it.
+    constexpr int kMargin = 14;
+    ObjId best = 0;
+    int best_distance = kMargin + 1, best_h = -1;
+    // Every living NPC (men and robots), and the barrels (shot to be set off).
+    for (ObjId id = 1; id <= kLastItem; id = id == 0xFF ? kFirstItem : id + 1) {
+        const Item* item = id == self ? nullptr : world.get(id);
+        if (!item) continue;
+        if (is_npc_id(id) ? world.is_dead(id) : !is_barrel(item->shape) || item->sprite_only || (item->flags & kItemContained)) continue;
+        const ShapeInfo* info = world.shape_info(item->shape);
+        if (!info) continue;
+        int w = info->footpad_x * 16, d = info->footpad_y * 16;
+        if (item->flags & 0x0020) std::swap(w, d);  // mirrored
+        const int bx1 = static_cast<std::uint16_t>(item->x), by1 = static_cast<std::uint16_t>(item->y);
+        const int bx0 = bx1 - std::max(w, 1) + 1, by0 = by1 - std::max(d, 1) + 1;
+        const int bz0 = item->z & 0xFF, bz1 = bz0 + std::max(info->footpad_z * 8, 1) - 1;
+        // The line keeps x - y constant: out of reach of the box at once when it is far from its range.
+        const int line = x0 - y0;
+        if (line < bx0 - by1 - kMargin * 2 || line > bx1 - by0 + kMargin * 2) continue;
+        for (int h = 0; h <= 250; ++h) {
+            const int px = x0 + 2 * h, py = y0 + 2 * h;
+            const int cx = std::clamp(px, bx0, bx1), cy = std::clamp(py, by0, by1), cz = std::clamp(h, bz0, bz1);
+            const int distance = std::max({std::abs(px - cx), std::abs(py - cy), std::abs(h - cz)});
+            // The nearest to the line; among equals, the one nearest the camera (the larger h).
+            if (distance < best_distance || (distance == best_distance && h >= best_h)) {
+                best = id;
+                best_distance = distance;
+                best_h = h;
+                at = {cx, cy, cz};
+            }
+        }
+    }
+    return best;
 }
 
 }  // namespace
@@ -426,6 +474,14 @@ std::optional<LaserBeam> laser_beam(const World& world, const AnimDat& anims) {
     beam.from = {static_cast<std::uint16_t>(npc->x - (info ? info->footpad_x : 0) * 8) + kDirectionDx[dir] * 8,
                  static_cast<std::uint16_t>(npc->y - (info ? info->footpad_y : 0) * 8) + kDirectionDy[dir] * 8, muzzle_z};
     World::Point target{cross->x, cross->y, cross->z};
+    // Keyboard and mouse mode, the pointer over a living NPC: the beam aims at the spot of it under the pointer (the
+    // sweep below still stops it at anything in the way).
+    ObjId snapped = 0;
+    if (aim.free) {
+        World::Point at{};
+        snapped = npc_under_pointer(world, aim.free_x, aim.free_y, id, at);
+        if (snapped != 0) target = at;
+    }
     // Not a very long sweep: the beam stops at 1500 units.
     const std::int32_t dx = target.x - beam.from.x, dy = target.y - beam.from.y;
     const std::int32_t longest = std::max(std::abs(dx), std::abs(dy));
@@ -436,10 +492,10 @@ std::optional<LaserBeam> laser_beam(const World& world, const AnimDat& anims) {
     const SweepResult r = sweep(world, kProjectileShape, id, beam.from, target, kSweepNoGround);
     // The dot is where the crosshair is, unless something is clearly in the way before it (the target itself lies on a
     // surface, which the sweep reports as a hit a unit or two short of it).
-    const bool short_of_target = r.blocker != 0 && std::max(std::abs(r.end.x - target.x), std::abs(r.end.y - target.y)) > 24;
+    const bool short_of_target = r.blocker != 0 && r.blocker != snapped && std::max(std::abs(r.end.x - target.x), std::abs(r.end.y - target.y)) > 24;
     beam.to = short_of_target ? r.end : target;
     // "Hit": cut short well before the target (the target itself is on a surface).
-    beam.hit = r.blocker != 0 && std::max(std::abs(beam.to.x - target.x), std::abs(beam.to.y - target.y)) > 24;
+    beam.hit = r.blocker != 0 && r.blocker != snapped && std::max(std::abs(beam.to.x - target.x), std::abs(beam.to.y - target.y)) > 24;
     // The weapon's accuracy at that distance, as fire_weapon will apply it.
     if (const Item* gun = world.get(world.active_weapon(id))) {
         beam.spread = player_shot_spread(world, dtable::weapon(gun->shape).fire_type(), beam.from, beam.to, &beam.spread_z);

@@ -194,7 +194,7 @@ void OptionsScreen::draw(Surface8& screen) const {
 // The rows of the port settings screen, in one column down the middle (the last, `kRowBack`, closes it).
 // @orig none: port-only settings screen
 OptionsScreen::Rect OptionsScreen::port_row_rect(int row) const {
-    constexpr int kX0 = 130, kX1 = 509, kY0 = 92, kRowStep = 27, kHeight = 23;
+    constexpr int kX0 = 130, kX1 = 509, kY0 = 84, kRowStep = 23, kHeight = 21;
     const int y = kY0 + kRowStep * row;
     return {kX0, y, kX1, y + kHeight - 1};
 }
@@ -212,7 +212,9 @@ std::string OptionsScreen::port_row_name(int row) const {
     case kRowKeyboardMouse: return tr("CLAVIER ET SOURIS", "KEYBOARD AND MOUSE");
     case kRowRoll: return tr("ROULADE DIRECTIONNELLE", "DIRECTIONAL ROLL");
     case kRowTurn: return tr("ROTATION FLUIDE", "SMOOTH TURNING");
-    case kRowController: return tr("MANETTE", "CONTROLLER");
+    case kRowShowPath: return tr("TRAJET AU CLIC", "WALK PATH LINE");
+    case kRowPickupNear: return tr("OBJETS PRES DU COFFRE", "PICKUPS NEAR SOURCE");
+    case kRowHardware: return tr("SCENE MATERIELLE", "HARDWARE SCENE");    case kRowController: return tr("MANETTE", "CONTROLLER");
     default: return tr("COULEURS DU PERSONNAGE", "CHARACTER COLOURS");
     }
 }
@@ -232,7 +234,9 @@ std::string OptionsScreen::port_row_value(int row) const {
     case kRowKeyboardMouse: on = c.keyboard_mouse; break;
     case kRowRoll: on = c.directional_roll; break;
     case kRowTurn: on = c.turn_rotation; break;
-    default: return "";  // a button
+    case kRowShowPath: on = c.show_path; break;
+    case kRowPickupNear: on = c.pickup_near_source; break;
+    case kRowHardware: on = c.hardware_scene; break;    default: return "";  // a button
     }
     return on ? tr("MARCHE", "ON") : tr("ARRET", "OFF");
 }
@@ -332,7 +336,9 @@ void OptionsScreen::port_row_acted(int row) {
     case kRowKeyboardMouse: c.keyboard_mouse = !c.keyboard_mouse; break;
     case kRowRoll: c.directional_roll = !c.directional_roll; break;
     case kRowTurn: c.turn_rotation = !c.turn_rotation; break;
-    case kRowController: open_controller(); break;
+    case kRowShowPath: c.show_path = !c.show_path; break;
+    case kRowPickupNear: c.pickup_near_source = !c.pickup_near_source; break;
+    case kRowHardware: c.hardware_scene = !c.hardware_scene; break;    case kRowController: open_controller(); break;
     default: open_colours(); break;
     }
 }

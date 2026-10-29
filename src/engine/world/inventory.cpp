@@ -208,6 +208,7 @@ bool may_use(const World& world, ObjId item) {
 }
 
 void use_item(World& world, ObjId item) {
+    if (may_use(world, item)) world.state.pickups.set_source(world, item);
     if (may_use(world, item) && world.hooks().start_event) world.hooks().start_event(item, 1);
 }
 

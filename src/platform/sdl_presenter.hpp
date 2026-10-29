@@ -10,11 +10,13 @@
 #include "engine/world/colours_overlay.hpp"
 #include "engine/world/jump_overlay.hpp"
 #include "engine/world/map_overlay.hpp"
+#include "engine/world/scene_list.hpp"
 #include "engine/world/wheel_overlay.hpp"
 
 #include <array>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -39,6 +41,9 @@ public:
     // "opengl", "direct3d11", "software"... and whether it is the software renderer.
     std::string renderer_name() const;
     bool software_renderer() const;
+    // The hardware scene (see engine/world/scene_list.hpp): drawn under the frame, whose pixels of colour kSceneKey are
+    // then clear. Null draws the frame alone, as usual.
+    void set_scene(const std::vector<SceneCmd>* scene) { scene_ = scene; }
     // The laser sight drawn over the next frames (view pixels), cleared with on = false.
     void set_laser(bool on, bool hit, float x0, float y0, float x1, float y1, float spread_x = 0, float spread_y = 0);
     // The click-to-walk debug path (view pixels, goal last), empty to hide it.
@@ -107,6 +112,17 @@ private:
     void draw_hit_bars();
     void draw_pointer();
     void draw_blood();
+    // The hardware scene: one texture per picture (and its mirror), built from the palette and rebuilt when it changes.
+    const std::vector<SceneCmd>* scene_ = nullptr;
+    struct SceneTexture {
+        SDL_Texture* texture = nullptr;
+        int w = 0, h = 0;
+    };
+    std::unordered_map<std::uintptr_t, SceneTexture> scene_textures_;
+    std::array<Rgb, 256> scene_colours_{};
+    int gamma_version_ = 0, scene_gamma_version_ = -1;
+    void draw_scene(const Palette& palette);
+    void clear_scene_textures();
     const MapOverlay* map_ = nullptr;
     void draw_map();
     void draw_wheel();

@@ -53,6 +53,16 @@ public:
     // Port addition, written when switched on: "turnrotation", the player facing the pointer is turned by the angle between
     // the exact direction of the pointer and the nearest of his 16 pictures, in steps of 1 degree.
     bool turn_rotation = false;
+    // Port addition, written only when set: "hardwarescene", the scene (floor, walls, characters) is drawn by the graphics
+    // card as textures, under the software frame that holds the interface. The player's chosen colours and smooth turning
+    // are not drawn in this mode yet.
+    bool hardware_scene = false;
+    // Port addition, written when switched off: "pickupnear", the items just picked up show for a moment above the chest,
+    // body or spot they came from instead of in the top left corner.
+    bool pickup_near_source = true;
+    // Port addition, written when switched off: "showpath", the line drawn along the route of a click-to-walk and its
+    // preview under the pointer.
+    bool show_path = true;
     // Port addition, written when switched off: "nativeresolution", the view
     // takes the whole screen (more scenery around the camera) instead of the
     // original 640 x 480.

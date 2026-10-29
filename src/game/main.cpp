@@ -467,6 +467,7 @@ int main(int argc, char** argv) {
                 presenter.text(rx, 34.0f, line, 210, 235, 255, true);
                 if (const std::string path = game.path_status(); !path.empty()) presenter.text(rx, 50.0f, path, 120, 255, 255, true);
             }
+            presenter.set_scene(game.scene());
             presenter.set_debug_path(game.path_debug_screen());
             presenter.set_map(game.map_overlay().on ? &game.map_overlay() : nullptr);
             presenter.set_wheel(game.wheel_overlay().on ? &game.wheel_overlay() : nullptr);

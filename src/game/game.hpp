@@ -29,6 +29,7 @@
 #include "engine/ui/movie_player.hpp"
 #include "engine/ui/mouse_cursor.hpp"
 #include "engine/ui/pickup_area.hpp"
+#include "engine/world/scene_list.hpp"
 #include "engine/ui/status_bar.hpp"
 #include "engine/usecode/uc_machine.hpp"
 #include "engine/usecode/usecode_file.hpp"
@@ -163,6 +164,8 @@ public:
         int kind;
     };
     std::vector<BloodDotScreen> blood_screen() const;
+    // The scene for the graphics card, or null when the frame holds the whole picture.
+    const std::vector<SceneCmd>* scene() const { return scene_on_ ? &scene_ : nullptr; }
     // Mission map (M in the keyboard and mouse mode, or --map): the level seen from above in the isometric orientation, the
     // walls and floors as diamonds, with markers for you, enemies, key items, weapons and ammunition, things to use, and
     // triggers. Built when it opens; the markers follow the game.
@@ -473,6 +476,18 @@ private:
     std::vector<BloodParticle> blood_;
     std::uint32_t blood_seed_ = 12345;
     void update_blood(float seconds);
+    // A splat of blood on the floor, drawn into the scene after item `before - 1` of the display list (the floor under it).
+    struct FloorSplat {
+        std::size_t before;
+        int sx, sy;
+        float rx, ry, alpha;
+    };
+    std::vector<FloorSplat> plan_floor_splats(const std::vector<DrawItem>& list, int width, int height) const;
+    // The hardware scene (GameConfig::hardware_scene): filled by render_view for the presenter.
+    std::vector<SceneCmd> scene_;
+    bool scene_on_ = false;
+    void build_scene(const std::vector<DrawItem>& list, const std::vector<FloorSplat>& splats);
+    void draw_floor_splat(Surface8& screen, const FloorSplat& splat, std::array<std::int16_t, 256>& reddened) const;
     bool pending_grant_ = false;
     void grant_all_items();
     MapOverlay map_;
@@ -505,8 +520,7 @@ private:
     bool seen_at(float wx, float wy) const;
     void start_walk_to_pointer();
     void start_walk_to_item(ObjId item);
-    void update_walk_path();
-    void stop_walk_path();
+    void update_walk_path();    void stop_walk_path();
     // WASD / QE remapped to arrows with Alt or Ctrl: the modifier scancode
     // (0x38 / 0x1D) sent with each key, 0 when not held, for its release.
     std::uint8_t remap_mod_[128] = {};

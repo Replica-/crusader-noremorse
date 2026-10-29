@@ -40,6 +40,9 @@ struct PickupEntry {
     std::uint16_t icon_frame = 0;
     int count = 0;
     int seconds = 0;
+    // Port addition: where in the world it was picked up from (a chest, a body, the item on the floor), when known.
+    bool anchored = false;
+    int wx = 0, wy = 0, wz = 0;
 };
 
 class PickupList {
@@ -51,12 +54,20 @@ public:
     void add(const World& world, ObjId item);
     // DISPLAY_1190_0414.
     void count_second();
-    void clear() { entries_ = {}; }
+    void clear() {
+        entries_ = {};
+        source_seconds_ = 0;
+    }
+    // Port addition: the chest or body the player just used (its centre), where what it gives is shown for the next
+    // few seconds.
+    void set_source(const World& world, ObjId item);
 
     const std::array<PickupEntry, kEntries>& entries() const { return entries_; }
 
 private:
     std::array<PickupEntry, kEntries> entries_{};
+    int source_x_ = 0, source_y_ = 0, source_z_ = 0;
+    int source_seconds_ = 0;
 };
 
 // DISPLAY_1190_0000 / 0057: counts the seconds of GameState::pickups.

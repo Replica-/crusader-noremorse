@@ -26,7 +26,6 @@ Box box_of(const ShapeInfo* info, bool mirrored) {
 }
 
 constexpr std::int32_t kMaxZ = 250;
-
 // State shared by the per-item test (the original's sweep object).
 struct Sweep {
     const World& world;

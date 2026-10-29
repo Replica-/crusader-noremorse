@@ -735,6 +735,25 @@ void Game::update(std::uint32_t elapsed_us) {
             place_crosshair(*world_, anims_);
         }
     }
+    // The player's death: the "Silencer terminated" screen comes from the last frame of his death animation. If it never
+    // did (killed by an explosion or acid, say, in a way that left no such frame), it is started here once he has lain
+    // still for a while.
+    if (world_ && !movie_) {
+        GameState& st = world_->state;
+        if (world_->get(1) && st.controlled_npc == 1 && (world_->is_dead(1) || world_->npc_hp(1) == 0)) {
+            const std::uint32_t now = kernel_->ticks();
+            if (st.player_died_at == 0) {
+                st.player_died_at = std::max<std::uint32_t>(now, 1);
+            } else if (!st.player_death_event && !st.player_death_forced && !modal() && !actor_busy(*kernel_, 1) &&
+                       now - st.player_died_at > 120) {
+                st.player_death_forced = true;
+                if (world_->hooks().start_event) world_->hooks().start_event(1, ActorAnimProcess::kCalledFromAnimEvent);
+            }
+        } else {
+            st.player_died_at = 0;
+            st.player_death_event = st.player_death_forced = false;
+        }
+    }
     // A step or roll pressed during another animation: do it as soon as the NPC is free.
     if (pending_move_.source && world_ && !modal() && !movie_) {
         if (!remap_mod_[pending_move_.source]) {
@@ -1760,6 +1779,7 @@ void Game::draw_window(Surface8& screen, int x0, int y0, Draw&& draw) {
 
 // @orig 1188:19C1
 void Game::render(Surface8& screen, RenderStats* stats) {
+    scene_on_ = false;  // set again by render_view
     view_w_ = screen.width;
     view_h_ = screen.height;
     // A screen larger than 640 x 480 (native resolution) shows more of the
@@ -1800,7 +1820,9 @@ void Game::render(Surface8& screen, RenderStats* stats) {
 
 // @orig 1188:12F1
 void Game::render_view(Surface8& screen, RenderStats* stats) {
-    screen.clear(0);
+    // Hardware scene: the view is left clear (the key colour) for the graphics card's scene to show through.
+    screen.clear(config_.hardware_scene ? kSceneKey : 0);
+    scene_on_ = config_.hardware_scene;
     world_->set_view_size(screen.width, screen.height);
     const GameState& s = world_->state;
     const auto list =
@@ -1810,6 +1832,21 @@ void Game::render_view(Surface8& screen, RenderStats* stats) {
     // screen place plus the offsets of the current action, direction, frame.
     player_layer_.on = false;
     compute_turn_angle();
+    // Blood on the floor is drawn into the scene, right after the floor it lies on, so the player and the scenery that
+    // are nearer pass over it (the presenter draws only what is in the air).
+    std::vector<FloorSplat> splats = plan_floor_splats(list, screen.width, screen.height);
+    std::size_t item_index = 0, splat_next = 0;
+    std::array<std::int16_t, 256> reddened;
+    reddened.fill(-1);
+    const auto draw_splats = [&](Surface8& surface, std::size_t before) {
+        for (; splat_next < splats.size() && splats[splat_next].before <= before; ++splat_next) {
+            draw_floor_splat(surface, splats[splat_next], reddened);
+        }
+    };
+    if (config_.hardware_scene) {
+        turn_.captured = false;  // no software capture of the player: he is a plain picture in this mode
+        build_scene(list, splats);
+    } else {
     draw_display_list(
         screen, list, &xform_,
         [this](Surface8& surface, const DrawItem& d) {
@@ -1838,7 +1875,12 @@ void Game::render_view(Surface8& screen, RenderStats* stats) {
             if (weapon_frame) weapon_frame->draw(surface, weapon_x, weapon_y, false);
             turn_capture(surface, d, weapon_frame, weapon_x, weapon_y);
         },
-        [this](Surface8& surface, const DrawItem& d) { turn_before(surface, d); });
+        [&](Surface8& surface, const DrawItem& d) {
+            draw_splats(surface, item_index++);
+            turn_before(surface, d);
+        });
+    draw_splats(screen, list.size());
+    }
     // SPMGR.C: the screen sprites (aiming mode), over the scene, unless
     // suspended in the menu mode (DS:2D8F).
     for (const ScreenSprite& sprite : world_->state.screen_sprites.all()) {
@@ -1866,7 +1908,9 @@ void Game::render_view(Surface8& screen, RenderStats* stats) {
     draw_window(screen, ui_x_, screen.height - kScreenHeight,
                 [this](Surface8& s) { status_bar_.draw(s, *world_); });
     // DISPLAY_1190_010f, not in the menu mode (DS:2CEE, set with DS:2D8F).
-    if (!sprites_suspended_) pickup_area_.draw(screen, world_->state.pickups);
+    if (!sprites_suspended_) {
+        pickup_area_.draw(screen, world_->state.pickups, config_.pickup_near_source, s.view_left, s.view_top);
+    }
     finish_player_layer(screen);
     finish_turn_sprite(screen);
 }
@@ -2094,16 +2138,15 @@ void Game::update_walk_path() {
         ++path_stuck_;
         return;
     }
-    // A walk is first turned the way it goes (as the engine's own path finder does); a run turns as it starts.
+    // The step starts straight in its new direction (no turning animation first), so a bend in the route costs no pause.
     path_step_dir_ = dir;
-    if (action == walk || action == 1) turn_to(*kernel_, *world_, anims_, 1, dir, false, true);
     do_anim(*kernel_, *world_, anims_, 1, static_cast<std::uint16_t>(action), dir);
 }
 
 std::vector<std::pair<float, float>> Game::path_debug_screen() const {
     std::vector<std::pair<float, float>> out;
     const std::vector<World::Point>& points = path_active_ ? path_points_ : preview_points_;
-    if (points.empty() || !world_) return out;
+    if (points.empty() || !world_ || !config_.show_path) return out;
     const GameState& s = world_->state;
     auto project = [&](const World::Point& p) {
         const auto ux = static_cast<std::int16_t>(p.x), uy = static_cast<std::int16_t>(p.y);
@@ -2423,6 +2466,109 @@ void Game::update_blood(float seconds) {
                  blood_.end());
 }
 
+// @orig none: port-only blood on the floor
+std::vector<Game::FloorSplat> Game::plan_floor_splats(const std::vector<DrawItem>& list, int width, int height) const {
+    std::vector<FloorSplat> out;
+    const GameState& s = world_->state;
+    for (const BloodParticle& p : blood_) {
+        if (p.kind != 2) continue;
+        const float fade = p.fading ? std::clamp(1.0f - p.age / p.life, 0.0f, 1.0f) : 1.0f;
+        const float alpha = std::min(1.0f, fade * 2.0f) * 0.85f;
+        const int sx = static_cast<int>(std::lround((p.x - p.y) * 0.5f)) - s.view_left;
+        const int sy = static_cast<int>(std::lround((p.x + p.y) * 0.25f - p.z)) - s.view_top;
+        if (alpha < 0.12f || sx < -8 || sy < -8 || sx > width + 8 || sy > height + 8) continue;
+        // The last flat thing under it (the floor, then any rug or mark on it) is drawn first.
+        const int px = static_cast<int>(std::lround(p.x)), py = static_cast<int>(std::lround(p.y));
+        const int ground = static_cast<int>(std::lround(p.ground));
+        std::size_t before = list.size() + 1;
+        for (std::size_t i = list.size(); i-- > 0;) {
+            const DrawItem& d = list[i];
+            if (px <= d.x && px >= d.x_left && py <= d.y && py >= d.y_far && std::abs(d.z_top - ground) <= 2) {
+                before = i + 1;
+                break;
+            }
+        }
+        if (before > list.size()) continue;  // no floor to lie on: not shown, rather than floating
+        out.push_back({before, sx, sy, p.size * 1.7f, p.size * 0.85f, alpha});
+    }
+    std::stable_sort(out.begin(), out.end(), [](const FloorSplat& a, const FloorSplat& b) { return a.before < b.before; });
+    return out;
+}
+
+// The scene for the graphics card: the display list in order, with the floor splats of blood after the floor they lie on and
+// the player's weapon right after him.
+// @orig none: port-only hardware scene
+void Game::build_scene(const std::vector<DrawItem>& list, const std::vector<FloorSplat>& splats) {
+    scene_.clear();
+    scene_.reserve(list.size() + splats.size() + 1);
+    std::size_t next = 0;
+    for (std::size_t k = 0; k <= list.size(); ++k) {
+        for (; next < splats.size() && splats[next].before <= k; ++next) {
+            SceneCmd c;
+            c.x = splats[next].sx, c.y = splats[next].sy;
+            c.rx = splats[next].rx, c.ry = splats[next].ry, c.alpha = splats[next].alpha;
+            scene_.push_back(c);
+        }
+        if (k == list.size()) break;
+        const DrawItem& d = list[k];
+        SceneCmd c;
+        c.frame = d.frame;
+        c.x = d.left, c.y = d.top;
+        c.mirrored = d.mirrored;
+        c.translucent = (d.shape_flags & ShapeInfo::kTranslucent) != 0;
+        scene_.push_back(c);
+        if (d.item->id != 1 || d.item->shape != 1) continue;
+        // DLIST.C: right after item 1, in combat (or holstering), its weapon (WPNOVLAY.DAT), unmirrored.
+        const auto record = world_->npc_record(1);
+        const std::uint16_t last = static_cast<std::uint16_t>(record[npc::kLastAnim] | record[npc::kLastAnim + 1] << 8);
+        const Item* weapon = in_combat(*world_, 1) || last == 0xB ? world_->get(world_->active_weapon(1)) : nullptr;
+        const AnimAction* header = weapon ? anims_.action(1, last) : nullptr;
+        if (!weapon || !header) continue;
+        const auto piece = weapon_overlay_.piece(weapon->shape, last, *header, world_->npc_direction(1), record[npc::kAnimFrame]);
+        if (!piece || (piece->shape == 0 && piece->frame == 0)) continue;
+        const Shape* shape = shapes_.get(piece->shape);
+        if (!shape || piece->frame >= shape->frames().size()) continue;
+        SceneCmd w;
+        w.frame = &shape->frames()[piece->frame];
+        w.x = d.sx + piece->dx - w.frame->xoff;
+        w.y = d.sy + piece->dy - w.frame->yoff;
+        scene_.push_back(w);
+    }
+}
+
+// @orig none: port-only blood on the floor
+void Game::draw_floor_splat(Surface8& screen, const FloorSplat& splat, std::array<std::int16_t, 256>& reddened) const {
+    const Palette& palette = world_->state.screen_palette;
+    // The palette colour nearest to what a colour looks like with blood on it.
+    const auto with_blood = [&](std::uint8_t under) {
+        if (reddened[under] >= 0) return static_cast<std::uint8_t>(reddened[under]);
+        const Rgb& c = palette.colors[under];
+        const int r = (c.r * 2 + 200 * 8) / 10, g = (c.g * 2 + 14 * 8) / 10, b = (c.b * 2 + 20 * 8) / 10;
+        int best = 0, best_distance = 1 << 30;
+        for (int i = 0; i < 256; ++i) {
+            const Rgb& q = palette.colors[static_cast<std::size_t>(i)];
+            const int dr = q.r - r, dg = q.g - g, db = q.b - b;
+            const int distance = dr * dr + dg * dg + db * db;
+            if (distance < best_distance) best = i, best_distance = distance;
+        }
+        reddened[under] = static_cast<std::int16_t>(best);
+        return static_cast<std::uint8_t>(best);
+    };
+    const bool dither = splat.alpha < 0.5f;  // a fading splat is a scatter of pixels
+    const int ry = static_cast<int>(std::ceil(splat.ry)), rx = static_cast<int>(std::ceil(splat.rx));
+    for (int dy = -ry; dy <= ry; ++dy) {
+        for (int dx = -rx; dx <= rx; ++dx) {
+            const float u = static_cast<float>(dx) / splat.rx, v = static_cast<float>(dy) / splat.ry;
+            if (u * u + v * v > 1.0f) continue;
+            const int x = splat.sx + dx, y = splat.sy + dy;
+            if (x < 0 || y < 0 || x >= screen.width || y >= screen.height) continue;
+            if (dither && ((x + y) & 1)) continue;
+            std::uint8_t& pixel = screen.row(y)[x];
+            pixel = with_blood(pixel);
+        }
+    }
+}
+
 std::vector<Game::BloodDotScreen> Game::blood_screen() const {
     std::vector<BloodDotScreen> out;
     if (!world_ || blood_.empty() || modal() || movie_) return out;
@@ -2432,6 +2578,7 @@ std::vector<Game::BloodDotScreen> Game::blood_screen() const {
         sy = (x + y) * 0.25f - z - static_cast<float>(s.view_top);
     };
     for (const BloodParticle& p : blood_) {
+        if (p.kind == 2) continue;  // on the floor: drawn into the scene (plan_floor_splats)
         BloodDotScreen d;
         project(p.x, p.y, p.z, d.x, d.y);
         d.size = p.size;

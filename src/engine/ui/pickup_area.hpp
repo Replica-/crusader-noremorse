@@ -34,7 +34,10 @@ public:
 
     // Width of the strip of an entry (W above).
     int width(const PickupEntry& entry) const;
-    void draw(Surface8& screen, const PickupList& list) const;
+    // Port addition: with `near_source`, an entry that knows where it came from is drawn above that spot of the
+    // world (`view_left`, `view_top` are the camera's), stacked with the others from there, instead of at the corner.
+    void draw(Surface8& screen, const PickupList& list, bool near_source = false, int view_left = 0,
+              int view_top = 0) const;
 
 private:
     void draw_gump(Surface8& screen, std::uint16_t shape, std::uint16_t frame, int x, int y,

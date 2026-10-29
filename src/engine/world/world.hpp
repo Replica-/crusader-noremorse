@@ -161,6 +161,12 @@ struct GameState {
     bool target_designation = false;  // (port: the targeting reticle is gone, shots go where the pointer is)
     // Port addition: a jump asked for while the player was busy (a step, a turn) is done when he is free, within this tick.
     std::uint32_t jump_pending_until = 0;
+    // Port addition: the player's death screen ("Silencer terminated") is started by the last frame of his death
+    // animation (usecode event 0x0E). `player_death_event` notes that it came; when it does not (a death that left no
+    // such animation), the game starts it itself some seconds after the death (`player_died_at`, a kernel tick, 0 while alive).
+    bool player_death_event = false;
+    bool player_death_forced = false;
+    std::uint32_t player_died_at = 0;
     // Port addition: weapons that fell out of a dead soldier; they cannot be used or picked up.
     std::unordered_set<ObjId> npc_dropped;
     // Port addition: health bars shown for a few seconds above what was hit (hit points before the first

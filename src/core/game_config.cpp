@@ -54,6 +54,9 @@ GameConfig GameConfig::parse(std::string_view text) {
         else if (key == "followplayer") c.follow_player = value == "true";
         else if (key == "directionalmove") c.directional_move = value == "true";
         else if (key == "viewzoom") c.view_zoom = std::clamp(number(value), 0, 4);
+        else if (key == "hardwarescene") c.hardware_scene = value == "true";
+        else if (key == "pickupnear") c.pickup_near_source = value != "false";
+        else if (key == "showpath") c.show_path = value != "false";
         else if (key == "nativeresolution") c.native_resolution = value != "false";
         else if (key == "autosave") c.autosave = value != "false";
         else if (key == "directionalaim") c.directional_aim = value == "true";
@@ -121,6 +124,12 @@ std::string GameConfig::text() const {
     else out.erase("directionalmove");
     if (view_zoom) out.set("viewzoom", std::to_string(view_zoom));
     else out.erase("viewzoom");
+    if (hardware_scene) out.set("hardwarescene", "true");
+    else out.erase("hardwarescene");
+    if (!pickup_near_source) out.set("pickupnear", "false");
+    else out.erase("pickupnear");
+    if (!show_path) out.set("showpath", "false");
+    else out.erase("showpath");
     if (!native_resolution) out.set("nativeresolution", "false");
     else out.erase("nativeresolution");
     if (!autosave) out.set("autosave", "false");

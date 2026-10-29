@@ -109,8 +109,7 @@ std::optional<LaserBeam> laser_beam(const World& world, const AnimDat& anims);
 
 // The 16-direction from the controlled NPC to a screen position (-1 when too close), and a
 // running animation turned that way (a held walk follows the pointer without stopping).
-int pointer_direction(const World& world, int screen_x, int screen_y);
-bool redirect_animation(Kernel& kernel, World& world, int dir);
+int pointer_direction(const World& world, int screen_x, int screen_y);bool redirect_animation(Kernel& kernel, World& world, int dir);
 
 std::optional<World::Point> crosshair_aim(const World& world, int z);
 

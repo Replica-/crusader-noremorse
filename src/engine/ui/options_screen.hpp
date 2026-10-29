@@ -80,7 +80,7 @@ public:
     // The rows of the port settings screen, then its back row.
     enum PortRow : int {
         kRowFollow, kRowDirectionalMove, kRowDirectionalAim, kRowNative, kRowZoom,
-        kRowAutosave, kRowToggleRun, kRowKeyboardMouse, kRowRoll, kRowTurn,
+        kRowAutosave, kRowToggleRun, kRowKeyboardMouse, kRowRoll, kRowTurn, kRowShowPath, kRowPickupNear, kRowHardware,
         kRowController, kRowColours, kPortRows, kRowBack = kPortRows
     };
     static constexpr int kSteps = 23;

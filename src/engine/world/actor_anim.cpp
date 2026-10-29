@@ -18,7 +18,6 @@ namespace {
 // stride, then the same stride from small offsets to either side. This lets
 // The jumps (standing 0x3A, running 0x38): their frames are never cut short, or the player is left in the air and falls.
 bool is_jump(std::uint16_t action) { return action == 0x3A || action == 0x38; }
-
 // both player input and scripted walks line up with a narrow doorway.
 // @orig 1158:016F
 bool walk_fits(const World& world, const AnimAction& a, ObjId actor, int dir, World::Point pos) {
@@ -290,6 +289,7 @@ bool ActorAnimProcess::step() {
     // actor's class; the NPC classes start NPCDEATH from it on the last frame
     // of their deaths. The script runs later, as a new process.
     if (f->event && world_.hooks().start_event) {
+        if (owner() == 1 && world_.is_dead(1)) world_.state.player_death_event = true;
         world_.hooks().start_event(owner(), kCalledFromAnimEvent);
         if (!world_.get(owner()) || terminated()) return false;
     }

@@ -32,7 +32,25 @@ Description describe(const World& world, const Item& item) {
     }
 }
 
+constexpr int kSourceSeconds = 10;
+
+// The centre of an item's footprint (getCX, getCY, getCZ).
+void centre_of(const World& world, const Item& item, int& x, int& y, int& z) {
+    const ShapeInfo* info = world.shape_info(item.shape);
+    x = static_cast<std::uint16_t>(item.x - (info ? info->footpad_x : 0) * 8);
+    y = static_cast<std::uint16_t>(item.y - (info ? info->footpad_y : 0) * 8);
+    z = (item.z & 0xFF) + (info ? info->footpad_z : 0) * 4;
+}
+
 }  // namespace
+
+// @orig none: port-only, where the items just picked up are shown
+void PickupList::set_source(const World& world, ObjId item_id) {
+    const Item* item = world.get(item_id);
+    if (!item || item->parent != 0) return;
+    centre_of(world, *item, source_x_, source_y_, source_z_);
+    source_seconds_ = kSourceSeconds;
+}
 
 // @orig 1190:049C
 void PickupList::add(const World& world, ObjId item_id) {
@@ -40,6 +58,25 @@ void PickupList::add(const World& world, ObjId item_id) {
     if (!item) return;
     const Description d = describe(world, *item);
     if (!d.name) return;
+    // Port addition: where it comes from. The container it is in (a chest, a body) or the item itself on the floor;
+    // else the thing the player has just used.
+    PickupEntry origin;
+    const Item* top = item;
+    for (int depth = 0; depth < 8 && top->parent != 0; ++depth) {
+        const Item* up = world.get(top->parent);
+        if (!up) break;
+        top = up;
+    }
+    if (top->parent == 0 && top != item && world.get(world.state.controlled_npc) != top) {
+        origin.anchored = true;
+        centre_of(world, *top, origin.wx, origin.wy, origin.wz);
+    } else if (top == item && top->parent == 0 && !(top->flags & kItemContained)) {
+        origin.anchored = true;
+        centre_of(world, *top, origin.wx, origin.wy, origin.wz);
+    } else if (source_seconds_ > 0) {
+        origin.anchored = true;
+        origin.wx = source_x_, origin.wy = source_y_, origin.wz = source_z_;
+    }
     for (PickupEntry& e : entries_) {
         if (!e.name || e.icon_shape != d.shape || e.icon_frame != d.frame) continue;
         // The original compares the icon shape, not the item's, with 0x4ED.
@@ -50,6 +87,7 @@ void PickupList::add(const World& world, ObjId item_id) {
     for (PickupEntry& e : entries_) {
         if (e.name) continue;
         e = {d.name, d.shape, d.frame, 1, kSeconds};
+        e.anchored = origin.anchored, e.wx = origin.wx, e.wy = origin.wy, e.wz = origin.wz;
         if (item->shape == kCredits) e.count = item->quality ? static_cast<std::int16_t>(item->quality) : 1;
         return;
     }
@@ -57,6 +95,7 @@ void PickupList::add(const World& world, ObjId item_id) {
 
 // @orig 1190:0414
 void PickupList::count_second() {
+    if (source_seconds_ > 0) --source_seconds_;
     for (PickupEntry& e : entries_) {
         if (e.name && --e.seconds == 0) e = {};
     }
