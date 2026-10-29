@@ -93,7 +93,7 @@ void ControlsScreen::draw(Surface8& screen) const {
         {"S", "step back"},
         {"Q / E", "roll left / right"},
         {"C", "kneel / stand up"},
-        {"SPACE", "fire"},
+        {"SPACE", "jump (hold: aim it)"},
         {"ESC", "menu"},
     };
     const std::vector<Line> right = {
@@ -154,7 +154,7 @@ void draw_updated_help_page(Surface8& picture, const Palette& palette, const Fon
     const Line player[] = {
         {"W", "WALK TO THE CURSOR (HOLD)"},   {"SHIFT W", "RUN TO THE CURSOR"},      {"A  D", "STEP LEFT / RIGHT"},
         {"S", "STEP BACK"},                   {"Q  E", "ROLL LEFT / RIGHT"},         {"C", "KNEEL / STAND UP"},
-        {"SPACE", "FIRE"},                    {"RIGHT CLICK", "DRAW / HOLSTER, HOLD FIRES"},
+        {"SPACE", "JUMP, HOLD TO AIM"},                  {"RIGHT CLICK", "DRAW / HOLSTER, HOLD FIRES"},
         {"LEFT CLICK", "WALK THERE / USE AN ITEM"}, {"TAB", "WEAPON WHEEL"},         {"I", "ITEM WHEEL"},
         {"M", "MISSION MAP"},                 {"U", "USE THE ACTIVE ITEM"},          {"B", "DETONATE BOMB"},
         {"Z", "CENTER CAMERA"},               {"G", "GRAB EXPOSED ITEMS"},

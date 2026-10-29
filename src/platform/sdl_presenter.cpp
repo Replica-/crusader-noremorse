@@ -329,6 +329,25 @@ void SdlPresenter::draw_pointer() {
         };
         disc(dot + 0.7f, shade);
         disc(dot, red);
+        if (pointer_.hover != 0) {
+            // The indicator of the arrow: a dot beside the ring at the lower right, green in reach, red too far.
+            const SDL_Color c = pointer_.hover == 1 ? SDL_Color{70, 230, 100, 255} : SDL_Color{235, 65, 55, 255};
+            const float ix = cx + outer * 0.95f, iy = cy + outer * 0.95f, r = std::max(3.8f, outer * 0.2f);
+            auto badge = [&](float rr, SDL_Color col) {
+                constexpr int kSegments = 18;
+                SDL_Vertex v[kSegments + 1];
+                int idx[kSegments * 3];
+                v[0] = {{ix, iy}, col, {0, 0}};
+                for (int i = 0; i < kSegments; ++i) {
+                    const float a = 6.2831853f * static_cast<float>(i) / kSegments;
+                    v[i + 1] = {{ix + std::cos(a) * rr, iy + std::sin(a) * rr}, col, {0, 0}};
+                    idx[i * 3] = 0, idx[i * 3 + 1] = i + 1, idx[i * 3 + 2] = (i + 1) % kSegments + 1;
+                }
+                SDL_RenderGeometry(renderer_, nullptr, v, kSegments + 1, idx, kSegments * 3);
+            };
+            badge(r + 1.4f, SDL_Color{0, 0, 0, 215});
+            badge(r, c);
+        }
         SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
         return;
     }

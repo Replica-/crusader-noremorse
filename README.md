@@ -6,6 +6,14 @@
 
 A C++20/SDL2 reimplementation of the *Crusader: No Remorse* (Origin, 1995) engine for Windows and Linux. The project is still a **work in progress**.
 
+**Simpler movement (Targetted towards Keyboard and Mouse mode, on by default):**
+
+- **W** always path-finds towards the mouse cursor, going round obstacles, and keeps doing so when running with **Shift**. **S** is always backwards, **A / D** side-step.
+- **Q / E** roll left / right, relative to the way the character is facing. **C** crouches and stands up.
+- **Left click** walks to the spot; **double click** runs there. Clicking an interactable object path-finds its way to it for you.
+- **Space** jumps. A tap is the classic blind jump; holding it shows where you will land (a dashed arc and a see-through copy of the character), and releasing it jumps there.
+- **Right click** draws the weapon (a tap puts it away again) and **holding it fires** at the cursor.
+
 This repository contains **no game files**: you need your own copy of the original game. The following versions are currently supported:
 
 - The **French version 1.08** (dated 12 October 1995) — ISO SHA-256: `B370436F2BA380500E918262A83293FBB89600253CC3F4579895D45FDB63B802`
@@ -19,7 +27,7 @@ This repository contains **no game files**: you need your own copy of the origin
 
   - **W** walks to the mouse cursor along an A* route that goes round obstacles (hold **Shift** to run). **A / D** step left / right, **S** steps back, **Q / E** roll left / right of the screen (the *Directional Roll* option), **C** kneels and stands up.
   - A free mouse pointer: the character faces it, and a drawn weapon aims exactly where it points, with no snapping to targets. The weapon keeps its normal accuracy, so shots still scatter. The old targeting reticle (the **R** key) is gone.
-  - **Right click** draws the weapon, and a tap puts it away again (even half way through the draw). Holding it fires. **Left click** with the weapon away walks to the spot (double click runs) or walks up to an item and uses it; with the weapon out it puts the weapon away first and then does the same. **Space** fires as before.
+  - **Right click** draws the weapon, and a tap puts it away again (even half way through the draw). Holding it fires. **Left click** with the weapon away walks to the spot (double click runs) or walks up to an item and uses it; with the weapon out it puts the weapon away first and then does the same.
   - Once the weapon is drawn, the mouse becomes a thin ring with a dot and four short lines, and a red reticle shows where the bullets can land: its lines move apart as the shot gets less accurate, and a laser dot stops on whatever is in the way.
 
     ![Target cursor and reticle](docs/images/features/crosshair.png)
@@ -37,7 +45,7 @@ This repository contains **no game files**: you need your own copy of the origin
 
     ![Mission map](docs/images/features/mission-map.png)
 
-  - **J** jumps: a tap is the original blind jump. Hold it and a dashed arc, a ring and a see-through copy of your character show where you will land, following the mouse (up to about 256 units away, never into walls or objects); release to jump there, whatever the distance or angle. Weapons lying on the floor no longer block you.
+  - **Space** jumps (it no longer fires; use the right mouse button): a tap is the original blind jump. Hold it and a dashed arc, a ring and a see-through copy of your character show where you will land, following the mouse (up to about 256 units away, never into walls or objects); release to jump there, whatever the distance or angle. Weapons lying on the floor no longer block you.
 
     ![Targeted jump preview](docs/images/features/jump.png)
 

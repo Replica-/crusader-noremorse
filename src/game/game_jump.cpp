@@ -20,7 +20,7 @@ constexpr int kJumpRange = 256;          // the farthest landing, usecode units
 
 // @orig none: port-only targeted jump
 bool Game::jump_key(const GameKeyEvent& e) {
-    if (!config_.keyboard_mouse || e.scancode != 0x24 || e.extended || !world_ || world_->state.controlled_npc != 1) return false;
+    if (!config_.keyboard_mouse || e.scancode != 0x39 || e.extended || !world_ || world_->state.controlled_npc != 1) return false;
     if (e.pressed) {
         if (e.count <= 1 && !jump_held_ && !world_->state.avatar_in_stasis && !world_->state.selection.active) {
             jump_held_ = true;

@@ -199,7 +199,7 @@ void Game::update_demo() {
             demo_jump_stage_ = 1;
         } else if (demo_jump_go_ && now - demo_jump_at_ > 150) {
             GameKeyEvent e;
-            e.scancode = 0x24;
+            e.scancode = 0x39;
             e.pressed = false;
             jump_key(e);
             demo_jump_stage_ = 2;

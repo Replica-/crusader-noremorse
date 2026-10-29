@@ -2218,6 +2218,11 @@ Game::PointerOverlay Game::pointer_overlay() const {
             const ShapeFrame& f = cursor->frames()[0];
             out.ring = static_cast<float>(std::max(f.width, f.height)) * 2.2f;
         }
+        bool in_range = false;
+        if (world_->state.controlled_npc == 1 && !world_->state.selection.active &&
+            hover_item(*world_, pointer_x_, pointer_y_, &in_range) != 0) {
+            out.hover = in_range ? 1 : 2;
+        }
         return out;
     }
     out.show = true;
