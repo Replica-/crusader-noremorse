@@ -123,7 +123,7 @@ std::vector<ObjId> nearby_items(const World& world) {
     std::vector<Candidate> found;
     for (ObjId id = kFirstItem; id <= kLastItem; ++id) {
         const Item* item = world.get(id);
-        if (!item || item->sprite_only || (item->z & 0xFF) == 254 || (item->flags & kItemContained)) continue;
+        if (!item || item->sprite_only || (item->z & 0xFF) == 254 || (item->flags & kItemContained) || world.state.npc_dropped.count(id)) continue;
         const ShapeInfo* info = world.shape_info(item->shape);
         const int family = info ? info->family : 0;
         if (item->shape != kNotUsable && (family < 10 || family > 13) && !selectable(world, *item)) continue;
@@ -254,7 +254,7 @@ ObjId hover_item(const World& world, int screen_x, int screen_y, bool* in_range)
     int best_distance = kHitRadius * kHitRadius + 1;
     for (ObjId id = kFirstItem; id <= kLastItem; ++id) {
         const Item* item = world.get(id);
-        if (!item || item->sprite_only || (item->z & 0xFF) == 254 || (item->flags & kItemContained)) continue;
+        if (!item || item->sprite_only || (item->z & 0xFF) == 254 || (item->flags & kItemContained) || world.state.npc_dropped.count(id)) continue;
         const ShapeInfo* info = world.shape_info(item->shape);
         const int family = info ? info->family : 0;
         if (item->shape != kNotUsable && (family < 10 || family > 13) && !selectable(world, *item)) continue;

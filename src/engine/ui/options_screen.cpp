@@ -4,6 +4,7 @@
 #include "engine/audio/audio.hpp"
 #include "engine/ui/gump_keys.hpp"
 
+#include <algorithm>
 #include <string>
 
 
@@ -158,8 +159,12 @@ void OptionsScreen::draw(Surface8& screen) const {
         colours_->draw(screen);
         return;
     }
-    if (enh_) {
-        enh_->draw(screen);
+    if (pad_) {
+        pad_->draw(screen);
+        return;
+    }
+    if (more_) {
+        draw_more_screen(screen);
         return;
     }
     screen.clear(0);
@@ -183,33 +188,70 @@ void OptionsScreen::draw(Surface8& screen) const {
         const int frame = is_choice(it.id) ? (chosen(it.id) ? 0 : 1) : (pressed(it.id) ? 1 : 0);
         draw_shape(screen, it.shape, frame, it.rect.x0, it.rect.y0);
     }
-    if (fonts_) {
-        draw_pad_button(screen, false);
-        draw_pad_button(screen, true);
+    if (fonts_) draw_more_button(screen);
+}
+
+// The rows of the port settings screen, in one column down the middle (the last, `kRowBack`, closes it).
+// @orig none: port-only settings screen
+OptionsScreen::Rect OptionsScreen::port_row_rect(int row) const {
+    constexpr int kX0 = 130, kX1 = 509, kY0 = 92, kRowStep = 27, kHeight = 23;
+    const int y = kY0 + kRowStep * row;
+    return {kX0, y, kX1, y + kHeight - 1};
+}
+
+// @orig none: port-only settings panel
+std::string OptionsScreen::port_row_name(int row) const {
+    switch (row) {
+    case kRowFollow: return tr("SUIVI CAMERA", "CAMERA FOLLOW");
+    case kRowDirectionalMove: return tr("MODE DIRECTIONNEL", "DIRECTIONAL MOVE");
+    case kRowDirectionalAim: return tr("VISEE DIRECTIONNELLE", "DIRECTIONAL AIM");
+    case kRowNative: return tr("RESOLUTION NATIVE", "NATIVE RESOLUTION");
+    case kRowZoom: return tr("ZOOM", "ZOOM");
+    case kRowAutosave: return tr("SAUVEGARDE AUTO", "AUTOSAVE");
+    case kRowToggleRun: return tr("COURSE PERMANENTE", "TOGGLE RUN");
+    case kRowKeyboardMouse: return tr("CLAVIER ET SOURIS", "KEYBOARD AND MOUSE");
+    case kRowRoll: return tr("ROULADE DIRECTIONNELLE", "DIRECTIONAL ROLL");
+    case kRowTurn: return tr("ROTATION FLUIDE", "SMOOTH TURNING");
+    case kRowController: return tr("MANETTE", "CONTROLLER");
+    default: return tr("COULEURS DU PERSONNAGE", "CHARACTER COLOURS");
     }
 }
 
-// The "ameliorations" button: a "+" icon and a text button next to "quit", in
-// its colours (frame, icon and text bright when focused or pressed).
-// @orig none: port-only enhancements button
-void OptionsScreen::draw_pad_button(Surface8& screen, bool colours) const {
-    const bool lit = colours ? (*focus_ == kColourLine || colour_pressed_) : (*focus_ == kPadLine || pad_pressed_);
+// @orig none: port-only settings panel
+std::string OptionsScreen::port_row_value(int row) const {
+    const GameConfig& c = *config_;
+    bool on = false;
+    switch (row) {
+    case kRowFollow: on = c.follow_player; break;
+    case kRowDirectionalMove: on = c.directional_move; break;
+    case kRowDirectionalAim: on = c.directional_aim; break;
+    case kRowNative: on = c.native_resolution; break;
+    case kRowZoom: return c.view_zoom ? "x" + std::to_string(c.view_zoom) : tr("AUTO", "AUTO");
+    case kRowAutosave: on = c.autosave; break;
+    case kRowToggleRun: on = c.toggle_run; break;
+    case kRowKeyboardMouse: on = c.keyboard_mouse; break;
+    case kRowRoll: on = c.directional_roll; break;
+    case kRowTurn: on = c.turn_rotation; break;
+    default: return "";  // a button
+    }
+    return on ? tr("MARCHE", "ON") : tr("ARRET", "OFF");
+}
+
+// The "more options" button: a text button next to "quit", in its colours (frame and text bright when focused or pressed).
+// @orig none: port-only settings screen
+void OptionsScreen::draw_more_button(Surface8& screen) const {
+    const bool lit = *focus_ == kMoreLine || more_pressed_;
     const std::uint8_t colour = lit ? kFocusColour : kButtonColour;
-    const Rect& r = colours ? colour_rect_ : pad_rect_;
+    const Rect& r = more_rect_;
     draw_rounded_box(screen, r.x0, r.y0, r.x1, r.y1, kButtonFill, colour);
+    const std::string text = tr("OPTIONS", "OPTIONS");
     TextWriter writer(*fonts_, kButtonFont);
-    const std::string text = colours ? tr("COULEURS", "COLOURS") : tr("AMELIORATIONS", "ENHANCEMENTS");
-    constexpr int kIcon = 11, kGap = 6;
     const int width = writer.measure(text).width;
-    const int total = kIcon + kGap + width;
-    const int left = r.x0 + (r.x1 - r.x0 + 1 - total) / 2;
-    if (colours) draw_rounded_box(screen, left, r.y0 + (r.y1 - r.y0 + 1 - kIcon) / 2, left + kIcon - 1, r.y0 + (r.y1 - r.y0 + 1 - kIcon) / 2 + kIcon - 1, colour, colour);
-    else draw_plus_icon(screen, left, r.y0 + (r.y1 - r.y0 + 1 - kIcon) / 2, kIcon, colour);
     // Drawn on a scratch surface and copied in one colour, as the font has its own.
     constexpr int kPad = 4, kAbove = 32, kHeight = 48;
     Surface8 scratch(width + 2 * kPad, kHeight);
     writer.print(scratch, kPad, kAbove, text);
-    const int x = left + kIcon + kGap, y = r.y0 + 7;  // font 7 hangs from its top
+    const int x = r.x0 + (r.x1 - r.x0 + 1 - width) / 2, y = r.y0 + 7;  // font 7 hangs from its top
     for (int sy = 0; sy < kHeight; ++sy) {
         for (int sx = 0; sx < scratch.width; ++sx) {
             const int dx = x - kPad + sx, dy = y - kAbove + sy;
@@ -220,52 +262,118 @@ void OptionsScreen::draw_pad_button(Surface8& screen, bool colours) const {
     }
 }
 
+// The port settings screen: a framed row for each setting, its name on the left and its state on the right, the focused one lit.
+// @orig none: port-only settings screen
+void OptionsScreen::draw_more_screen(Surface8& screen) const {
+    constexpr int kFont = 14, kTextDrop = 17, kPad = 18;
+    constexpr std::uint8_t kFrame = 0x57;
+    screen.clear(0);
+    draw_rounded_box(screen, 100, 28, 539, 458, -1, kFrame);
+    draw_rounded_box(screen, 103, 31, 536, 455, -1, kFrame);
+    const std::string title = tr("OPTIONS", "OPTIONS");
+    const TextWriter writer(*fonts_, kFont);
+    print_tinted(screen, *fonts_, kFont, (screen.width - writer.measure(title).width) / 2, 66, title, kFocusColour);
+    for (int row = 0; row <= kPortRows; ++row) {
+        const Rect r = port_row_rect(row);
+        const bool focused = more_focus_ == row;
+        const int tint = focused ? kFocusColour : kButtonColour;
+        draw_rounded_box(screen, r.x0, r.y0, r.x1, r.y1, -1, static_cast<std::uint8_t>(tint));
+        if (row == kRowBack || row == kRowController || row == kRowColours) {
+            const std::string name = row == kRowBack ? tr("RETOUR", "BACK") : port_row_name(row);
+            print_tinted(screen, *fonts_, kFont, r.x0 + (r.x1 - r.x0 + 1 - writer.measure(name).width) / 2, r.y0 + kTextDrop, name, tint);
+            continue;
+        }
+        const std::string value = port_row_value(row);
+        print_tinted(screen, *fonts_, kFont, r.x0 + kPad, r.y0 + kTextDrop, port_row_name(row), tint);
+        print_tinted(screen, *fonts_, kFont, r.x1 + 1 - kPad - writer.measure(value).width, r.y0 + kTextDrop, value, tint);
+    }
+}
+
+// A key on the port settings screen.
+// @orig none: port-only settings screen
+void OptionsScreen::more_key(std::uint16_t code) {
+    switch (code) {
+    case gump_key::kEscape: more_ = false; break;
+    case gump_key::kEnter:
+    case ' ':
+        if (more_focus_ == kRowBack) more_ = false;
+        else port_row_acted(more_focus_);
+        break;
+    case gump_key::kUp:
+    case '8': more_focus_ = std::max(more_focus_ - 1, 0); break;
+    case gump_key::kDown:
+    case '2': more_focus_ = std::min(more_focus_ + 1, static_cast<int>(kRowBack)); break;
+    default: break;
+    }
+}
+
+// @orig none: port-only settings screen
+void OptionsScreen::more_mouse_down(int x, int y) {
+    for (int row = 0; row <= kPortRows; ++row) {
+        if (!port_row_rect(row).contains(x, y)) continue;
+        more_focus_ = row;
+        if (row == kRowBack) more_ = false;
+        else port_row_acted(row);
+        return;
+    }
+}
+
+// @orig none: port-only settings panel
+void OptionsScreen::port_row_acted(int row) {
+    GameConfig& c = *config_;
+    switch (row) {
+    case kRowFollow: c.follow_player = !c.follow_player; break;
+    case kRowDirectionalMove: c.directional_move = !c.directional_move; break;
+    case kRowDirectionalAim: c.directional_aim = !c.directional_aim; break;
+    case kRowNative: c.native_resolution = !c.native_resolution; break;
+    case kRowZoom: c.view_zoom = (c.view_zoom + 1) % (std::clamp(c.view_zoom_limit, 1, 4) + 1); break;
+    case kRowAutosave: c.autosave = !c.autosave; break;
+    case kRowToggleRun: c.toggle_run = !c.toggle_run; break;
+    case kRowKeyboardMouse: c.keyboard_mouse = !c.keyboard_mouse; break;
+    case kRowRoll: c.directional_roll = !c.directional_roll; break;
+    case kRowTurn: c.turn_rotation = !c.turn_rotation; break;
+    case kRowController: open_controller(); break;
+    default: open_colours(); break;
+    }
+}
+
 void OptionsScreen::open_colours() {
     colours_ = std::make_unique<ColoursScreen>(*config_);
     colours_->update(now_);
 }
 
-void OptionsScreen::open_enhancements() {
+void OptionsScreen::open_controller() {
     if (!fonts_) return;
-    enh_ = std::make_unique<EnhancementsScreen>(*fonts_, *config_, pad_focus_);
+    pad_ = std::make_unique<GamepadScreen>(*fonts_, *config_, pad_focus_);
 }
 
 // @orig 13D0:20B7
 void OptionsScreen::key(std::uint16_t code) {
+    if (more_ && !colours_ && !pad_) {
+        more_key(code);
+        return;
+    }
     if (colours_) {
         colours_->key(code);
         if (colours_->closed()) colours_.reset();
         return;
     }
-    if (enh_) {
-        enh_->key(code);
-        if (enh_->closed()) enh_.reset();
+    if (pad_) {
+        pad_->key(code);
+        if (pad_->closed()) pad_.reset();
         return;
     }
     if (closed_) return;
     int& focus = *focus_;
-    if (focus == kColourLine && fonts_) {
-        // The colours button, under the enhancements one.
+    if (focus == kMoreLine && fonts_) {
+        // The more options button, left of "quit".
         switch (code) {
         case gump_key::kEscape: closed_ = true; break;
-        case gump_key::kEnter: open_colours(); break;
-        case gump_key::kUp:
-        case '8': focus = kPadLine; break;
-        default: break;
-        }
-        return;
-    }
-    if (focus == kPadLine && fonts_) {
-        // The enhancements button, left of "quit".
-        switch (code) {
-        case gump_key::kEscape: closed_ = true; break;
-        case gump_key::kEnter: open_enhancements(); break;
+        case gump_key::kEnter: more_ = true; break;
         case gump_key::kUp:
         case '8': focus = kQuitLine - 1; break;
         case gump_key::kRight:
         case '6': focus = kQuitLine; quit_selected_ = true; break;
-        case gump_key::kDown:
-        case '2': focus = kColourLine; break;
         default: break;
         }
         return;
@@ -285,8 +393,9 @@ void OptionsScreen::key(std::uint16_t code) {
         break;
     case gump_key::kDown:
     case '2':
-        if (focus >= kQuitLine) break;
-        if (++focus == kQuitLine) quit_selected_ = true;
+        if (focus < kQuitLine && ++focus == kQuitLine) {
+            quit_selected_ = true;
+        }
         break;
     case gump_key::kLeft:
     case '4':
@@ -294,7 +403,7 @@ void OptionsScreen::key(std::uint16_t code) {
             act(kLeftOf[focus]);
         } else if (focus == kQuitLine && fonts_) {
             quit_selected_ = false;
-            focus = kPadLine;
+            focus = kMoreLine;
         }
         break;
     case gump_key::kRight:
@@ -322,23 +431,29 @@ void OptionsScreen::mouse_down(int x, int y) {
         if (colours_->closed()) colours_.reset();
         return;
     }
-    if (enh_) {
-        enh_->mouse_down(x, y);
-        if (enh_->closed()) enh_.reset();
+    if (pad_) {
+        pad_->mouse_down(x, y);
+        if (pad_->closed()) pad_.reset();
+        return;
+    }
+    if (more_) {
+        more_mouse_down(x, y);
         return;
     }
     if (closed_ || captured_ >= 0) return;
-    if (fonts_ && colour_rect_.contains(x, y)) {
-        colour_pressed_ = true;
+    if (fonts_ && more_rect_.contains(x, y)) {
+        more_pressed_ = true;
         if (*focus_ == kQuitLine) quit_selected_ = false;
-        *focus_ = kColourLine;
+        *focus_ = kMoreLine;
         return;
     }
-    if (fonts_ && pad_rect_.contains(x, y)) {
-        pad_pressed_ = true;
-        if (*focus_ == kQuitLine) quit_selected_ = false;
-        *focus_ = kPadLine;
-        return;
+    if (fonts_) {
+        for (int row = 0; row < kPortRows; ++row) {
+            if (port_row_rect(row).contains(x, y)) {
+                port_row_acted(row);
+                return;
+            }
+        }
     }
     const Item* it = hit(x, y);
     if (!it) return;
@@ -364,9 +479,8 @@ void OptionsScreen::mouse_move(int x, int y) {
         colours_->mouse_move(x, y);
         return;
     }
-    if (enh_ || closed_) return;
-    if (colour_pressed_) colour_pressed_ = colour_rect_.contains(x, y);
-    if (pad_pressed_) pad_pressed_ = pad_rect_.contains(x, y);
+    if (pad_ || more_ || closed_) return;
+    if (more_pressed_) more_pressed_ = more_rect_.contains(x, y);
     if (captured_ < 0) return;
     const Item& it = widgets_[captured_];
     inside_ = it.rect.contains(x, y);
@@ -380,15 +494,10 @@ void OptionsScreen::mouse_up(int x, int y) {
         colours_->mouse_up(x, y);
         return;
     }
-    if (enh_) return;
-    if (colour_pressed_) {
-        colour_pressed_ = false;
-        if (colour_rect_.contains(x, y)) open_colours();
-        return;
-    }
-    if (pad_pressed_) {  // acts at the release inside, like the quit button
-        pad_pressed_ = false;
-        if (pad_rect_.contains(x, y)) open_enhancements();
+    if (pad_ || more_) return;
+    if (more_pressed_) {  // acts at the release inside, like the quit button
+        more_pressed_ = false;
+        if (more_rect_.contains(x, y)) more_ = true;
         return;
     }
     if (closed_ || captured_ < 0) return;
@@ -405,8 +514,8 @@ void OptionsScreen::update(std::uint32_t ticks) {
         colours_->update(ticks);
         return;
     }
-    if (enh_) {
-        enh_->update(ticks);
+    if (pad_) {
+        pad_->update(ticks);
         return;
     }
     if (closed_ || captured_ < 0 || !inside_) return;

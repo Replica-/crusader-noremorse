@@ -58,6 +58,7 @@ GameConfig GameConfig::parse(std::string_view text) {
         else if (key == "autosave") c.autosave = value != "false";
         else if (key == "directionalaim") c.directional_aim = value == "true";
         else if (key == "directionalroll") c.directional_roll = value != "false";
+        else if (key == "turnrotation") c.turn_rotation = value == "true";
         else if (key == "keyboardmouse") c.keyboard_mouse = value != "false";
         else if (key == "togglerun") c.toggle_run = value == "true";
         else if (key == "playercolors") {
@@ -128,6 +129,8 @@ std::string GameConfig::text() const {
     else out.erase("directionalaim");
     if (!directional_roll) out.set("directionalroll", "false");
     else out.erase("directionalroll");
+    if (turn_rotation) out.set("turnrotation", "true");
+    else out.erase("turnrotation");
     if (!keyboard_mouse) out.set("keyboardmouse", "false");
     else out.erase("keyboardmouse");
     if (toggle_run) out.set("togglerun", "true");

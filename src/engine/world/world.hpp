@@ -31,6 +31,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace crusader {
@@ -160,6 +161,8 @@ struct GameState {
     bool target_designation = false;  // (port: the targeting reticle is gone, shots go where the pointer is)
     // Port addition: a jump asked for while the player was busy (a step, a turn) is done when he is free, within this tick.
     std::uint32_t jump_pending_until = 0;
+    // Port addition: weapons that fell out of a dead soldier; they cannot be used or picked up.
+    std::unordered_set<ObjId> npc_dropped;
     // Port addition: health bars shown for a few seconds above what was hit (hit points before the first
     // hit of the series as the maximum). Filled in by apply_damage, drawn by the game.
     struct HitBar {

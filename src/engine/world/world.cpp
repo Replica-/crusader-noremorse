@@ -636,6 +636,10 @@ void World::push(ObjId id) {
         item->flags &= static_cast<std::uint16_t>(~kItemEquipped);
     }
     if (on_map(*item)) unlink_from_cell(*item);
+    // Port addition: a weapon leaving a soldier (not the player) is one it dropped, which cannot be used or picked up.
+    if (family(*item) == 10 && (item->flags & kItemContained) && is_npc_id(item->parent) && item->parent != 1) {
+        state.npc_dropped.insert(id);
+    }
     detach(*item);
     item->unchained = false;
     item->flags |= kItemEthereal;

@@ -96,9 +96,10 @@ std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes,
                                          int h, RenderStats* stats = nullptr);
 
 // Items of translucent shapes are blended through `xform` (opaque without it).
-// `after` runs right after each item is drawn (overlays drawn with it).
+// `after` runs right after each item is drawn (overlays drawn with it); `before` (port addition) right before.
 void draw_display_list(Surface8& screen, const std::vector<DrawItem>& list, const XformTable* xform = nullptr,
-                       const std::function<void(Surface8&, const DrawItem&)>& after = {});
+                       const std::function<void(Surface8&, const DrawItem&)>& after = {},
+                       const std::function<void(Surface8&, const DrawItem&)>& before = {});
 
 // Indices (in draw order) of the items with an opaque pixel at screen (x, y).
 std::vector<std::size_t> pick(const std::vector<DrawItem>& list, int x, int y);

@@ -50,6 +50,10 @@ SdlPresenter::~SdlPresenter() {
     if (jump_tex_) SDL_DestroyTexture(jump_tex_);
     if (colours_tex_) SDL_DestroyTexture(colours_tex_);
     if (player_tex_) SDL_DestroyTexture(player_tex_);
+    for (SpriteTexture& t : sprite_tex_) {
+        if (t.texture) SDL_DestroyTexture(t.texture);
+    }
+    if (occ_tex_) SDL_DestroyTexture(occ_tex_);
     for (IconTexture& i : wheel_icons_) {
         if (i.texture) SDL_DestroyTexture(i.texture);
     }
@@ -126,6 +130,7 @@ void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
     SDL_RenderClear(renderer_);
     SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
     draw_player_layer(palette);
+    draw_player_sprite(palette);
     draw_jump();
     draw_laser();
     draw_debug_path();
@@ -206,7 +211,8 @@ void SdlPresenter::draw_laser() {
     {
         constexpr float kLength = 55.0f;
         const float dx = laser_.x0 - laser_.x1, dy = laser_.y0 - laser_.y1, distance = std::sqrt(dx * dx + dy * dy);
-        if (distance > kLength) {
+        constexpr float kHideWithin = 2.0f * kLength;  // closer than this to the player, no beam
+        if (distance > kHideWithin) {
             const float ux = dx / distance, uy = dy / distance, nx = -uy, ny = ux;
             constexpr int kSteps = 24;
             for (int pass = 0; pass < 2; ++pass) {

@@ -106,6 +106,7 @@ public:
     bool waiting_for_pad() const override { return s_.waiting_for_pad(); }
     const ColoursScreen* colours_screen() const override { return s_.colours(); }
     void show_colours() { s_.show_colours(); }
+    void show_more() { s_.show_more(); }
     void pad_button(int button) override { s_.pad_button(button); }
     bool closed() const override { return s_.closed(); }
 
@@ -782,7 +783,7 @@ void Game::update(std::uint32_t elapsed_us) {
     update_demo();
     if (pending_colours_ && world_ && !modal() && !movie_ && !world_->state.avatar_in_stasis) {
         pending_colours_ = false;
-        show_colours_screen();
+        show_colours_screen(pending_colours_open_);
     }
     if (pending_wheel_ && !pending_grant_ && world_ && !modal() && !movie_ && !world_->state.avatar_in_stasis && world_->get(1) && !world_->get(1)->off_map) {
         const int kind = pending_wheel_ - 1;
@@ -1808,22 +1809,36 @@ void Game::render_view(Surface8& screen, RenderStats* stats) {
     // last action 0xB), its weapon (WPNOVLAY.DAT), unmirrored, at the item's
     // screen place plus the offsets of the current action, direction, frame.
     player_layer_.on = false;
-    draw_display_list(screen, list, &xform_, [this](Surface8& surface, const DrawItem& d) {
-        if (d.item->id == 1) build_player_layer(d);
-        if (d.item->id != 1 || d.item->shape != 1) return;
-        const auto record = world_->npc_record(1);
-        const std::uint16_t last = static_cast<std::uint16_t>(record[npc::kLastAnim] | record[npc::kLastAnim + 1] << 8);
-        if (!in_combat(*world_, 1) && last != 0xB) return;
-        const Item* weapon = world_->get(world_->active_weapon(1));
-        const AnimAction* header = anims_.action(1, last);
-        if (!weapon || !header) return;
-        const auto piece =
-            weapon_overlay_.piece(weapon->shape, last, *header, world_->npc_direction(1), record[npc::kAnimFrame]);
-        if (!piece || (piece->shape == 0 && piece->frame == 0)) return;
-        const Shape* shape = shapes_.get(piece->shape);
-        if (!shape || piece->frame >= shape->frames().size()) return;
-        shape->frames()[piece->frame].draw(surface, d.sx + piece->dx, d.sy + piece->dy, false);
-    });
+    compute_turn_angle();
+    draw_display_list(
+        screen, list, &xform_,
+        [this](Surface8& surface, const DrawItem& d) {
+            if (d.item->id == 1) build_player_layer(d);
+            if (d.item->id != 1) return;
+            const ShapeFrame* weapon_frame = nullptr;
+            int weapon_x = 0, weapon_y = 0;
+            if (d.item->shape == 1) {
+                const auto record = world_->npc_record(1);
+                const std::uint16_t last = static_cast<std::uint16_t>(record[npc::kLastAnim] | record[npc::kLastAnim + 1] << 8);
+                const Item* weapon = in_combat(*world_, 1) || last == 0xB ? world_->get(world_->active_weapon(1)) : nullptr;
+                const AnimAction* header = weapon ? anims_.action(1, last) : nullptr;
+                if (weapon && header) {
+                    const auto piece = weapon_overlay_.piece(weapon->shape, last, *header, world_->npc_direction(1),
+                                                             record[npc::kAnimFrame]);
+                    if (piece && !(piece->shape == 0 && piece->frame == 0)) {
+                        const Shape* shape = shapes_.get(piece->shape);
+                        if (shape && piece->frame < shape->frames().size()) {
+                            weapon_frame = &shape->frames()[piece->frame];
+                            weapon_x = d.sx + piece->dx;
+                            weapon_y = d.sy + piece->dy;
+                        }
+                    }
+                }
+            }
+            if (weapon_frame) weapon_frame->draw(surface, weapon_x, weapon_y, false);
+            turn_capture(surface, d, weapon_frame, weapon_x, weapon_y);
+        },
+        [this](Surface8& surface, const DrawItem& d) { turn_before(surface, d); });
     // SPMGR.C: the screen sprites (aiming mode), over the scene, unless
     // suspended in the menu mode (DS:2D8F).
     for (const ScreenSprite& sprite : world_->state.screen_sprites.all()) {
@@ -1853,6 +1868,7 @@ void Game::render_view(Surface8& screen, RenderStats* stats) {
     // DISPLAY_1190_010f, not in the menu mode (DS:2CEE, set with DS:2D8F).
     if (!sprites_suspended_) pickup_area_.draw(screen, world_->state.pickups);
     finish_player_layer(screen);
+    finish_turn_sprite(screen);
 }
 
 void Game::move_camera(std::int32_t dx, std::int32_t dy) {
@@ -2482,9 +2498,12 @@ void Game::grant_all_items() {
 namespace crusader {
 
 // @orig none: port-only player colours (--colours-screen)
-void Game::show_colours_screen() {
+void Game::show_colours_screen(int mode) {
     function_key(gump_key::kF2);
-    if (auto* options = dynamic_cast<OptionsGump*>(screen_.get())) options->show_colours();
+    if (auto* options = dynamic_cast<OptionsGump*>(screen_.get())) {
+        if (mode == 1) options->show_colours();
+        if (mode == 2) options->show_more();
+    }
 }
 
 }  // namespace crusader

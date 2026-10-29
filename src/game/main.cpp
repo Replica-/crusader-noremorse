@@ -118,7 +118,7 @@ int main(int argc, char** argv) {
     double gamma = 1.0;
     std::int32_t scroll_x = 0, scroll_y = 0;
     bool walk = false, fire = false, menu = false, menu_load = false, menu_credits = false, menu_options = false, menu_gamepad = false,
-         menu_new = false, controls_screen = false, colours_screen = false, f1_test = false;
+         menu_new = false, controls_screen = false, colours_screen = false, options_screen = false, more_screen = false, turn_strip = false, f1_test = false;
     std::string png, wav, movie;
     int use = 0;
     MovieKind movie_kind = MovieKind::kCutscene;
@@ -175,6 +175,9 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--menu-gamepad") == 0) menu = menu_options = menu_gamepad = true;
         else if (std::strcmp(argv[i], "--controls-screen") == 0) controls_screen = true;
         else if (std::strcmp(argv[i], "--colours-screen") == 0) colours_screen = true;
+        else if (std::strcmp(argv[i], "--options-screen") == 0) options_screen = true;
+        else if (std::strcmp(argv[i], "--more-options") == 0) more_screen = true;
+        else if (std::strcmp(argv[i], "--turn-strip") == 0 && i + 1 < argc) { turn_strip = true; png = argv[++i]; }
         else if (std::strcmp(argv[i], "--f1") == 0) f1_test = true;
         else if (std::strcmp(argv[i], "--menu-new") == 0) menu = menu_new = true;
         else if (std::strcmp(argv[i], "--scroll") == 0 && i + 2 < argc) {
@@ -204,11 +207,19 @@ int main(int argc, char** argv) {
         if (new_game) game.new_game(0, mission, all_items);
         else if (start_up) game.start_up();
         else game.load_save(save);
+        if (turn_strip) {
+            Surface8 strip(1, 1);
+            game.debug_turn_strip(strip);
+            write_png(png, strip, game.palette());
+            return 0;
+        }
         if (start_map) game.set_map(true);
         if (start_wheel) game.request_wheel(start_wheel - 1);
         game.set_demo(demo_blood, demo_hit_bar, demo_walk_dx, demo_walk_dy, demo_hover);
         game.set_demo_jump(demo_jump_dx, demo_jump_dy, demo_jump_go);
         if (colours_screen) game.request_colours_screen();
+        if (options_screen) game.request_colours_screen(0);
+        if (more_screen) game.request_colours_screen(2);
         if (start_gun && !path_test) game.request_draw();
         if (path_test) {
             for (int i = 0; i < 60; ++i) game.update(kFrameUs);
@@ -463,6 +474,7 @@ int main(int argc, char** argv) {
             presenter.set_jump(game.jump_preview().on ? &game.jump_preview() : nullptr);
             presenter.set_colours(game.colours_overlay());
             presenter.set_player_layer(game.player_layer());
+            presenter.set_player_sprite(game.player_sprite());
             {
                 std::vector<SdlPresenter::BloodDot> dots;
                 for (const Game::BloodDotScreen& b : game.blood_screen()) dots.push_back({b.x, b.y, b.x0, b.y0, b.size, b.alpha, b.kind});

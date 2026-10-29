@@ -123,7 +123,7 @@ add_library(crusader_engine
   src/engine/ui/help_screen.cpp
   src/engine/ui/credits.cpp
   src/engine/ui/gamepad_screen.cpp
-  src/engine/ui/enhancements_screen.cpp
+  src/engine/ui/ui_draw.cpp
   src/engine/ui/controls_screen.cpp
   src/engine/ui/colours_screen.cpp
   src/engine/ui/movie_player.cpp

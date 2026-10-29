@@ -171,8 +171,8 @@ public:
     void request_draw() { pending_draw_ = true; }
     // Opens the keyboard and mouse controls screen on its own (for the README picture; the game reaches it from the options).
     void show_controls_screen();
-    void show_colours_screen();
-    void request_colours_screen() { pending_colours_ = true; }
+    void show_colours_screen(int mode = 1);
+    void request_colours_screen(int mode = 1) { pending_colours_ = true; pending_colours_open_ = mode; }
     void open_controls_screen(std::function<void()> then);
     const HelpScreen::Pictures& help_pictures();
     // Developer flags for the README pictures: blood bursts, a health bar, a walk with its route, the pointer over a usable item.
@@ -188,6 +188,7 @@ public:
     // The character colour screen, while open, and the player drawn again in its chosen colours (null when neither).
     const ColoursOverlay* colours_overlay();
     const PlayerLayer* player_layer() const;
+    const PlayerSprite* player_sprite() const;
     void request_wheel(int kind) { pending_wheel_ = kind + 1; }  // (--wheel) open it as soon as the player can act
     void open_wheel(int kind);
     void close_wheel();
@@ -431,6 +432,22 @@ private:
     JumpPreview jump_preview_;
     ColoursOverlay colours_overlay_;
     PlayerLayer player_layer_;
+    // Turn rotation (game_colours.cpp).
+    struct TurnCapture {
+        bool have = false, captured = false;
+        int x = 0, y = 0, w = 0, h = 0;  // the frame region kept
+        std::vector<std::uint8_t> before;
+    };
+    TurnCapture turn_;
+    int turn_angle_ = 0, turn_step_ = 1;
+    PlayerSprite player_sprite_;
+    void compute_turn_angle();
+    void turn_before(const Surface8& screen, const DrawItem& d);
+    void turn_capture(Surface8& screen, const DrawItem& d, const ShapeFrame* weapon, int weapon_x, int weapon_y);
+    void finish_turn_sprite(const Surface8& screen);
+public:
+    void debug_turn_strip(Surface8& out);
+private:
     void build_player_layer(const DrawItem& d);
     void finish_player_layer(const Surface8& screen);
     bool jump_key(const GameKeyEvent& e);
@@ -465,6 +482,7 @@ private:
     WheelOverlay wheel_;
     int pending_wheel_ = 0;
     bool pending_colours_ = false;
+    int pending_colours_open_ = 1;
     int demo_jump_dx_ = 0, demo_jump_dy_ = 0, demo_jump_stage_ = 0;
     bool demo_jump_go_ = false;
     std::uint32_t demo_jump_at_ = 0;

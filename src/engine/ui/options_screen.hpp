@@ -46,18 +46,17 @@
 // (_ASS_SetSoundVolume / _ASS_SetMusicVolume), mouse speed DS:6001 (0..3).
 // The volume and mouse buttons play sound 0x98 even at the end of the range.
 //
-// Port addition: an "ameliorations" button (line 9, left of "quit", a text
-// button with a "+" icon in the colours of the quit one) opens the
-// enhancements window (enhancements_screen.hpp), which holds the controller
-// screen and gets every event until it closes. Left from "quit" and right
-// from the button move between them; Enter opens it. Without fonts the
-// button is absent.
+// Port addition: a "more options" button (line 9, left of "quit", in its colours; absent without fonts) opens a full screen of the
+// port's own settings: toggles for the camera, movement, aiming, resolution, zoom, autosave, running, keyboard and mouse, rolling
+// and smooth turning, and two buttons that open a screen of their own, the controller screen (gamepad_screen.hpp) and the
+// character colours screen (colours_screen.hpp), which get every event until they close. Up / down move in the list, Enter or a
+// click acts, Escape or the back row leaves. Left from "quit" and right from the button move between them.
 
 #include "core/game_config.hpp"
 #include "core/surface.hpp"
 #include "engine/ui/colours_screen.hpp"
-#include "engine/ui/enhancements_screen.hpp"
 #include "engine/ui/gamepad_screen.hpp"
+#include "engine/ui/ui_draw.hpp"
 #include "engine/world/render.hpp"
 
 #include <array>
@@ -77,8 +76,13 @@ public:
     };
     static constexpr int kWidgets = 17;
     static constexpr int kQuitLine = 8;
-    static constexpr int kPadLine = 9;  // the controller button
-    static constexpr int kColourLine = 10;  // the character colours button, under it
+    static constexpr int kMoreLine = 9;  // the "more options" button
+    // The rows of the port settings screen, then its back row.
+    enum PortRow : int {
+        kRowFollow, kRowDirectionalMove, kRowDirectionalAim, kRowNative, kRowZoom,
+        kRowAutosave, kRowToggleRun, kRowKeyboardMouse, kRowRoll, kRowTurn,
+        kRowController, kRowColours, kPortRows, kRowBack = kPortRows
+    };
     static constexpr int kSteps = 23;
     static constexpr std::array<std::uint8_t, kSteps> kSoundSteps = {  // DS:5BB6
         0x00, 0x02, 0x05, 0x08, 0x0B, 0x0E, 0x11, 0x14, 0x17, 0x1A, 0x1D, 0x20,
@@ -106,17 +110,19 @@ public:
     // Timer ticks, at every pass of the modal loop: the repeating buttons.
     void update(std::uint32_t ticks);
     // The controller screen waits for a button press to bind (see Gamepad::set_capture).
-    bool waiting_for_pad() const { return enh_ && enh_->waiting(); }
+    bool waiting_for_pad() const { return pad_ && pad_->waiting(); }
     void pad_button(int button) {
-        if (enh_) enh_->pad_button(button);
+        if (pad_) pad_->pad_button(button);
     }
 
     bool closed() const { return closed_; }
     int focus() const { return *focus_; }
-    const EnhancementsScreen* enhancements() const { return enh_.get(); }
     const ColoursScreen* colours() const { return colours_.get(); }
-    const GamepadScreen* gamepad() const { return enh_ ? enh_->gamepad() : nullptr; }
-    Rect enhancements_button() const { return pad_rect_; }
+    const GamepadScreen* gamepad() const { return pad_.get(); }
+    Rect port_row_rect(int row) const;
+    Rect more_button() const { return more_rect_; }
+    bool more_open() const { return more_; }
+    int more_focus() const { return more_focus_; }
     int sound_step() const { return sound_step_; }
     int music_step() const { return music_step_; }
     // Whether a two-choice widget is chosen, or another widget drawn pressed
@@ -136,13 +142,20 @@ private:
     static bool is_repeating(Widget w) { return w >= kSoundDown && w < kQuit; }
     static int line_of(Widget w);
 
-    void draw_pad_button(Surface8& screen, bool colours) const;
 public:
     void show_colours() { open_colours(); }
+    void show_more() { more_ = true; }
 
 private:
     void open_colours();
-    void open_enhancements();
+    void open_controller();
+    void draw_more_button(Surface8& screen) const;
+    void draw_more_screen(Surface8& screen) const;
+    void more_key(std::uint16_t code);
+    void more_mouse_down(int x, int y);
+    void port_row_acted(int row);
+    std::string port_row_name(int row) const;
+    std::string port_row_value(int row) const;
     void act(Widget w);           // Options_key
     void widget_acted(Widget w);  // 13D0:1D81
     const Item* hit(int x, int y) const;
@@ -162,13 +175,13 @@ private:
     std::uint32_t next_repeat_ = 0;
     bool closed_ = false;
     const FontSet* fonts_ = nullptr;
-    Rect pad_rect_{352, 318, 503, 339};
-    bool pad_pressed_ = false;  // the mouse holds the enhancements button
-    Rect colour_rect_{352, 346, 503, 367};
-    bool colour_pressed_ = false;  // the mouse holds the colours button
+    Rect more_rect_{352, 318, 503, 339};
+    bool more_pressed_ = false;  // the mouse holds the button
+    bool more_ = false;          // the port settings screen is open
+    int more_focus_ = 0;         // its row, kept between openings
     std::unique_ptr<ColoursScreen> colours_;
-    int pad_focus_ = 0;         // the controller screen's row, kept between openings
-    std::unique_ptr<EnhancementsScreen> enh_;
+    std::unique_ptr<GamepadScreen> pad_;  // the controller screen, while open
+    int pad_focus_ = 0;                   // its row, kept between openings
 };
 
 }  // namespace crusader

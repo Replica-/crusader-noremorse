@@ -50,6 +50,9 @@ public:
     // Port addition, written when switched off: "directionalroll", Q / E roll to the left / right of the screen
     // (swapped when the character faces down it) instead of the character's own left / right.
     bool directional_roll = true;
+    // Port addition, written when switched on: "turnrotation", the player facing the pointer is turned by the angle between
+    // the exact direction of the pointer and the nearest of his 16 pictures, in steps of 1 degree.
+    bool turn_rotation = false;
     // Port addition, written when switched off: "nativeresolution", the view
     // takes the whole screen (more scenery around the camera) instead of the
     // original 640 x 480.

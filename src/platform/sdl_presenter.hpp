@@ -78,6 +78,8 @@ public:
     // The character colour screen over everything, and the player drawn again in his chosen colours (null hides them).
     void set_colours(const ColoursOverlay* colours) { colours_ = colours; }
     void set_player_layer(const PlayerLayer* player) { player_ = player; }
+    // The player turned by a few degrees, drawn by the graphics card instead of the frame (null hides it).
+    void set_player_sprite(const PlayerSprite* sprite) { sprite_ = sprite; }
     // Desktop fullscreen on / off (Alt+Enter).
     void toggle_fullscreen();
     // Size of the window's drawing area in real pixels.
@@ -111,6 +113,15 @@ private:
     const WheelOverlay* wheel_ = nullptr;
     void draw_jump();
     void draw_colours();
+    void draw_player_sprite(const Palette& current);
+    const PlayerSprite* sprite_ = nullptr;
+    struct SpriteTexture {
+        SDL_Texture* texture = nullptr;
+        int w = 0, h = 0;
+    };
+    std::array<SpriteTexture, 2> sprite_tex_;
+    SDL_Texture* occ_tex_ = nullptr;
+    int occ_w_ = 0, occ_h_ = 0;
     void draw_player_layer(const Palette& current);
     const ColoursOverlay* colours_ = nullptr;
     const PlayerLayer* player_ = nullptr;

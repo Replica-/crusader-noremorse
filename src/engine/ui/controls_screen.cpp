@@ -1,6 +1,6 @@
 #include "engine/ui/controls_screen.hpp"
 
-#include "engine/ui/enhancements_screen.hpp"
+#include "engine/ui/ui_draw.hpp"
 
 #include <algorithm>
 #include <initializer_list>
@@ -16,22 +16,6 @@ constexpr std::uint8_t kFrameColour = 0x57, kGreen = 0x0C, kDim = 0x75;
 constexpr int kTitleFont = 14, kBodyFont = 4;
 constexpr int kUnit = 24;  // a key is this wide
 
-// Text in one colour: drawn on a scratch surface, copied in `tint`.
-void print_tinted(Surface8& screen, const FontSet& fonts, int font, int x, int y, const std::string& text, int tint) {
-    TextWriter writer(fonts, font);
-    constexpr int kPad = 4, kAbove = 32, kHeight = 48;
-    const int width = writer.measure(text).width + 2 * kPad;
-    Surface8 scratch(width, kHeight);
-    writer.print(scratch, kPad, kAbove, text);
-    for (int sy = 0; sy < kHeight; ++sy) {
-        for (int sx = 0; sx < width; ++sx) {
-            const int dx = x - kPad + sx, dy = y - kAbove + sy;
-            if (scratch.row(sy)[sx] && dx >= 0 && dy >= 0 && dx < screen.width && dy < screen.height) {
-                screen.row(dy)[dx] = static_cast<std::uint8_t>(tint);
-            }
-        }
-    }
-}
 
 // One key of the keyboard picture: a framed square with its label, lit when the port uses it.
 void draw_key(Surface8& screen, const FontSet& fonts, int x, int y, int w, int h, const char* label, bool lit) {

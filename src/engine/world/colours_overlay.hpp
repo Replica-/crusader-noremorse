@@ -47,3 +47,30 @@ struct PlayerLayer {
 };
 
 }  // namespace crusader
+
+namespace crusader {
+
+// One of the pictures of the turning player, drawn through a transform: turned by `rotation` degrees (clockwise) about its
+// pivot, sheared sideways by `shear` (sideways shift per pixel of height) and squeezed across by `scale_x`.
+struct SpriteLayer {
+    int x = 0, y = 0, w = 0, h = 0;     // where on the frame
+    float pivot_x = 0, pivot_y = 0;     // the point it turns about, in the picture
+    float rotation = 0, shear = 0, scale_x = 1, alpha = 1, shift = 0;
+    std::vector<std::uint8_t> index;    // w * h palette indices, 255 for none
+};
+
+// The player between two of his 16 pictures (GameConfig::turn_rotation): the nearest one and its neighbour towards the pointer,
+// each transformed for the exact angle, the neighbour faded over the nearest one by how far the turn is. Kept out of the frame,
+// drawn by the graphics card, with what was in front of him drawn again over.
+struct PlayerSprite {
+    bool on = false;
+    int count = 0;
+    std::array<SpriteLayer, 2> layer;
+    // What was drawn over the player afterwards, as the frame has it (palette indices, 255 for none), to draw again over him.
+    int ox = 0, oy = 0, ow = 0, oh = 0;
+    std::vector<std::uint8_t> occluder;
+    std::array<std::uint32_t, 256> recolour{};  // the player's chosen colours (alpha 0: the palette's own)
+    Palette base;                       // the unfaded palette, to follow the fades
+};
+
+}  // namespace crusader

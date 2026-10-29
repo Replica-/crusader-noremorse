@@ -297,10 +297,12 @@ std::vector<std::size_t> pick(const std::vector<DrawItem>& list, int x, int y) {
 
 // @orig 11A0:02E4 (blitter choice; the walk over the list is not located)
 void draw_display_list(Surface8& screen, const std::vector<DrawItem>& list, const XformTable* xform,
-                       const std::function<void(Surface8&, const DrawItem&)>& after) {
+                       const std::function<void(Surface8&, const DrawItem&)>& after,
+                       const std::function<void(Surface8&, const DrawItem&)>& before) {
     for (const DrawItem& d : list) {
         // TYPEFLAG translucent shapes (windows, force fields...) go through
         // the translucent blitter (asm_blit_4, mirrored asm_blit_5).
+        if (before) before(screen, d);
         const bool translucent = d.shape_flags & ShapeInfo::kTranslucent;
         d.frame->draw(screen, d.sx, d.sy, d.mirrored, translucent ? xform : nullptr);
         if (after) after(screen, d);

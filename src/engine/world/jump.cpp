@@ -54,10 +54,17 @@ bool plan_jump(const World& world, ObjId npc, const World::Point& from, const Wo
         const double along = (distance * scale - back) / distance;
         const std::int32_t x = from.x + static_cast<std::int32_t>(std::lround(dx * along));
         const std::int32_t y = from.y + static_cast<std::int32_t>(std::lround(dy * along));
-        // The ground may be a little higher or lower than where the player stands.
-        for (const int dz : {0, 8, -8, 16, -16, 24, -24, 32, -32}) {
-            const std::int32_t z = from.z + dz;
+        // The ground there: the first place that can be stood on going down from a little above the player, as far as two
+        // storeys, so a jump can drop off a ledge onto the level below.
+        for (std::int32_t zc = from.z + 24; zc >= std::max(0, from.z - 160); zc -= 4) {
+            std::int32_t z = zc;
             if (!can_stand(world, npc, *item, x, y, z)) continue;
+            for (int k = 0; k <= 9 && z - k >= 0; ++k) {  // down to the floor itself
+                if (support_mask(world, item->shape, x, y, z - k, false, npc) & 0x10) {
+                    z -= k;
+                    break;
+                }
+            }
             const World::Point to{x, y, z};
             const int d = chebyshev_xy(from, to);
             const int apex = jump_apex(d);
