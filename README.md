@@ -49,6 +49,10 @@ This repository contains **no game files**: you need your own copy of the origin
 
     ![Targeted jump preview](docs/images/features/jump.png)
 
+  - **Character colours:** the options screen has a new **Colours** button (under *Enhancements*) that opens a customisation screen, drawn on the graphics card. Pick the character's **main colour** (all the reds of the armour), **chest logo** (the golds) and **backpack** (the browns) with a colour square and hue bar or from quick colours, or choose a whole-look preset (Stealth, Desert, Arctic, Toxic, Royal, Night, Sunset...). The character turns round in the preview, and the choice is saved in `CRUSADER.CFG` (`playercolors=RRGGBB,RRGGBB,RRGGBB`); in the game the player is drawn in those colours by the graphics card, hidden behind scenery as usual.
+
+    ![Character colours](docs/images/features/character-colours.png)
+
   - Blood sprays from shot humans, away from the shooter, and the splats stay on the floor; whatever an enemy carried falls out of it when it dies. A slim health bar appears above whatever you hit.
 
     ![Blood](docs/images/features/blood.png)

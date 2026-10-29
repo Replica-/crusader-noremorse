@@ -12,6 +12,7 @@
 // lines and their order, and ends lines with "\r\n" like the installer.
 
 #include "core/pad_config.hpp"
+#include "core/player_colours.hpp"
 
 #include <filesystem>
 #include <string>
@@ -69,6 +70,9 @@ public:
     // Port addition, written only when changed: "padmap" (comma-separated
     // action numbers, see PadButton), "padaim" and "paddeadzone".
     PadSettings pad;
+    // Port addition, written only when custom: "playercolors", the main character's three colours (main, logo, backpack) as
+    // RRGGBB,RRGGBB,RRGGBB.
+    PlayerColours player_colours;
 
     // A missing or unreadable file gives the defaults.
     static GameConfig load(const std::filesystem::path& path);

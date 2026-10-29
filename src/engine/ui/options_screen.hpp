@@ -55,6 +55,7 @@
 
 #include "core/game_config.hpp"
 #include "core/surface.hpp"
+#include "engine/ui/colours_screen.hpp"
 #include "engine/ui/enhancements_screen.hpp"
 #include "engine/ui/gamepad_screen.hpp"
 #include "engine/world/render.hpp"
@@ -77,6 +78,7 @@ public:
     static constexpr int kWidgets = 17;
     static constexpr int kQuitLine = 8;
     static constexpr int kPadLine = 9;  // the controller button
+    static constexpr int kColourLine = 10;  // the character colours button, under it
     static constexpr int kSteps = 23;
     static constexpr std::array<std::uint8_t, kSteps> kSoundSteps = {  // DS:5BB6
         0x00, 0x02, 0x05, 0x08, 0x0B, 0x0E, 0x11, 0x14, 0x17, 0x1A, 0x1D, 0x20,
@@ -112,6 +114,7 @@ public:
     bool closed() const { return closed_; }
     int focus() const { return *focus_; }
     const EnhancementsScreen* enhancements() const { return enh_.get(); }
+    const ColoursScreen* colours() const { return colours_.get(); }
     const GamepadScreen* gamepad() const { return enh_ ? enh_->gamepad() : nullptr; }
     Rect enhancements_button() const { return pad_rect_; }
     int sound_step() const { return sound_step_; }
@@ -133,7 +136,12 @@ private:
     static bool is_repeating(Widget w) { return w >= kSoundDown && w < kQuit; }
     static int line_of(Widget w);
 
-    void draw_pad_button(Surface8& screen) const;
+    void draw_pad_button(Surface8& screen, bool colours) const;
+public:
+    void show_colours() { open_colours(); }
+
+private:
+    void open_colours();
     void open_enhancements();
     void act(Widget w);           // Options_key
     void widget_acted(Widget w);  // 13D0:1D81
@@ -156,6 +164,9 @@ private:
     const FontSet* fonts_ = nullptr;
     Rect pad_rect_{352, 318, 503, 339};
     bool pad_pressed_ = false;  // the mouse holds the enhancements button
+    Rect colour_rect_{352, 346, 503, 367};
+    bool colour_pressed_ = false;  // the mouse holds the colours button
+    std::unique_ptr<ColoursScreen> colours_;
     int pad_focus_ = 0;         // the controller screen's row, kept between openings
     std::unique_ptr<EnhancementsScreen> enh_;
 };

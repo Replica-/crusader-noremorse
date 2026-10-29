@@ -116,6 +116,7 @@ public:
     const DifficultyScreen* difficulty_screen() const { return difficulty_.get(); }
     const LoadScreen* load_screen() const { return load_.get(); }
     const OptionsScreen* options() const { return options_.get(); }
+    const ColoursScreen* colours() const { return options_ ? options_->colours() : nullptr; }
     // The credits, while they run; the caller feeds frame() at 60 Hz and
     // calls end_credits() once finished().
     Credits* credits() { return credits_.get(); }

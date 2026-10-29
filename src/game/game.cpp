@@ -104,6 +104,8 @@ public:
     void mouse_up(int x, int y) override { s_.mouse_up(x, y); }
     void update(std::uint32_t ticks) override { s_.update(ticks); }
     bool waiting_for_pad() const override { return s_.waiting_for_pad(); }
+    const ColoursScreen* colours_screen() const override { return s_.colours(); }
+    void show_colours() { s_.show_colours(); }
     void pad_button(int button) override { s_.pad_button(button); }
     bool closed() const override { return s_.closed(); }
 
@@ -778,6 +780,10 @@ void Game::update(std::uint32_t elapsed_us) {
         }
     }
     update_demo();
+    if (pending_colours_ && world_ && !modal() && !movie_ && !world_->state.avatar_in_stasis) {
+        pending_colours_ = false;
+        show_colours_screen();
+    }
     if (pending_wheel_ && !pending_grant_ && world_ && !modal() && !movie_ && !world_->state.avatar_in_stasis && world_->get(1) && !world_->get(1)->off_map) {
         const int kind = pending_wheel_ - 1;
         pending_wheel_ = 0;
@@ -1801,7 +1807,9 @@ void Game::render_view(Surface8& screen, RenderStats* stats) {
     // DLIST.C 11A0:05xx: right after item 1, in combat (or holstering,
     // last action 0xB), its weapon (WPNOVLAY.DAT), unmirrored, at the item's
     // screen place plus the offsets of the current action, direction, frame.
+    player_layer_.on = false;
     draw_display_list(screen, list, &xform_, [this](Surface8& surface, const DrawItem& d) {
+        if (d.item->id == 1) build_player_layer(d);
         if (d.item->id != 1 || d.item->shape != 1) return;
         const auto record = world_->npc_record(1);
         const std::uint16_t last = static_cast<std::uint16_t>(record[npc::kLastAnim] | record[npc::kLastAnim + 1] << 8);
@@ -1844,6 +1852,7 @@ void Game::render_view(Surface8& screen, RenderStats* stats) {
                 [this](Surface8& s) { status_bar_.draw(s, *world_); });
     // DISPLAY_1190_010f, not in the menu mode (DS:2CEE, set with DS:2D8F).
     if (!sprites_suspended_) pickup_area_.draw(screen, world_->state.pickups);
+    finish_player_layer(screen);
 }
 
 void Game::move_camera(std::int32_t dx, std::int32_t dy) {
@@ -2199,6 +2208,13 @@ namespace crusader {
 // @orig none: port-only pointer of the keyboard and mouse mode
 Game::PointerOverlay Game::pointer_overlay() const {
     PointerOverlay out;
+    // The character colour screen covers the whole frame (the menu cursor included): the arrow is drawn over it.
+    if ((menu_ && menu_->colours()) || (screen_ && screen_->colours_screen())) {
+        out.show = true;
+        out.x = static_cast<float>(cursor_.x() + ui_x_);
+        out.y = static_cast<float>(cursor_.y() + ui_y_);
+        return out;
+    }
     if (!world_ || !config_.keyboard_mouse) return out;
     if (map_.on || wheel_.on) {  // the map or a wheel takes the mouse: just the arrow
         out.show = true;
@@ -2459,6 +2475,16 @@ void Game::grant_all_items() {
             give(shape, 1, 1);
         }
     }
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+// @orig none: port-only player colours (--colours-screen)
+void Game::show_colours_screen() {
+    function_key(gump_key::kF2);
+    if (auto* options = dynamic_cast<OptionsGump*>(screen_.get())) options->show_colours();
 }
 
 }  // namespace crusader

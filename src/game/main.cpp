@@ -118,7 +118,7 @@ int main(int argc, char** argv) {
     double gamma = 1.0;
     std::int32_t scroll_x = 0, scroll_y = 0;
     bool walk = false, fire = false, menu = false, menu_load = false, menu_credits = false, menu_options = false, menu_gamepad = false,
-         menu_new = false, controls_screen = false, f1_test = false;
+         menu_new = false, controls_screen = false, colours_screen = false, f1_test = false;
     std::string png, wav, movie;
     int use = 0;
     MovieKind movie_kind = MovieKind::kCutscene;
@@ -174,6 +174,7 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--menu-options") == 0) menu = menu_options = true;
         else if (std::strcmp(argv[i], "--menu-gamepad") == 0) menu = menu_options = menu_gamepad = true;
         else if (std::strcmp(argv[i], "--controls-screen") == 0) controls_screen = true;
+        else if (std::strcmp(argv[i], "--colours-screen") == 0) colours_screen = true;
         else if (std::strcmp(argv[i], "--f1") == 0) f1_test = true;
         else if (std::strcmp(argv[i], "--menu-new") == 0) menu = menu_new = true;
         else if (std::strcmp(argv[i], "--scroll") == 0 && i + 2 < argc) {
@@ -207,6 +208,7 @@ int main(int argc, char** argv) {
         if (start_wheel) game.request_wheel(start_wheel - 1);
         game.set_demo(demo_blood, demo_hit_bar, demo_walk_dx, demo_walk_dy, demo_hover);
         game.set_demo_jump(demo_jump_dx, demo_jump_dy, demo_jump_go);
+        if (colours_screen) game.request_colours_screen();
         if (start_gun && !path_test) game.request_draw();
         if (path_test) {
             for (int i = 0; i < 60; ++i) game.update(kFrameUs);
@@ -459,6 +461,8 @@ int main(int argc, char** argv) {
             presenter.set_wheel(game.wheel_overlay().on ? &game.wheel_overlay() : nullptr);
             presenter.add_wheel_icons(game.take_wheel_icons());
             presenter.set_jump(game.jump_preview().on ? &game.jump_preview() : nullptr);
+            presenter.set_colours(game.colours_overlay());
+            presenter.set_player_layer(game.player_layer());
             {
                 std::vector<SdlPresenter::BloodDot> dots;
                 for (const Game::BloodDotScreen& b : game.blood_screen()) dots.push_back({b.x, b.y, b.x0, b.y0, b.size, b.alpha, b.kind});

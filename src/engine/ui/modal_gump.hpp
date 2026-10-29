@@ -11,6 +11,8 @@
 
 namespace crusader {
 
+class ColoursScreen;
+
 class ModalGump {
 public:
     virtual ~ModalGump() = default;
@@ -34,6 +36,8 @@ public:
     virtual bool over_view() const { return false; }
     // The palette it writes to the DAC as it goes, if any.
     virtual const Palette* palette() const { return nullptr; }
+    // Port addition: the character colour screen, while it is open (drawn on the graphics card).
+    virtual const ColoursScreen* colours_screen() const { return nullptr; }
 };
 
 }  // namespace crusader

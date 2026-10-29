@@ -36,6 +36,7 @@
 #include "engine/world/combat_control.hpp"
 #include "core/weapon_overlay.hpp"
 #include "core/font_atlas.hpp"
+#include "engine/world/colours_overlay.hpp"
 #include "engine/world/jump_overlay.hpp"
 #include "engine/world/map_overlay.hpp"
 #include "engine/world/wheel_overlay.hpp"
@@ -170,6 +171,8 @@ public:
     void request_draw() { pending_draw_ = true; }
     // Opens the keyboard and mouse controls screen on its own (for the README picture; the game reaches it from the options).
     void show_controls_screen();
+    void show_colours_screen();
+    void request_colours_screen() { pending_colours_ = true; }
     void open_controls_screen(std::function<void()> then);
     const HelpScreen::Pictures& help_pictures();
     // Developer flags for the README pictures: blood bursts, a health bar, a walk with its route, the pointer over a usable item.
@@ -182,6 +185,9 @@ public:
     // click (closes). `wheel_key` handles Escape, Tab, I, the arrows and Enter while a wheel is open.
     const WheelOverlay& wheel_overlay() const { return wheel_; }
     const JumpPreview& jump_preview() const { return jump_preview_; }
+    // The character colour screen, while open, and the player drawn again in its chosen colours (null when neither).
+    const ColoursOverlay* colours_overlay();
+    const PlayerLayer* player_layer() const;
     void request_wheel(int kind) { pending_wheel_ = kind + 1; }  // (--wheel) open it as soon as the player can act
     void open_wheel(int kind);
     void close_wheel();
@@ -423,6 +429,10 @@ private:
     std::uint32_t jump_down_at_ = 0;
     World::Point jump_landing_{};
     JumpPreview jump_preview_;
+    ColoursOverlay colours_overlay_;
+    PlayerLayer player_layer_;
+    void build_player_layer(const DrawItem& d);
+    void finish_player_layer(const Surface8& screen);
     bool jump_key(const GameKeyEvent& e);
     void update_jump_preview();
     std::uint32_t path_wait_ = 0; // no replanning before this tick (after a failed attempt)
@@ -454,6 +464,7 @@ private:
     void update_map_markers();
     WheelOverlay wheel_;
     int pending_wheel_ = 0;
+    bool pending_colours_ = false;
     int demo_jump_dx_ = 0, demo_jump_dy_ = 0, demo_jump_stage_ = 0;
     bool demo_jump_go_ = false;
     std::uint32_t demo_jump_at_ = 0;

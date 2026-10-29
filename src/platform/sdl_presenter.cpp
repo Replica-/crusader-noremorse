@@ -48,6 +48,8 @@ SdlPresenter::SdlPresenter(const std::string& title, int width, int height, int 
 SdlPresenter::~SdlPresenter() {
     if (font_tex_) SDL_DestroyTexture(font_tex_);
     if (jump_tex_) SDL_DestroyTexture(jump_tex_);
+    if (colours_tex_) SDL_DestroyTexture(colours_tex_);
+    if (player_tex_) SDL_DestroyTexture(player_tex_);
     for (IconTexture& i : wheel_icons_) {
         if (i.texture) SDL_DestroyTexture(i.texture);
     }
@@ -123,6 +125,7 @@ void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
 
     SDL_RenderClear(renderer_);
     SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
+    draw_player_layer(palette);
     draw_jump();
     draw_laser();
     draw_debug_path();
@@ -130,6 +133,7 @@ void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
     draw_hit_bars();
     draw_map();
     draw_wheel();
+    draw_colours();
     draw_pointer();  // over the map too
     draw_texts();
     if (!shot_path_.empty()) {
@@ -198,6 +202,34 @@ void SdlPresenter::draw_laser() {
         }
         SDL_RenderGeometry(renderer_, nullptr, v, kSegments + 1, idx, kSegments * 3);
     };
+    // The beam: from the dot back towards the player for a few tiles, fading out; none when the player is that close.
+    {
+        constexpr float kLength = 55.0f;
+        const float dx = laser_.x0 - laser_.x1, dy = laser_.y0 - laser_.y1, distance = std::sqrt(dx * dx + dy * dy);
+        if (distance > kLength) {
+            const float ux = dx / distance, uy = dy / distance, nx = -uy, ny = ux;
+            constexpr int kSteps = 24;
+            for (int pass = 0; pass < 2; ++pass) {
+                const float half = pass == 0 ? 2.2f : 0.7f;  // a faint wide glow, then a thin bright core
+                const float peak = pass == 0 ? 55.0f : 210.0f;
+                SDL_Vertex v[2 * (kSteps + 1)];
+                int idx[6 * kSteps];
+                for (int i = 0; i <= kSteps; ++i) {
+                    const float t = static_cast<float>(i) / kSteps;
+                    const float px = laser_.x1 + ux * kLength * t, py = laser_.y1 + uy * kLength * t;
+                    const float fade = (1.0f - t) * (1.0f - t * 0.4f);
+                    const SDL_Color c = colour(255, pass == 0 ? 40 : 90, pass == 0 ? 30 : 70, peak * fade);
+                    v[2 * i] = {{px + nx * half, py + ny * half}, c, {0, 0}};
+                    v[2 * i + 1] = {{px - nx * half, py - ny * half}, c, {0, 0}};
+                }
+                for (int i = 0; i < kSteps; ++i) {
+                    const int a = 2 * i, k = 6 * i;
+                    idx[k] = a, idx[k + 1] = a + 1, idx[k + 2] = a + 2, idx[k + 3] = a + 2, idx[k + 4] = a + 1, idx[k + 5] = a + 3;
+                }
+                SDL_RenderGeometry(renderer_, nullptr, v, 2 * (kSteps + 1), idx, 6 * kSteps);
+            }
+        }
+    }
     // The crosshair: a dot in the centre and four short lines (up, down, left, right) that move
     // away from it as the shot gets less accurate, so it shows where the bullets can land.
     {

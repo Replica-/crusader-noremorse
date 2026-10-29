@@ -42,6 +42,7 @@ add_library(crusader_core
   src/core/font.cpp
   src/core/font_atlas.cpp
   src/core/game_config.cpp
+  src/core/player_colours.cpp
   src/core/data_info.cpp
   src/core/iso_image.cpp
   src/core/dtable.cpp
@@ -124,6 +125,7 @@ add_library(crusader_engine
   src/engine/ui/gamepad_screen.cpp
   src/engine/ui/enhancements_screen.cpp
   src/engine/ui/controls_screen.cpp
+  src/engine/ui/colours_screen.cpp
   src/engine/ui/movie_player.cpp
   src/engine/world/render.cpp)
 target_link_libraries(crusader_engine PUBLIC crusader_core)
@@ -137,11 +139,12 @@ add_library(crusader_platform
   src/platform/sdl_map.cpp
   src/platform/sdl_wheel.cpp
   src/platform/sdl_jump.cpp
+  src/platform/sdl_colours.cpp
   src/platform/sdl_text.cpp)
 target_link_libraries(crusader_platform PUBLIC crusader_engine ${SDL2_TARGET})
 
 # The game without platform code (testable headless), and its executable.
-add_library(crusader_game src/game/game.cpp src/game/game_map.cpp src/game/game_wheel.cpp src/game/game_jump.cpp)
+add_library(crusader_game src/game/game.cpp src/game/game_map.cpp src/game/game_wheel.cpp src/game/game_jump.cpp src/game/game_colours.cpp)
 target_link_libraries(crusader_game PUBLIC crusader_engine)
 
 if(WIN32)

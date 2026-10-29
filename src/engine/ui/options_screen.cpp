@@ -154,6 +154,10 @@ void OptionsScreen::draw_shape(Surface8& screen, std::uint16_t shape, int frame,
 
 // @orig 13D0:17C5
 void OptionsScreen::draw(Surface8& screen) const {
+    if (colours_) {
+        colours_->draw(screen);
+        return;
+    }
     if (enh_) {
         enh_->draw(screen);
         return;
@@ -179,24 +183,28 @@ void OptionsScreen::draw(Surface8& screen) const {
         const int frame = is_choice(it.id) ? (chosen(it.id) ? 0 : 1) : (pressed(it.id) ? 1 : 0);
         draw_shape(screen, it.shape, frame, it.rect.x0, it.rect.y0);
     }
-    if (fonts_) draw_pad_button(screen);
+    if (fonts_) {
+        draw_pad_button(screen, false);
+        draw_pad_button(screen, true);
+    }
 }
 
 // The "ameliorations" button: a "+" icon and a text button next to "quit", in
 // its colours (frame, icon and text bright when focused or pressed).
 // @orig none: port-only enhancements button
-void OptionsScreen::draw_pad_button(Surface8& screen) const {
-    const bool lit = *focus_ == kPadLine || pad_pressed_;
+void OptionsScreen::draw_pad_button(Surface8& screen, bool colours) const {
+    const bool lit = colours ? (*focus_ == kColourLine || colour_pressed_) : (*focus_ == kPadLine || pad_pressed_);
     const std::uint8_t colour = lit ? kFocusColour : kButtonColour;
-    const Rect& r = pad_rect_;
+    const Rect& r = colours ? colour_rect_ : pad_rect_;
     draw_rounded_box(screen, r.x0, r.y0, r.x1, r.y1, kButtonFill, colour);
     TextWriter writer(*fonts_, kButtonFont);
-    const std::string text = tr("AMELIORATIONS", "ENHANCEMENTS");
+    const std::string text = colours ? tr("COULEURS", "COLOURS") : tr("AMELIORATIONS", "ENHANCEMENTS");
     constexpr int kIcon = 11, kGap = 6;
     const int width = writer.measure(text).width;
     const int total = kIcon + kGap + width;
     const int left = r.x0 + (r.x1 - r.x0 + 1 - total) / 2;
-    draw_plus_icon(screen, left, r.y0 + (r.y1 - r.y0 + 1 - kIcon) / 2, kIcon, colour);
+    if (colours) draw_rounded_box(screen, left, r.y0 + (r.y1 - r.y0 + 1 - kIcon) / 2, left + kIcon - 1, r.y0 + (r.y1 - r.y0 + 1 - kIcon) / 2 + kIcon - 1, colour, colour);
+    else draw_plus_icon(screen, left, r.y0 + (r.y1 - r.y0 + 1 - kIcon) / 2, kIcon, colour);
     // Drawn on a scratch surface and copied in one colour, as the font has its own.
     constexpr int kPad = 4, kAbove = 32, kHeight = 48;
     Surface8 scratch(width + 2 * kPad, kHeight);
@@ -212,6 +220,11 @@ void OptionsScreen::draw_pad_button(Surface8& screen) const {
     }
 }
 
+void OptionsScreen::open_colours() {
+    colours_ = std::make_unique<ColoursScreen>(*config_);
+    colours_->update(now_);
+}
+
 void OptionsScreen::open_enhancements() {
     if (!fonts_) return;
     enh_ = std::make_unique<EnhancementsScreen>(*fonts_, *config_, pad_focus_);
@@ -219,6 +232,11 @@ void OptionsScreen::open_enhancements() {
 
 // @orig 13D0:20B7
 void OptionsScreen::key(std::uint16_t code) {
+    if (colours_) {
+        colours_->key(code);
+        if (colours_->closed()) colours_.reset();
+        return;
+    }
     if (enh_) {
         enh_->key(code);
         if (enh_->closed()) enh_.reset();
@@ -226,6 +244,17 @@ void OptionsScreen::key(std::uint16_t code) {
     }
     if (closed_) return;
     int& focus = *focus_;
+    if (focus == kColourLine && fonts_) {
+        // The colours button, under the enhancements one.
+        switch (code) {
+        case gump_key::kEscape: closed_ = true; break;
+        case gump_key::kEnter: open_colours(); break;
+        case gump_key::kUp:
+        case '8': focus = kPadLine; break;
+        default: break;
+        }
+        return;
+    }
     if (focus == kPadLine && fonts_) {
         // The enhancements button, left of "quit".
         switch (code) {
@@ -235,6 +264,8 @@ void OptionsScreen::key(std::uint16_t code) {
         case '8': focus = kQuitLine - 1; break;
         case gump_key::kRight:
         case '6': focus = kQuitLine; quit_selected_ = true; break;
+        case gump_key::kDown:
+        case '2': focus = kColourLine; break;
         default: break;
         }
         return;
@@ -286,12 +317,23 @@ const OptionsScreen::Item* OptionsScreen::hit(int x, int y) const {
 
 // @orig 13D0:0DC0 1310:0371
 void OptionsScreen::mouse_down(int x, int y) {
+    if (colours_) {
+        colours_->mouse_down(x, y);
+        if (colours_->closed()) colours_.reset();
+        return;
+    }
     if (enh_) {
         enh_->mouse_down(x, y);
         if (enh_->closed()) enh_.reset();
         return;
     }
     if (closed_ || captured_ >= 0) return;
+    if (fonts_ && colour_rect_.contains(x, y)) {
+        colour_pressed_ = true;
+        if (*focus_ == kQuitLine) quit_selected_ = false;
+        *focus_ = kColourLine;
+        return;
+    }
     if (fonts_ && pad_rect_.contains(x, y)) {
         pad_pressed_ = true;
         if (*focus_ == kQuitLine) quit_selected_ = false;
@@ -318,7 +360,12 @@ void OptionsScreen::mouse_down(int x, int y) {
 
 // @orig 1310:0151 1310:04CD
 void OptionsScreen::mouse_move(int x, int y) {
+    if (colours_) {
+        colours_->mouse_move(x, y);
+        return;
+    }
     if (enh_ || closed_) return;
+    if (colour_pressed_) colour_pressed_ = colour_rect_.contains(x, y);
     if (pad_pressed_) pad_pressed_ = pad_rect_.contains(x, y);
     if (captured_ < 0) return;
     const Item& it = widgets_[captured_];
@@ -329,7 +376,16 @@ void OptionsScreen::mouse_move(int x, int y) {
 
 // @orig 1310:001D 1310:0371
 void OptionsScreen::mouse_up(int x, int y) {
+    if (colours_) {
+        colours_->mouse_up(x, y);
+        return;
+    }
     if (enh_) return;
+    if (colour_pressed_) {
+        colour_pressed_ = false;
+        if (colour_rect_.contains(x, y)) open_colours();
+        return;
+    }
     if (pad_pressed_) {  // acts at the release inside, like the quit button
         pad_pressed_ = false;
         if (pad_rect_.contains(x, y)) open_enhancements();
@@ -345,6 +401,10 @@ void OptionsScreen::mouse_up(int x, int y) {
 // @orig 1310:04FD
 void OptionsScreen::update(std::uint32_t ticks) {
     now_ = ticks;
+    if (colours_) {
+        colours_->update(ticks);
+        return;
+    }
     if (enh_) {
         enh_->update(ticks);
         return;

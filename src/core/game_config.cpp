@@ -1,6 +1,7 @@
 #include "core/game_config.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -59,6 +60,26 @@ GameConfig GameConfig::parse(std::string_view text) {
         else if (key == "directionalroll") c.directional_roll = value != "false";
         else if (key == "keyboardmouse") c.keyboard_mouse = value != "false";
         else if (key == "togglerun") c.toggle_run = value == "true";
+        else if (key == "playercolors") {
+            std::string_view rest = value;
+            PlayerColours p;
+            bool ok = true;
+            for (std::uint32_t& rgb : p.rgb) {
+                const auto comma = rest.find(',');
+                const std::string_view part = rest.substr(0, comma);
+                if (part.size() != 6) { ok = false; break; }
+                std::uint32_t v = 0;
+                for (const char ch : part) {
+                    const int d = ch >= '0' && ch <= '9' ? ch - '0' : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10 : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10 : -1;
+                    if (d < 0) { ok = false; break; }
+                    v = v << 4 | static_cast<std::uint32_t>(d);
+                }
+                if (!ok) break;
+                rgb = v;
+                rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+            }
+            if (ok) { p.custom = true; c.player_colours = p; }
+        }
         else if (key == "padaim") c.pad.aim = std::clamp(number(value), 1, PadSettings::kAimLevels);
         else if (key == "paddeadzone") c.pad.dead_zone = std::clamp(number(value), 0, PadSettings::kDeadZoneLevels - 1);
         else if (key == "padmap") {
@@ -111,6 +132,17 @@ std::string GameConfig::text() const {
     else out.erase("keyboardmouse");
     if (toggle_run) out.set("togglerun", "true");
     else out.erase("togglerun");
+    if (player_colours.custom) {
+        std::string colours;
+        for (const std::uint32_t rgb : player_colours.rgb) {
+            char buf[8];
+            std::snprintf(buf, sizeof buf, "%06X", rgb & 0xFFFFFFu);
+            colours += (colours.empty() ? "" : ",") + std::string(buf);
+        }
+        out.set("playercolors", colours);
+    } else {
+        out.erase("playercolors");
+    }
     // The controller settings: only when they differ from the defaults.
     // ("padbuttons" was an earlier format, dropped.)
     out.erase("padbuttons");
