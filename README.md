@@ -6,6 +6,14 @@
 
 A C++20/SDL2 reimplementation of the *Crusader: No Remorse* (Origin, 1995) engine for Windows and Linux. The project is still a **work in progress**.
 
+### Key features
+
+- Keyboard-and-mouse movement with mouse-targeted pathfinding, dodge rolls, crouching, jumping, and weapon aiming.
+- OpenGL renderer with FPS overlay, better visuals, and a modernized HUD/controls layer.
+- Mission map, weapon wheel, item wheel, and fast inventory management built into the game.
+- Character colour customization and enhanced combat effects like blood, loot drops, and health bars.
+- New launch options for skipping movies, starting at a mission, and giving every weapon and item.
+
 **Simpler movement (Targetted towards Keyboard and Mouse mode, on by default):**
 
 - **W** always path-finds towards the mouse cursor, going round obstacles, and keeps doing so when running with **Shift**. **S** is always backwards, **A / D** side-step.
