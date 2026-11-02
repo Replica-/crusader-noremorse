@@ -114,6 +114,14 @@
             "MIMode": "gdb",
             "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
             "presentation": { "group": "2 Mission 2", "order": 2 }
+        },
+        {
+            "name": "🎥 Record: Mission 1 (screen + game audio)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}/scripts/record-crusader.ps1\"",
+            "cwd": "${workspaceFolder}",
+            "presentation": { "group": "3 Recording", "order": 1 }
         }
     ]
 }

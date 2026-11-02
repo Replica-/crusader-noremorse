@@ -6,3 +6,4 @@ __pycache__/
 private/
 isos/*.iso
 /tools/release
+recordings/
