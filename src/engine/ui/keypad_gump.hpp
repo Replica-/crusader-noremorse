@@ -53,6 +53,7 @@
 //     (DS:8A80..8A84), done by the game when the gump closes;
 //   - a double click counts as a press (event kind 4, DS:47D2 bit 2).
 
+#include "core/font.hpp"
 #include "core/surface.hpp"
 #include "engine/ui/modal_gump.hpp"
 #include "engine/world/render.hpp"
@@ -60,6 +61,8 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <string>
+#include <vector>
 
 namespace crusader {
 
@@ -114,6 +117,25 @@ public:
     int matched() const { return matched_; }
     bool pressed(int button) const { return pressed_[static_cast<std::size_t>(button)]; }
 
+    // Port addition: the codes the player has read on the terminals (Game::seen_codes_), listed beside the keypad; a
+    // click on one types it in (in place of what was typed), Enter still to be pressed.
+    struct Hint {
+        std::string code;   // its digits
+        std::string label;  // the words before it on the terminal
+    };
+    static constexpr int kHintFont = 6;  // the terminals' own (small) font
+    static constexpr int kHintRowHeight = 14;
+    static constexpr int kHintWidth = 252;
+    void set_hints(const FontSet& fonts, std::vector<Hint> hints);
+    const std::vector<Hint>& hints() const { return hints_; }
+    // The row of the list at (x, y) on the screen, -1 for none.
+    int hint_at(int x, int y) const;
+
+private:
+    void draw_hints(Surface8& screen) const;
+
+public:
+
 private:
     void button(int index);      // 13C8:0543
     void move_selection(int dx, int dy);
@@ -138,6 +160,10 @@ private:
     bool selection_active_ = false;
     int result_ = 0;
     bool closed_ = false;
+    const FontSet* fonts_ = nullptr;
+    std::vector<Hint> hints_;
+    int hint_hover_ = -1;
+    int width_ = 0;  // the gump's frame
 };
 
 }  // namespace crusader

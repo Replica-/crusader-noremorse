@@ -115,6 +115,82 @@
             "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
             "presentation": { "group": "2 Mission 2", "order": 2 }
         },
+        // The lighting with its debug mode on: the rooms the lights light are tinted, a left click on a light shows its own
+        // room; F7 turns the debug mode off and on again.
+        {
+            "name": "🔨💡 Light debug (Mission 1): Build & Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/crusader.exe",
+            "args": ["tools/release", "--new-game", "--skip-movies", "--keyboard-mouse", "--lighting", "--light-debug"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "PATH", "value": "D:/development/msys64/ucrt64/bin;${env:PATH}" }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
+            "setupCommands": [
+                { "description": "Enable pretty-printing for gdb", "text": "-enable-pretty-printing", "ignoreFailures": true }
+            ],
+            "preLaunchTask": "build",
+            "presentation": { "group": "4 Lighting", "order": 1 }
+        },
+        {
+            "name": "💡 Light debug (Mission 1): Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/crusader.exe",
+            "args": ["tools/release", "--new-game", "--skip-movies", "--keyboard-mouse", "--lighting", "--light-debug"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "PATH", "value": "D:/development/msys64/ucrt64/bin;${env:PATH}" }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
+            "presentation": { "group": "4 Lighting", "order": 2 }
+        },
+        // The rooms as the lighting sees them: the room you are in; a left
+        // click on a floor shows that floor's room, on a light the room it lights. F7 turns the debug view off and on.
+        {
+            "name": "🔨🧱 Room debug (Mission 1): Build & Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/crusader.exe",
+            "args": ["tools/release", "--new-game", "--skip-movies", "--keyboard-mouse", "--lighting", "--room-debug"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "PATH", "value": "D:/development/msys64/ucrt64/bin;${env:PATH}" }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
+            "setupCommands": [
+                { "description": "Enable pretty-printing for gdb", "text": "-enable-pretty-printing", "ignoreFailures": true }
+            ],
+            "preLaunchTask": "build",
+            "presentation": { "group": "4 Lighting", "order": 3 }
+        },
+        {
+            "name": "🧱 Room debug (Mission 1): Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/crusader.exe",
+            "args": ["tools/release", "--new-game", "--skip-movies", "--keyboard-mouse", "--lighting", "--room-debug"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "PATH", "value": "D:/development/msys64/ucrt64/bin;${env:PATH}" }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
+            "presentation": { "group": "4 Lighting", "order": 4 }
+        },
         {
             "name": "🎥 Record: Mission 1 (screen + game audio)",
             "type": "node-terminal",

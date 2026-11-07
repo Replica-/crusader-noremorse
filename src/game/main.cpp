@@ -11,6 +11,13 @@
 // cutscene (FLICS/NAME.AVI, as MovieGump::I_playMovieCutscene) right away,
 // --movie-overlay as I_playMovieOverlay.
 //
+// --headless runs the real game (graphics card drawing included) in a hidden window of --size WxH (1280x720 without
+// it), with no sound and the mouse left alone; --shot FILE [--shot-after S] saves the picture and quits (without
+// --shot it quits after --shot-after seconds). --lighting turns the lit scene on for that run; --light-debug shows the
+// rooms the lights light (F7), and --light-click FX FY clicks a light there (fractions of the screen) a second before.
+// --room-debug (with the lighting) shows the room you are in; a click on a floor shows that floor's room, on a light
+// the room it lights.
+//
 // Controls of the original (CRUSADER.C 12CF): arrows (shift runs), keypad,
 // Ctrl / Alt moves; see engine/world/avatar_mover.hpp. Escape opens the menu
 // (keyboard or left mouse button; "quit" leaves).
@@ -115,6 +122,13 @@ int main(int argc, char** argv) {
     bool start_gun = false;  // --gun: start with the weapon drawn
     int path_dx = 0, path_dy = 0;
     bool keyboard_mouse = false;  // --keyboard-mouse: the keyboard and mouse mode, whatever CRUSADER.CFG says
+    bool lighting = false;  // --lighting: the lit hardware scene, whatever CRUSADER.CFG says
+    bool headless = false;  // --headless: no window shown, no sound, the mouse left alone (with --shot, for tests)
+    bool light_debug = false;  // --light-debug: the light debug mode on (F7)
+    bool room_debug = false;  // --room-debug: the light debug mode on the rooms (yours, or the floor clicked)
+    bool demo_keypad = false;  // --demo-keypad: terminal messages read, then a keypad with their codes listed
+    double light_click_fx = -1, light_click_fy = -1;  // --light-click FX FY: a debug click there (fractions of the screen), for tests
+    bool size_given = false;
     double gamma = 1.0;
     std::int32_t scroll_x = 0, scroll_y = 0;
     bool walk = false, fire = false, menu = false, menu_load = false, menu_credits = false, menu_options = false, menu_gamepad = false,
@@ -156,7 +170,14 @@ int main(int argc, char** argv) {
             path_dy = std::stoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--gun") == 0) path_gun = start_gun = true;
         else if (std::strcmp(argv[i], "--keyboard-mouse") == 0) keyboard_mouse = true;
-        else if (std::strcmp(argv[i], "--size") == 0 && i + 1 < argc) {  // with --png: the screen's size, e.g. 960x540
+        else if (std::strcmp(argv[i], "--lighting") == 0) lighting = true;
+        else if (std::strcmp(argv[i], "--headless") == 0) headless = true;
+        else if (std::strcmp(argv[i], "--light-debug") == 0) light_debug = true;
+        else if (std::strcmp(argv[i], "--room-debug") == 0) room_debug = lighting = true;
+        else if (std::strcmp(argv[i], "--demo-keypad") == 0) demo_keypad = true;
+        else if (std::strcmp(argv[i], "--light-click") == 0 && i + 2 < argc) { light_click_fx = std::stod(argv[++i]); light_click_fy = std::stod(argv[++i]); }
+        else if (std::strcmp(argv[i], "--size") == 0 && i + 1 < argc) {  // with --png or --headless: the screen's size, e.g. 960x540
+            size_given = true;
             std::sscanf(argv[++i], "%dx%d", &png_width, &png_height);
         }
         else if (std::strcmp(argv[i], "--gamma") == 0 && i + 1 < argc) gamma = std::stod(argv[++i]);
@@ -200,6 +221,9 @@ int main(int argc, char** argv) {
         game.set_port_version(CRUSADER_VERSION);
         game.set_skip_movies(skip_movies);
         if (keyboard_mouse) game.force_keyboard_mouse();
+        if (lighting) game.force_lighting();
+        if (light_debug) game.set_light_debug(true);
+        if (room_debug) game.set_room_debug();
         // No game asked for: the start-up, as when the original is launched
         // (the movies, then the menu). The tools (--png, --movie) keep
         // loading save 1.
@@ -300,10 +324,14 @@ int main(int argc, char** argv) {
 
         // The options screen saves its settings, as the original does.
         game.set_config_file(data / "CRUSADER.CFG");
-        SdlPresenter presenter(kWindowTitle, Game::kScreenWidth, Game::kScreenHeight, 2, fullscreen);
+        // Headless: a hidden window of the --size given (1280 x 720 without one), drawn into at one pixel per pixel.
+        const int window_w = headless ? (size_given ? png_width : 1280) : Game::kScreenWidth;
+        const int window_h = headless ? (size_given ? png_height : 720) : Game::kScreenHeight;
+        if (headless) SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);  // the mixer still runs, nothing is heard
+        SdlPresenter presenter(kWindowTitle, window_w, window_h, headless ? 1 : 2, fullscreen && !headless, headless);
         presenter.set_gamma(gamma);
         presenter.set_font(game.font_atlas());
-        if (!classic && !fullscreen) presenter.maximize();
+        if (!classic && !fullscreen && !headless) presenter.maximize();
         // Native resolution: the game is drawn at the largest whole fraction of
         // the window that is still 640 x 480 or more, so the pixels keep their
         // shape and a wider window shows more of the surroundings.
@@ -430,7 +458,7 @@ int main(int argc, char** argv) {
             game.update(static_cast<std::uint32_t>(seconds * 1'000'000));
             if (game.quit_requested()) running = false;
             // (keyboard and mouse mode: the pointer is absolute, not relative)
-            if ((game.mouse_in_play() && !game.config().keyboard_mouse) != relative_mouse) {
+            if (!headless && (game.mouse_in_play() && !game.config().keyboard_mouse) != relative_mouse) {
                 relative_mouse = game.mouse_in_play() && !game.config().keyboard_mouse;
                 SDL_SetRelativeMouseMode(relative_mouse ? SDL_TRUE : SDL_FALSE);
                 // Back in a menu: the system pointer where the game's is.
@@ -468,6 +496,16 @@ int main(int argc, char** argv) {
                 if (const std::string path = game.path_status(); !path.empty()) presenter.text(rx, 50.0f, path, 120, 255, 255, true);
             }
             presenter.set_scene(game.scene());
+            presenter.set_lighting(game.lighting());
+            presenter.set_light_debug(game.light_debug_overlay());
+            if (demo_keypad && SDL_GetTicks() / 1000.0 >= shot_after - 2.0) {
+                game.demo_keypad();
+                demo_keypad = false;
+            }
+            if (light_click_fx >= 0 && SDL_GetTicks() / 1000.0 >= shot_after - 1.0) {
+                game.light_debug_click(static_cast<int>(light_click_fx * screen.width), static_cast<int>(light_click_fy * screen.height));
+                light_click_fx = -1;
+            }
             presenter.set_debug_path(game.path_debug_screen());
             presenter.set_map(game.map_overlay().on ? &game.map_overlay() : nullptr);
             presenter.set_wheel(game.wheel_overlay().on ? &game.wheel_overlay() : nullptr);
@@ -500,13 +538,19 @@ int main(int argc, char** argv) {
             }
             presenter.present(screen, game.palette());
             if (shot_requested && presenter.screenshot_done()) running = false;
+            if (headless) {
+                // Nothing waits for the display: about 60 passes a second, and without --shot an end after --shot-after.
+                if (shot_file.empty() && SDL_GetTicks() / 1000.0 >= shot_after) running = false;
+                const double spent_ms = static_cast<double>(SDL_GetPerformanceCounter() - pass_start) * 1000.0 / freq;
+                if (spent_ms < 16.0) SDL_Delay(static_cast<Uint32>(16.0 - spent_ms));
+            }
         }
         print_faults(game);
         SDL_Quit();
         return 0;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "crusader", e.what(), nullptr);
+        if (!headless) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "crusader", e.what(), nullptr);
         return 1;
     }
 }

@@ -10,8 +10,8 @@
 
 namespace crusader {
 
-SdlPresenter::SdlPresenter(const std::string& title, int width, int height, int scale, bool fullscreen)
-    : width_(width), height_(height) {
+SdlPresenter::SdlPresenter(const std::string& title, int width, int height, int scale, bool fullscreen, bool headless)
+    : headless_(headless), width_(width), height_(height) {
     set_gamma(1.0);
     // Without this, Windows scales a window by the display's zoom (125 %, 150 %...)
     // and SDL reports a smaller size than the screen has, so the view would
@@ -24,17 +24,19 @@ SdlPresenter::SdlPresenter(const std::string& title, int width, int height, int 
     }
     window_ = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                width * scale, height * scale,
-                               SDL_WINDOW_RESIZABLE | (fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
+                               headless ? Uint32{SDL_WINDOW_HIDDEN}
+                                        : SDL_WINDOW_RESIZABLE | (fullscreen ? Uint32{SDL_WINDOW_FULLSCREEN_DESKTOP} : 0u));
     if (!window_) {
         throw std::runtime_error(std::string("SDL window: ") + SDL_GetError());
     }
     // OpenGL by default (the SDL renderer's "opengl" driver); SDL picks its own
     // backend, e.g. Direct3D, if OpenGL is not available.
     SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
-    renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_PRESENTVSYNC);
+    const Uint32 flags = headless ? 0u : Uint32{SDL_RENDERER_PRESENTVSYNC};  // hidden: nothing to wait for
+    renderer_ = SDL_CreateRenderer(window_, -1, flags);
     if (!renderer_) {
         SDL_SetHint(SDL_HINT_RENDER_DRIVER, "");
-        renderer_ = SDL_CreateRenderer(window_, -1, SDL_RENDERER_PRESENTVSYNC);
+        renderer_ = SDL_CreateRenderer(window_, -1, flags);
     }
     if (!renderer_) {
         throw std::runtime_error(std::string("SDL renderer: ") + SDL_GetError());
@@ -45,6 +47,7 @@ SdlPresenter::SdlPresenter(const std::string& title, int width, int height, int 
     if (!texture_) {
         throw std::runtime_error(std::string("SDL texture: ") + SDL_GetError());
     }
+    make_screen_target();
 }
 
 SdlPresenter::~SdlPresenter() {
@@ -59,6 +62,9 @@ SdlPresenter::~SdlPresenter() {
     if (occ_tex_) SDL_DestroyTexture(occ_tex_);
     for (IconTexture& i : wheel_icons_) {
         if (i.texture) SDL_DestroyTexture(i.texture);
+    }
+    for (SDL_Texture* t : {scene_target_, light_target_, light_spot_, screen_target_, room_small_[0], room_small_[1]}) {
+        if (t) SDL_DestroyTexture(t);
     }
     if (texture_) SDL_DestroyTexture(texture_);
     if (renderer_) SDL_DestroyRenderer(renderer_);
@@ -89,10 +95,12 @@ void SdlPresenter::resize(int width, int height) {
     width_ = width;
     height_ = height;
     SDL_RenderSetLogicalSize(renderer_, width, height);
+    make_screen_target();
 }
 
 // @orig 1360:0FD6
 void SdlPresenter::warp_mouse(int x, int y) {
+    if (headless_) return;  // the system pointer is someone else's
     int wx = 0, wy = 0;
     SDL_RenderLogicalToWindow(renderer_, static_cast<float>(x), static_cast<float>(y), &wx, &wy);
     SDL_WarpMouseInWindow(window_, wx, wy);
@@ -134,15 +142,21 @@ void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
     }
     SDL_UnlockTexture(texture_);
 
+    SDL_SetRenderTarget(renderer_, screen_target_);
     SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
     SDL_RenderClear(renderer_);
-    if (scene_) draw_scene(palette);
+    if (scene_) {
+        const bool lit = lighting_ && begin_lit_scene();
+        draw_scene(palette);
+        if (lit) end_lit_scene();
+    }
     SDL_RenderCopy(renderer_, texture_, nullptr, nullptr);
     draw_player_layer(palette);
     draw_player_sprite(palette);
     draw_jump();
     draw_laser();
     draw_debug_path();
+    draw_light_debug();
     draw_blood();
     draw_hit_bars();
     draw_map();
@@ -152,7 +166,8 @@ void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
     draw_texts();
     if (!shot_path_.empty()) {
         int w = 0, h = 0;
-        SDL_GetRendererOutputSize(renderer_, &w, &h);
+        if (screen_target_) SDL_QueryTexture(screen_target_, nullptr, nullptr, &w, &h);
+        else SDL_GetRendererOutputSize(renderer_, &w, &h);
         if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888)) {
             if (SDL_RenderReadPixels(renderer_, nullptr, SDL_PIXELFORMAT_ARGB8888, s->pixels, s->pitch) == 0) SDL_SaveBMP(s, shot_path_.c_str());
             SDL_FreeSurface(s);
@@ -160,7 +175,20 @@ void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
         shot_path_.clear();
         shot_done_ = true;
     }
+    if (screen_target_) {
+        SDL_SetRenderTarget(renderer_, nullptr);  // the hidden window shows nothing: no copy to it
+        return;
+    }
     SDL_RenderPresent(renderer_);
+}
+
+// Headless: the picture everything is drawn into, of the frame's size (made again when it changes).
+// @orig none: port-only headless mode
+void SdlPresenter::make_screen_target() {
+    if (!headless_) return;
+    if (screen_target_) SDL_DestroyTexture(screen_target_);
+    screen_target_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, width_, height_);
+    if (!screen_target_) throw std::runtime_error(std::string("SDL headless target: ") + SDL_GetError());
 }
 
 }  // namespace crusader
@@ -493,6 +521,7 @@ namespace crusader {
 void SdlPresenter::clear_scene_textures() {
     for (auto& entry : scene_textures_) {
         if (entry.second.texture) SDL_DestroyTexture(entry.second.texture);
+        if (entry.second.mask) SDL_DestroyTexture(entry.second.mask);
     }
     scene_textures_.clear();
 }
@@ -508,6 +537,10 @@ void SdlPresenter::draw_scene(const Palette& palette) {
         scene_gamma_version_ = gamma_version_;
     }
     if (scene_textures_.size() > 8000) clear_scene_textures();  // far more than a scene shows: start again
+    if ((lighting_ != nullptr) != scene_masks_) {  // the lighting switched: the pictures again, with or without their masks
+        clear_scene_textures();
+        scene_masks_ = lighting_ != nullptr;
+    }
     std::array<Uint32, 256> lut;
     for (std::size_t i = 0; i < lut.size(); ++i) {
         const Rgb& c = palette.colors[i];
@@ -554,6 +587,16 @@ void SdlPresenter::draw_scene(const Palette& palette) {
                 SDL_SetTextureBlendMode(t.texture, SDL_BLENDMODE_BLEND);
                 SDL_SetTextureScaleMode(t.texture, SDL_ScaleModeNearest);
             }
+            if (lighting_) {
+                // Its shape in white, coloured by its room's ambient in the light map.
+                for (std::size_t i = 0; i < pixels.size(); ++i) pixels[i] = pixels[i] ? 0xFFFFFFFFu : 0u;
+                t.mask = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, f.width, f.height);
+                if (t.mask) {
+                    SDL_UpdateTexture(t.mask, nullptr, pixels.data(), f.width * static_cast<int>(sizeof(Uint32)));
+                    SDL_SetTextureBlendMode(t.mask, SDL_BLENDMODE_BLEND);
+                    SDL_SetTextureScaleMode(t.mask, SDL_ScaleModeNearest);
+                }
+            }
             found = scene_textures_.emplace(key, t).first;
         }
         const SceneTexture& t = found->second;
@@ -563,6 +606,178 @@ void SdlPresenter::draw_scene(const Palette& palette) {
         const SDL_Rect dst{cmd.x, cmd.y, t.w, t.h};
         SDL_RenderCopy(renderer_, t.texture, nullptr, &dst);
     }
+}
+
+}  // namespace crusader
+
+namespace crusader {
+
+// Points the drawing at the scene's own target (made again at a new size), cleared to black. False when the renderer has
+// no render targets: the scene is then drawn unlit.
+// @orig none: port-only lighting
+bool SdlPresenter::begin_lit_scene() {
+    if (lighting_broken_) return false;
+    if (!SDL_RenderTargetSupported(renderer_)) {
+        lighting_broken_ = true;
+        return false;
+    }
+    if (!scene_target_ || target_w_ != width_ || target_h_ != height_) {
+        for (SDL_Texture** t : {&scene_target_, &light_target_}) {
+            if (*t) SDL_DestroyTexture(*t);
+            *t = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, width_, height_);
+        }
+        target_w_ = width_, target_h_ = height_;
+        small_w_ = std::max(1, width_ / kRoomScale), small_h_ = std::max(1, height_ / kRoomScale);
+        for (SDL_Texture*& t : room_small_) {
+            if (t) SDL_DestroyTexture(t);
+            t = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, small_w_, small_h_);
+            if (t) SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
+        }
+        if (!scene_target_ || !light_target_ || !room_small_[0] || !room_small_[1]) {
+            lighting_broken_ = true;
+            return false;
+        }
+        SDL_SetTextureScaleMode(scene_target_, SDL_ScaleModeNearest);
+        SDL_SetTextureScaleMode(light_target_, SDL_ScaleModeLinear);
+        // Twice the light map: 0.5 keeps the scene as drawn, so a light can make it brighter than its art.
+        const SDL_BlendMode doubled = SDL_ComposeCustomBlendMode(SDL_BLENDFACTOR_DST_COLOR, SDL_BLENDFACTOR_SRC_COLOR, SDL_BLENDOPERATION_ADD,
+                                                                 SDL_BLENDFACTOR_ZERO, SDL_BLENDFACTOR_ONE, SDL_BLENDOPERATION_ADD);
+        light_doubled_ = SDL_SetTextureBlendMode(light_target_, doubled) == 0;
+        if (!light_doubled_) SDL_SetTextureBlendMode(light_target_, SDL_BLENDMODE_MOD);
+        SDL_SetTextureBlendMode(scene_target_, SDL_BLENDMODE_NONE);
+    }
+    if (!light_spot_) {
+        // A soft round spot, white in the middle and black at its edge (a smooth curve, no visible rim). Spots meeting
+        // keep the brightest, not their sum (added up only where the renderer has no such blend).
+        constexpr int kSize = 128;
+        std::vector<Uint32> pixels(kSize * kSize);
+        for (int y = 0; y < kSize; ++y) {
+            for (int x = 0; x < kSize; ++x) {
+                const float dx = (x + 0.5f) / (kSize / 2) - 1, dy = (y + 0.5f) / (kSize / 2) - 1;
+                const float t = std::clamp(1.0f - std::sqrt(dx * dx + dy * dy), 0.0f, 1.0f);
+                const auto v = static_cast<Uint32>(std::lround(255.0f * t * t * (3 - 2 * t)));
+                pixels[static_cast<std::size_t>(y * kSize + x)] = 0xFF000000u | v << 16 | v << 8 | v;
+            }
+        }
+        light_spot_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, kSize, kSize);
+        if (!light_spot_) {
+            lighting_broken_ = true;
+            return false;
+        }
+        SDL_UpdateTexture(light_spot_, nullptr, pixels.data(), kSize * static_cast<int>(sizeof(Uint32)));
+        SDL_SetTextureScaleMode(light_spot_, SDL_ScaleModeLinear);
+        const SDL_BlendMode brightest = SDL_ComposeCustomBlendMode(SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE, SDL_BLENDOPERATION_MAXIMUM,
+                                                                   SDL_BLENDFACTOR_ONE, SDL_BLENDFACTOR_ONE, SDL_BLENDOPERATION_MAXIMUM);
+        light_brightest_ = SDL_SetTextureBlendMode(light_spot_, brightest) == 0;
+        if (!light_brightest_) SDL_SetTextureBlendMode(light_spot_, SDL_BLENDMODE_ADD);
+    }
+    SDL_SetRenderTarget(renderer_, scene_target_);
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
+    SDL_RenderClear(renderer_);
+    return true;
+}
+
+// The light map, then the scene multiplied by it onto the screen. The map is the scene again, each picture as its shape
+// in its room's ambient (dark outside the lit rooms), in the same order (what is in front hides what is behind), drawn
+// small and blurred so that the light changes smoothly between rooms; then the lights over it, the brightest winning.
+// @orig none: port-only lighting
+void SdlPresenter::end_lit_scene() {
+    const float scale = light_doubled_ ? 1.0f : 2.0f;  // multiplied in once: the map holds the whole factor
+    const auto byte = [scale](float v) { return static_cast<Uint8>(std::clamp(v * scale, 0.0f, 1.0f) * 255.0f + 0.5f); };
+    const SceneLighting& lit = *lighting_;
+    SDL_SetRenderTarget(renderer_, room_small_[0]);
+    SDL_SetRenderDrawColor(renderer_, byte(lit.dark_r), byte(lit.dark_g), byte(lit.dark_b), 255);
+    SDL_RenderClear(renderer_);
+    constexpr float kSmall = 1.0f / kRoomScale;
+    for (const SceneCmd& cmd : *scene_) {
+        if (!cmd.frame || cmd.translucent) continue;  // a splat or a window: the light of what is under it
+        const std::uintptr_t key = reinterpret_cast<std::uintptr_t>(cmd.frame) << 1 | (cmd.mirrored ? 1u : 0u);
+        const auto found = scene_textures_.find(key);
+        if (found == scene_textures_.end() || !found->second.mask) continue;
+        const SceneTexture& t = found->second;
+        const float k = std::max(cmd.room, 0.0f);
+        SDL_SetTextureColorMod(t.mask, byte(std::max(lit.ambient_r * k, lit.dark_r)), byte(std::max(lit.ambient_g * k, lit.dark_g)),
+                               byte(std::max(lit.ambient_b * k, lit.dark_b)));
+        const SDL_FRect dst{cmd.x * kSmall, cmd.y * kSmall, t.w * kSmall, t.h * kSmall};
+        SDL_RenderCopyF(renderer_, t.mask, nullptr, &dst);
+    }
+    // The blur: each pass the average of the picture and four copies moved by `step` (1, 2, 3 small pixels: about
+    // 6 x kRoomScale view pixels of soft edge in all). Returns the small picture that holds the result.
+    const auto blur = [this]() {
+        int from = 0;
+        for (const int step : {1, 2, 3}) {
+            SDL_Texture* src = room_small_[from];
+            SDL_SetRenderTarget(renderer_, room_small_[1 - from]);
+            SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
+            SDL_RenderClear(renderer_);
+            SDL_SetTextureBlendMode(src, SDL_BLENDMODE_ADD);
+            SDL_SetTextureColorMod(src, 51, 51, 51);
+            for (const auto [dx, dy] : {std::pair{0, 0}, std::pair{step, 0}, std::pair{-step, 0}, std::pair{0, step}, std::pair{0, -step}}) {
+                const SDL_Rect dst{dx, dy, small_w_, small_h_};
+                SDL_RenderCopy(renderer_, src, nullptr, &dst);
+            }
+            from = 1 - from;
+        }
+        SDL_SetTextureColorMod(room_small_[from], 255, 255, 255);
+        return room_small_[from];
+    };
+    SDL_Texture* rooms = blur();
+    SDL_SetRenderTarget(renderer_, light_target_);
+    SDL_SetTextureBlendMode(rooms, SDL_BLENDMODE_NONE);
+    SDL_RenderCopy(renderer_, rooms, nullptr, nullptr);
+    for (const SceneLight& l : lit.lights) {
+        if (l.radius <= 0 || l.intensity <= 0) continue;
+        SDL_SetTextureColorMod(light_spot_, byte(l.r * l.intensity), byte(l.g * l.intensity), byte(l.b * l.intensity));
+        const SDL_FRect dst{l.x - l.radius, l.y - l.radius * 0.5f, l.radius * 2, l.radius};
+        SDL_RenderCopyF(renderer_, light_spot_, nullptr, &dst);
+    }
+    SDL_SetRenderTarget(renderer_, screen_target_);
+    SDL_RenderCopy(renderer_, scene_target_, nullptr, nullptr);
+    SDL_RenderCopy(renderer_, light_target_, nullptr, nullptr);
+}
+
+// The light debug mode: the rooms' floor cells as see-through diamonds, the lights (rings) and where each room's search
+// started (crosses), the clicked one in white, and its line of text at the top.
+// @orig none: port-only lighting
+void SdlPresenter::draw_light_debug() {
+    if (!light_debug_) return;
+    const LightDebugOverlay& o = *light_debug_;
+    std::vector<SDL_Vertex> v;
+    std::vector<int> idx;
+    v.reserve(o.cells.size() * 4);
+    idx.reserve(o.cells.size() * 6);
+    for (const LightDebugOverlay::Cell& c : o.cells) {
+        const int base = static_cast<int>(v.size());
+        for (int i = 0; i < 4; ++i) v.push_back({{c.x[i], c.y[i]}, SDL_Color{c.r, c.g, c.b, 90}, {0, 0}});
+        for (const int i : {0, 1, 2, 0, 2, 3}) idx.push_back(base + i);
+    }
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    if (!v.empty()) SDL_RenderGeometry(renderer_, nullptr, v.data(), static_cast<int>(v.size()), idx.data(), static_cast<int>(idx.size()));
+    for (const LightDebugOverlay::Mark& m : o.marks) {
+        const Uint8 c = m.picked ? 255 : 200;
+        if (m.seed) {
+            SDL_SetRenderDrawColor(renderer_, c, m.picked ? 255 : 60, m.picked ? 255 : 220, 255);
+            for (const float d : {-1.0f, 0.0f, 1.0f}) {
+                SDL_RenderDrawLineF(renderer_, m.x - 6, m.y - 6 + d, m.x + 6, m.y + 6 + d);
+                SDL_RenderDrawLineF(renderer_, m.x - 6, m.y + 6 + d, m.x + 6, m.y - 6 + d);
+            }
+        } else {
+            SDL_SetRenderDrawColor(renderer_, c, c, m.picked ? 255 : 60, 255);
+            const float r = m.picked ? 10.0f : 7.0f;
+            constexpr int kSides = 16;
+            for (int i = 0; i < kSides; ++i) {
+                const float a0 = 6.2831853f * static_cast<float>(i) / kSides, a1 = 6.2831853f * static_cast<float>(i + 1) / kSides;
+                SDL_RenderDrawLineF(renderer_, m.x + std::cos(a0) * r, m.y + std::sin(a0) * r, m.x + std::cos(a1) * r, m.y + std::sin(a1) * r);
+            }
+        }
+    }
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    for (const LightDebugOverlay::Label& l : o.labels) {
+        const float half = text_width(l.text) * 0.5f;
+        text(l.x - half + 1, l.y + 1, l.text, 0, 0, 0);  // (a shadow, to read over any floor)
+        text(l.x - half, l.y, l.text, 255, 255, 255);
+    }
+    text(8.0f, 18.0f, o.text, 255, 230, 120);
 }
 
 }  // namespace crusader

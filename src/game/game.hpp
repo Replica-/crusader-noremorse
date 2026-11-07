@@ -23,6 +23,7 @@
 #include "engine/input/mouse_queue.hpp"
 #include "engine/kernel.hpp"
 #include "engine/ui/help_screen.hpp"
+#include "engine/ui/keypad_gump.hpp"
 #include "engine/ui/main_menu.hpp"
 #include "engine/ui/message_gump.hpp"
 #include "engine/ui/modal_gump.hpp"
@@ -166,6 +167,16 @@ public:
     std::vector<BloodDotScreen> blood_screen() const;
     // The scene for the graphics card, or null when the frame holds the whole picture.
     const std::vector<SceneCmd>* scene() const { return scene_on_ ? &scene_ : nullptr; }
+    // The light map over that scene (game_lighting.cpp), or null when the scene is not lit.
+    const SceneLighting* lighting() const { return scene_on_ && config_.lighting ? &lighting_ : nullptr; }
+    // The light debug mode (F7 with the lighting on, or --light-debug): the rooms the lights light; a left click on a
+    // light shows its own room only (a click elsewhere, all of them again).
+    void set_light_debug(bool on) { light_debug_ = on, light_debug_pick_ = 0, light_debug_room_ = -1; }
+    // The same, showing the room the controlled NPC is in until something is clicked;
+    // a click on the floor shows that floor's room.
+    void set_room_debug() { set_light_debug(true), light_debug_own_room_ = true; }
+    void light_debug_click(int screen_x, int screen_y);
+    const LightDebugOverlay* light_debug_overlay() const { return light_debug_overlay_.on ? &light_debug_overlay_ : nullptr; }
     // Mission map (M in the keyboard and mouse mode, or --map): the level seen from above in the isometric orientation, the
     // walls and floors as diamonds, with markers for you, enemies, key items, weapons and ammunition, things to use, and
     // triggers. Built when it opens; the markers follow the game.
@@ -299,6 +310,12 @@ public:
     // (-1 cancelled, else the value entered) as the call's result. Nothing
     // (result 0) when a screen is already open.
     void show_keypad(std::int16_t code, Pid pid);
+    // Port addition: the codes read on the terminals (3 to 6 digits in their text), newest first, for the keypad's list.
+    std::vector<KeypadGump::Hint> seen_codes_;
+    void note_codes(const std::string& text);
+    // Test hook (--demo-keypad): real terminal messages with their codes read, then a keypad open (code 4471) and its
+    // third listed code clicked.
+    void demo_keypad();
     // WeaselGump::I_showWeaselGump (weasel_gump.hpp): Weasel's shop for
     // `level`, in the menu mode, until it is closed; its movies are played
     // as cutscenes. Nothing when a screen is already open.
@@ -329,6 +346,7 @@ public:
     const GameConfig& config() const { return config_; }
     // Port addition (--keyboard-mouse): forces the keyboard and mouse mode on for this run.
     void force_keyboard_mouse() { config_.keyboard_mouse = true; }
+    void force_lighting() { config_.lighting = true; }
     // Replaces it, the sound settings applied (tests).
     void set_config(GameConfig config);
     // Port addition: the biggest pixel size the window allows (the enhancements window stops there).
@@ -487,6 +505,79 @@ private:
     std::vector<SceneCmd> scene_;
     bool scene_on_ = false;
     void build_scene(const std::vector<DrawItem>& list, const std::vector<FloorSplat>& splats);
+    // The lighting (GameConfig::lighting, game_lighting.cpp): the lights of the scene, gathered by render_view each frame.
+    SceneLighting lighting_;
+    // The lit rooms: the floor reached from each light of the map (its cells of kRoomCell usecode units, with their
+    // floor's z), found once per light, and how bright each room is now (the strongest of the lights in it).
+    struct RoomCell {
+        int room;
+        std::int32_t z;
+    };
+    std::unordered_map<std::int64_t, RoomCell> room_cells_;
+    struct Room {
+        std::vector<std::int64_t> cells;
+        World::Point seed{};  // where the search started
+        int label_x = 0, label_y = 0;  // its north-west floor cell (cells of kRoomCell): its name, the same in every run
+        int merged = -1;  // joined to that room since (its cells are there)
+    };
+    // The light debug mode: the lights on screen this frame (their pictures), the one clicked, the overlay.
+    bool light_debug_ = false;
+    ObjId light_debug_pick_ = 0;
+    int light_debug_room_ = -1;            // the room of the floor clicked, -1 when none (-2: no floor there)
+    World::Point light_debug_tile_{};      // where that floor was clicked
+    bool light_debug_own_room_ = false;    // nothing clicked: the controlled NPC's room (else all of them)
+    int player_room_ = -1;                 // the controlled NPC's room (the room debug mode)
+    struct LightSpot {
+        ObjId id;
+        int left, top, right, bottom;
+    };
+    std::vector<LightSpot> light_spots_;
+    LightDebugOverlay light_debug_overlay_;
+    void build_light_debug();
+    float room_light_level(const Item& item);  // the room ambient `item` gives as a light (0: none)
+    // The walls (game_lighting.cpp), the only things that part two rooms: which shapes are walls, and where they stand.
+    std::unordered_map<std::uint16_t, bool> wall_shapes_;
+    bool is_wall(std::uint16_t shape);
+    std::unordered_map<std::int64_t, bool> wall_cache_;
+    bool wall_at(std::int32_t x, std::int32_t y, std::int32_t z);
+    bool wall_at_uncached(std::int32_t x, std::int32_t y, std::int32_t z);
+    std::unordered_map<std::uint16_t, std::string> object_names_;
+    const std::string& object_name(std::uint16_t shape);
+    std::vector<Room> rooms_;
+    std::vector<float> room_levels_;
+    std::unordered_map<ObjId, int> light_rooms_;  // a light's room, -1 when it has none
+    int rooms_map_ = -1;
+    int rooms_age_ = 0;  // frames since the levels were last worked out
+    std::size_t rooms_hidden_ = 0;  // the items the game hid when the rooms were searched
+    void refresh_rooms();
+    int find_room(const Item& light);
+    // `need_room`: the probe must fit there (false: any floor, whatever stands on it).
+    std::optional<std::int32_t> probe_stand(std::int32_t x, std::int32_t y, std::int32_t z, std::int32_t reach, bool need_room = true) const;
+    int room_from(const World::Point& seed);
+    int live_room(int room) const;  // `room`, or the room it was joined to
+    int room_at(const World::Point& at, std::int32_t reach = -1);  // `reach`: how far up or down the floor may be (-1: a stair)
+    int room_cell(std::int32_t x, std::int32_t y, std::int32_t* z = nullptr) const;
+    float room_level(const DrawItem& d) const;
+    std::string room_name(int room) const;  // "ROOM x.y" by its north-west floor cell
+    // What a picture holds of the light colours, worked out once per picture.
+    struct Glow {
+        int count = 0;               // its glowing pixels
+        float cx = 0, cy = 0;        // their centre, from the picture's top-left corner
+        std::uint8_t colour = 0;     // the commonest of them
+        int pixels = 0;              // all its pixels
+        std::uint8_t main = 0;       // its commonest colour of all (a liquid's colour)
+    };
+    std::unordered_map<const ShapeFrame*, Glow> glows_;
+    const Glow& glow_of(const ShapeFrame& frame);
+    bool is_liquid(const Item& item, const Glow& g) const;
+    // Muzzle flashes still fading (world units, seconds left).
+    struct Flash {
+        float x, y, z, left;
+        int fire_type;
+    };
+    std::vector<Flash> flashes_;
+    void update_flashes(float seconds);
+    void build_lights(const std::vector<DrawItem>& list);
     void draw_floor_splat(Surface8& screen, const FloorSplat& splat, std::array<std::int16_t, 256>& reddened) const;
     bool pending_grant_ = false;
     void grant_all_items();
