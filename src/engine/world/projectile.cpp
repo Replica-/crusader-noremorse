@@ -205,6 +205,7 @@ Pid fire_weapon(Kernel& kernel, World& world, const AnimDat& anims, ObjId shoote
     origin.y += dy;
     origin.z += dz;
     dir &= 0xF;
+    if (world.state.muzzle_flashes.size() < 32) world.state.muzzle_flashes.push_back({origin.x, origin.y, origin.z, fire_type});
 
     // Damage of the shot: the shooter's weapon for NPCs (NPC_10f0_3106),
     // the fire type otherwise.

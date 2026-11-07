@@ -38,6 +38,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -205,6 +206,7 @@ void Game::set_config(GameConfig config) {
 
 // @orig 1028:03F6
 void Game::reset_world() {
+    seen_codes_.clear();  // (port addition: the codes read on this game's terminals)
     map_seen_.clear();  // a new level: nothing seen yet
     map_ = MapOverlay{};
     // The sounds of the previous world go with it.
@@ -357,6 +359,11 @@ void Game::pad_button(int button) {
 }
 
 void Game::key(std::uint8_t scancode, bool extended, bool pressed, std::uint16_t flags, std::uint8_t ascii) {
+    // Port addition: F7 with the lighting on, the light debug mode (game_lighting.cpp).
+    if (!extended && scancode == 0x41 && config_.lighting && world_ && !modal()) {
+        if (pressed) set_light_debug(!light_debug_);
+        return;
+    }
     // Port addition (GameConfig::keyboard_mouse): W / S walk forward / backward
     // (Up / Down), A / D step aside (Alt + Left / Right), Q / E roll (Ctrl +
     // Left / Right), the original's own key combinations.
@@ -821,6 +828,7 @@ void Game::update(std::uint32_t elapsed_us) {
     if (map_.on && (map_.polys.empty() || ++map_refresh_ % 40 == 0)) build_map();  // (also when opened before the level was there)
     else if (map_.on) update_map_markers();
     if (world_ && !modal() && !movie_) update_blood(static_cast<float>(elapsed_us) / 1e6f);
+    if (world_ && !modal() && !movie_) update_flashes(static_cast<float>(elapsed_us) / 1e6f);
     if (world_ && free_pointer() && !world_->state.avatar_in_stasis && world_->state.controlled_npc == 1) {
         // A movement key held: never stop to turn (that interrupts the walk and
         // makes it stutter); W alone steers the running step towards the pointer.
@@ -1478,9 +1486,113 @@ void Game::close_screen() {
     if (closed) closed(*screen);
 }
 
+// Port addition: the codes in a terminal's text, kept for the keypad (KeypadGump::Hint). The scripts write the code into
+// the message ("... the passcode to Dr. Hoffman's lab has been changed to 4471"): a number of 3 to 6 digits standing
+// alone (no letter, digit or dash against it: not "1701-D" nor "512-555-2788"), with a word of codes ("passcode",
+// "code", "combination", "keypad", "pin", "password") in the 160 characters before it or the 40 after ("4471 is this
+// week's passcode"). Its label is the place the code is for when the text says it ("code to the safe": "THE SAFE"),
+// else the message's first line. The newest first, each code once.
+// @orig none: port-only codes list
+void Game::note_codes(const std::string& text) {
+    const auto lower = [](std::string s) {
+        for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    const auto clean = [](const std::string& s) {
+        std::string out;
+        for (const char c : s) {
+            if (c == '*' || c == '^' || static_cast<unsigned char>(c) < ' ') {
+                if (!out.empty() && out.back() != ' ') out += ' ';  // (the pauses, line breaks and control codes)
+                continue;
+            }
+            out += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        const auto first = out.find_first_not_of(" :-=.,#_<(");
+        const auto last = out.find_last_not_of(" :-=.,#_<(");
+        return first == std::string::npos ? std::string{} : out.substr(first, last - first + 1);
+    };
+    static constexpr const char* kWords[] = {"passcode", "pass code", "code", "combination", "keypad", "pin", "password"};
+    const std::string low = lower(text);
+    // The message's first line (its title or sender), for a code that does not say what it opens.
+    std::string title;
+    for (std::size_t i = 0; i < text.size() && text[i] != '^' && text[i] != '\n'; ++i) title += text[i];
+    title = clean(title);
+    const auto digit = [&](std::size_t i) { return i < text.size() && std::isdigit(static_cast<unsigned char>(text[i])); };
+    const auto attached = [&](std::size_t i) {  // a letter, digit or dash: part of a longer name or number
+        return i < text.size() && (std::isalnum(static_cast<unsigned char>(text[i])) || text[i] == '-');
+    };
+    for (std::size_t i = 0; i < text.size();) {
+        if (!digit(i)) {
+            ++i;
+            continue;
+        }
+        std::size_t end = i;
+        while (digit(end)) ++end;
+        const bool alone = (i == 0 || !attached(i - 1)) && !attached(end);
+        if (alone && end - i >= 3 && end - i <= 6) {
+            const std::size_t from = i > 160 ? i - 160 : 0;
+            const std::string before = low.substr(from, i - from), after = low.substr(end, 40);
+            std::size_t word_at = std::string::npos, word_len = 0;
+            for (const char* w : kWords) {
+                const std::size_t at = before.rfind(w);
+                if (at != std::string::npos && (word_at == std::string::npos || at > word_at)) word_at = at, word_len = std::strlen(w);
+            }
+            bool code_word = word_at != std::string::npos;
+            for (const char* w : kWords) code_word = code_word || after.find(w) != std::string::npos;
+            if (code_word) {
+                // What it opens: the words after "<code word> to" up to "has", "is", "been" or a colon.
+                std::string label;
+                if (word_at != std::string::npos) {
+                    std::size_t to = before.find(" to ", word_at + word_len);
+                    if (to != std::string::npos && to <= word_at + word_len + 1) {
+                        std::size_t stop = before.size();
+                        for (const char* s : {" has ", " is ", " was ", " been ", ":", " changed", " ^", "^"}) {
+                            const std::size_t at = before.find(s, to + 4);
+                            if (at != std::string::npos) stop = std::min(stop, at);
+                        }
+                        label = clean(text.substr(from + to + 4, stop - (to + 4)));
+                    }
+                }
+                if (label.empty()) label = title;
+                for (const char* filler : {"THE ", "FROM: ", "FROM "}) {  // (said shorter: "SAFE", "MGREENE")
+                    if (label.rfind(filler, 0) == 0) label.erase(0, std::strlen(filler));
+                }
+                const std::string code = text.substr(i, end - i);
+                std::erase_if(seen_codes_, [&](const KeypadGump::Hint& h) { return h.code == code; });
+                seen_codes_.insert(seen_codes_.begin(), KeypadGump::Hint{code, label});
+            }
+        }
+        i = end;
+    }
+    constexpr std::size_t kMaxCodes = 12;
+    if (seen_codes_.size() > kMaxCodes) seen_codes_.resize(kMaxCodes);
+}
+
+// @orig none: port-only test hook
+void Game::demo_keypad() {
+    // Messages of the game (EUSECODE.FLX) with the code its script adds, and some with numbers that are not codes.
+    note_codes("Unauthorized access of this terminal constitutes a violation of WEC security code 1701-D.*^");
+    note_codes("^Auxiliary Command Terminal.^*Netlink connected to barracks 1029-B.^*Passcode: 512-555-2788...^");
+    note_codes("NOTICE: To all Techs - ^The passcode to Dr. Hoffman's lab has been changed to^3317");
+    note_codes("Security Station 5:^^The passcode to the Sector Y15 blast door has been changed to: 8806");
+    note_codes("From: MGREENE^______________^4471 is this week's passcode.");
+    note_codes("Due to rebel infiltration, the combination to the safe has been changed to: 262");
+    show_keypad(4471, 0);
+    // A click on the third code of the list (8806): typed into the keypad.
+    if (auto* keypad = dynamic_cast<KeypadGump*>(screen_.get())) {
+        for (int y = 0; y < kScreenHeight; ++y) {
+            if (keypad->hint_at(keypad->x() + 200, y) == 2) {
+                keypad->mouse_down(keypad->x() + 200, y);
+                break;
+            }
+        }
+    }
+}
+
 // @orig 13A0:0005 13A0:0212
 void Game::read_computer(const std::string& text) {
     if (modal() || movie_) return;
+    note_codes(text);
     enter_menu_mode();
     cursor_.hide();  // 13A0:0034
     auto gump = std::make_unique<ComputerGump>(gumps_, fonts_, text, [this](int sfx) {
@@ -1503,6 +1615,7 @@ void Game::show_keypad(std::int16_t code, Pid pid) {
     auto gump = std::make_unique<KeypadGump>(gumps_, code, [this](int sfx) {
         if (audio_) audio_->play_sfx(sfx);
     }, kScreenWidth, kScreenHeight);
+    gump->set_hints(fonts_, seen_codes_);  // (port addition: the codes read on the terminals)
     open_screen(std::move(gump), [this, pid, code](const ModalGump& screen) {
         // 13C8:04EE: the keyboard and the mouse clicks flushed.
         keyboard_.reset();
@@ -1618,6 +1731,12 @@ void Game::mouse_button(int button, bool pressed, int x, int y) {
     const std::uint16_t bit = button == 1 ? 1 : 2;
     mouse_buttons_ = static_cast<std::uint16_t>(pressed ? mouse_buttons_ | bit : mouse_buttons_ & ~bit);
     cursor_.move_to(x, y);
+    // The light debug mode takes the left button: a click picks the light under the pointer.
+    if (light_debug_ && config_.lighting && button == 1 && !modal()) {
+        mouse_buttons_ = static_cast<std::uint16_t>(mouse_buttons_ & ~bit);
+        if (pressed) light_debug_click(pointer_x_, pointer_y_);
+        return;
+    }
     // Keyboard and mouse mode. Left: with the weapon away, a click uses or picks up the item under
     // the pointer (else walks there) and never draws the weapon; with it drawn, it fires as usual.
     // Right: a press draws the weapon, or puts it away on release when it was already drawn and the
@@ -1821,8 +1940,8 @@ void Game::render(Surface8& screen, RenderStats* stats) {
 // @orig 1188:12F1
 void Game::render_view(Surface8& screen, RenderStats* stats) {
     // Hardware scene: the view is left clear (the key colour) for the graphics card's scene to show through.
-    screen.clear(config_.hardware_scene ? kSceneKey : 0);
-    scene_on_ = config_.hardware_scene;
+    scene_on_ = config_.hardware_scene || config_.lighting;  // the lighting needs the scene on the graphics card
+    screen.clear(scene_on_ ? kSceneKey : 0);
     world_->set_view_size(screen.width, screen.height);
     const GameState& s = world_->state;
     const auto list =
@@ -1843,9 +1962,11 @@ void Game::render_view(Surface8& screen, RenderStats* stats) {
             draw_floor_splat(surface, splats[splat_next], reddened);
         }
     };
-    if (config_.hardware_scene) {
+    if (scene_on_) {
         turn_.captured = false;  // no software capture of the player: he is a plain picture in this mode
+        if (config_.lighting) refresh_rooms();
         build_scene(list, splats);
+        build_lights(list);
     } else {
     draw_display_list(
         screen, list, &xform_,
@@ -2501,12 +2622,14 @@ std::vector<Game::FloorSplat> Game::plan_floor_splats(const std::vector<DrawItem
 void Game::build_scene(const std::vector<DrawItem>& list, const std::vector<FloorSplat>& splats) {
     scene_.clear();
     scene_.reserve(list.size() + splats.size() + 1);
+    float last_room = 0;  // the room of the last picture (a splat lies on the floor drawn before it)
     std::size_t next = 0;
     for (std::size_t k = 0; k <= list.size(); ++k) {
         for (; next < splats.size() && splats[next].before <= k; ++next) {
             SceneCmd c;
             c.x = splats[next].sx, c.y = splats[next].sy;
             c.rx = splats[next].rx, c.ry = splats[next].ry, c.alpha = splats[next].alpha;
+            c.room = last_room;  // the floor it lies on
             scene_.push_back(c);
         }
         if (k == list.size()) break;
@@ -2516,6 +2639,7 @@ void Game::build_scene(const std::vector<DrawItem>& list, const std::vector<Floo
         c.x = d.left, c.y = d.top;
         c.mirrored = d.mirrored;
         c.translucent = (d.shape_flags & ShapeInfo::kTranslucent) != 0;
+        if (config_.lighting) c.room = last_room = room_level(d);
         scene_.push_back(c);
         if (d.item->id != 1 || d.item->shape != 1) continue;
         // DLIST.C: right after item 1, in combat (or holstering), its weapon (WPNOVLAY.DAT), unmirrored.
@@ -2532,6 +2656,7 @@ void Game::build_scene(const std::vector<DrawItem>& list, const std::vector<Floo
         w.frame = &shape->frames()[piece->frame];
         w.x = d.sx + piece->dx - w.frame->xoff;
         w.y = d.sy + piece->dy - w.frame->yoff;
+        w.room = c.room;
         scene_.push_back(w);
     }
 }

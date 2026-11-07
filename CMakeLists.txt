@@ -144,7 +144,8 @@ add_library(crusader_platform
 target_link_libraries(crusader_platform PUBLIC crusader_engine ${SDL2_TARGET})
 
 # The game without platform code (testable headless), and its executable.
-add_library(crusader_game src/game/game.cpp src/game/game_map.cpp src/game/game_wheel.cpp src/game/game_jump.cpp src/game/game_colours.cpp)
+add_library(crusader_game src/game/game.cpp src/game/game_map.cpp src/game/game_wheel.cpp src/game/game_jump.cpp src/game/game_colours.cpp
+    src/game/game_lighting.cpp)
 target_link_libraries(crusader_game PUBLIC crusader_engine)
 
 if(WIN32)

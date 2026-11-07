@@ -57,6 +57,9 @@ public:
     // card as textures, under the software frame that holds the interface. The player's chosen colours and smooth turning
     // are not drawn in this mode yet.
     bool hardware_scene = false;
+    // Port addition, written only when set: "lighting", the scene is darkened and lit again by lights (lamps and glowing
+    // pictures, shots and explosions, a soft light around the player). It needs the hardware scene, which it turns on.
+    bool lighting = false;
     // Port addition, written when switched off: "pickupnear", the items just picked up show for a moment above the chest,
     // body or spot they came from instead of in the top left corner.
     bool pickup_near_source = true;

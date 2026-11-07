@@ -184,6 +184,12 @@ struct GameState {
         int amount = 0;
     };
     std::vector<BloodBurst> blood_bursts;
+    // Port addition: the muzzle flash of each shot (world units), queued by fire_weapon for the lighting (game_lighting.cpp).
+    struct MuzzleFlash {
+        std::int32_t x = 0, y = 0, z = 0;
+        int fire_type = 0;
+    };
+    std::vector<MuzzleFlash> muzzle_flashes;
     // The aiming mode of the controlled NPC and the designated target
     // (aim_mode.hpp). The original resets it when the Controller starts
     // (1138:3181), as the port does with every new game state.

@@ -1,6 +1,8 @@
 #include "engine/ui/keypad_gump.hpp"
 
 #include "engine/ui/gump_keys.hpp"
+#include "core/language.hpp"
+#include "engine/ui/ui_draw.hpp"
 
 #include <algorithm>
 
@@ -35,6 +37,7 @@ KeypadGump::KeypadGump(ShapeCache& gumps, std::int16_t code, std::function<void(
     const ShapeFrame* f = gump_frame(gumps, kShape, 0);
     x_ = (screen_width - (f ? f->width : 0)) >> 1;
     y_ = (screen_height - (f ? f->height : 0)) >> 1;
+    width_ = f ? f->width : 0;
 }
 
 // @orig 13C8:08F5 13C8:00C4
@@ -59,6 +62,7 @@ void KeypadGump::draw(Surface8& screen) const {
                               : i;
         if (const ShapeFrame* f = gump_frame(*gumps_, kButtonShape, frame)) f->draw(screen, x_ + r.x0, y_ + r.y0);
     }
+    draw_hints(screen);
 }
 
 void KeypadGump::add_digit(int digit) {
@@ -174,6 +178,13 @@ void KeypadGump::release(int index) {
 // @orig 1310:001D 13C8:006D
 void KeypadGump::mouse_down(int x, int y) {
     if (closed_ || captured_ >= 0) return;
+    // Port addition: a code of the list typed in, in place of the digits.
+    if (const int row = hint_at(x, y); row >= 0) {
+        count_ = 0;
+        for (const char c : hints_[static_cast<std::size_t>(row)].code) add_digit(c - '0');
+        if (play_sfx_) play_sfx_(kSoundButton);
+        return;
+    }
     selection_active_ = false;
     for (int i = 0; i < kButtons; ++i) {
         if (kButtonRects[static_cast<std::size_t>(i)].contains(x - x_, y - y_)) {
@@ -186,6 +197,7 @@ void KeypadGump::mouse_down(int x, int y) {
 
 // @orig 1310:0151
 void KeypadGump::mouse_move(int x, int y) {
+    hint_hover_ = hint_at(x, y);
     if (captured_ < 0) return;
     const bool inside = kButtonRects[static_cast<std::size_t>(captured_)].contains(x - x_, y - y_);
     if (inside) pressed_[static_cast<std::size_t>(captured_)] = true;
@@ -199,6 +211,45 @@ void KeypadGump::mouse_up(int x, int y) {
     captured_ = -1;
     if (kButtonRects[static_cast<std::size_t>(index)].contains(x - x_, y - y_)) button(index);
     release(index);
+}
+
+// The list of the codes read on the terminals: a box beside the keypad, the newest first.
+// @orig none: port-only codes list
+namespace {
+constexpr std::uint8_t kHintFrame = 0x75, kHintFill = 0x7E, kHintTitle = 0x46, kHintText = 0x12, kHintHover = 0x46;  // (yellow, white)
+constexpr int kHintGap = 8, kHintTop = 22, kHintPad = 8;
+}  // namespace
+
+void KeypadGump::set_hints(const FontSet& fonts, std::vector<Hint> hints) {
+    fonts_ = &fonts;
+    hints_ = std::move(hints);
+}
+
+// @orig none: port-only codes list
+int KeypadGump::hint_at(int x, int y) const {
+    if (!fonts_ || hints_.empty()) return -1;
+    const int x0 = x_ + width_ + kHintGap, y0 = y_ + kHintTop;
+    if (x < x0 || x > x0 + kHintWidth || y < y0) return -1;
+    const int row = (y - y0) / kHintRowHeight;
+    return row < static_cast<int>(hints_.size()) ? row : -1;
+}
+
+// @orig none: port-only codes list
+void KeypadGump::draw_hints(Surface8& screen) const {
+    if (!fonts_ || hints_.empty()) return;
+    const int x0 = x_ + width_ + kHintGap;
+    const int bottom = y_ + kHintTop + static_cast<int>(hints_.size()) * kHintRowHeight + 8;
+    draw_rounded_box(screen, x0, y_, x0 + kHintWidth, bottom, kHintFill, kHintFrame);
+    print_tinted(screen, *fonts_, kHintFont, x0 + kHintPad, y_ + 12, tr("CODES VUS", "CODES SEEN"), kHintTitle);
+    const TextWriter writer(*fonts_, kHintFont);
+    for (std::size_t i = 0; i < hints_.size(); ++i) {
+        // Its digits, then as much of its label as fits.
+        std::string line = hints_[i].code + "  " + hints_[i].label;
+        while (line.size() > hints_[i].code.size() && writer.measure(line).width > kHintWidth - 2 * kHintPad) line.pop_back();
+        const int tint = static_cast<int>(i) == hint_hover_ ? kHintHover : kHintText;
+        print_tinted(screen, *fonts_, kHintFont, x0 + kHintPad, y_ + kHintTop + static_cast<int>(i) * kHintRowHeight + 9, line,
+                     tint);
+    }
 }
 
 }  // namespace crusader

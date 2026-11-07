@@ -28,7 +28,9 @@ namespace crusader {
 
 class SdlPresenter {
 public:
-    SdlPresenter(const std::string& title, int width, int height, int scale, bool fullscreen = false);
+    // `headless`: the window is hidden and everything is drawn into a picture of the frame's size (screenshots read it),
+    // without waiting for the display; the mouse is left alone.
+    SdlPresenter(const std::string& title, int width, int height, int scale, bool fullscreen = false, bool headless = false);
     ~SdlPresenter();
     SdlPresenter(const SdlPresenter&) = delete;
     SdlPresenter& operator=(const SdlPresenter&) = delete;
@@ -44,6 +46,10 @@ public:
     // The hardware scene (see engine/world/scene_list.hpp): drawn under the frame, whose pixels of colour kSceneKey are
     // then clear. Null draws the frame alone, as usual.
     void set_scene(const std::vector<SceneCmd>* scene) { scene_ = scene; }
+    // The light map that scene is multiplied by (null: drawn as it is). Without render targets it is not drawn.
+    void set_lighting(const SceneLighting* lighting) { lighting_ = lighting; }
+    // The light debug overlay over the scene (null hides it).
+    void set_light_debug(const LightDebugOverlay* overlay) { light_debug_ = overlay; }
     // The laser sight drawn over the next frames (view pixels), cleared with on = false.
     void set_laser(bool on, bool hit, float x0, float y0, float x1, float y1, float spread_x = 0, float spread_y = 0);
     // The click-to-walk debug path (view pixels, goal last), empty to hide it.
@@ -98,6 +104,9 @@ private:
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
     SDL_Texture* texture_ = nullptr;
+    bool headless_ = false;
+    SDL_Texture* screen_target_ = nullptr;  // headless: what is drawn (null: the window)
+    void make_screen_target();
     std::array<std::uint8_t, 256> gamma_table_;
     int width_;
     int height_;
@@ -116,6 +125,7 @@ private:
     const std::vector<SceneCmd>* scene_ = nullptr;
     struct SceneTexture {
         SDL_Texture* texture = nullptr;
+        SDL_Texture* mask = nullptr;  // the lighting: the same picture in white (its shape, for the light map)
         int w = 0, h = 0;
     };
     std::unordered_map<std::uintptr_t, SceneTexture> scene_textures_;
@@ -123,6 +133,26 @@ private:
     int gamma_version_ = 0, scene_gamma_version_ = -1;
     void draw_scene(const Palette& palette);
     void clear_scene_textures();
+    // The lit scene: drawn into scene_target_, the light map into light_target_ (the rooms' ambient, then soft spots of
+    // light_spot_, the brightest winning)
+    // then the first multiplied by twice the second (by the second alone where that blend is missing).
+    const SceneLighting* lighting_ = nullptr;
+    SDL_Texture* scene_target_ = nullptr;
+    SDL_Texture* light_target_ = nullptr;
+    SDL_Texture* light_spot_ = nullptr;
+    int target_w_ = 0, target_h_ = 0;
+    bool lighting_broken_ = false;  // no render targets: the scene is drawn unlit
+    bool light_doubled_ = true;     // the light map is multiplied in twice (false: once, by SDL_BLENDMODE_MOD)
+    bool light_brightest_ = true;   // lights meeting keep the brightest (false: added up, where the renderer cannot)
+    bool scene_masks_ = false;      // the scene textures have their masks (made while the lighting is on)
+    bool begin_lit_scene();
+    void end_lit_scene();
+    // The rooms' ambient is drawn small (1 / kRoomScale) and blurred, then stretched: no hard step between rooms.
+    static constexpr int kRoomScale = 4;
+    SDL_Texture* room_small_[2] = {nullptr, nullptr};
+    int small_w_ = 0, small_h_ = 0;
+    const LightDebugOverlay* light_debug_ = nullptr;
+    void draw_light_debug();
     const MapOverlay* map_ = nullptr;
     void draw_map();
     void draw_wheel();
