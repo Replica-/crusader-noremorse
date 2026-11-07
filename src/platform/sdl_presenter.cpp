@@ -695,9 +695,11 @@ void SdlPresenter::end_lit_scene() {
         const auto found = scene_textures_.find(key);
         if (found == scene_textures_.end() || !found->second.mask) continue;
         const SceneTexture& t = found->second;
-        const float k = std::max(cmd.room, 0.0f);
-        SDL_SetTextureColorMod(t.mask, byte(std::max(lit.ambient_r * k, lit.dark_r)), byte(std::max(lit.ambient_g * k, lit.dark_g)),
-                               byte(std::max(lit.ambient_b * k, lit.dark_b)));
+        if (cmd.ambient_r >= 0) {  // an area with its own ambient (the light editor)
+            SDL_SetTextureColorMod(t.mask, byte(cmd.ambient_r), byte(cmd.ambient_g), byte(cmd.ambient_b));
+        } else {
+            SDL_SetTextureColorMod(t.mask, byte(lit.dark_r), byte(lit.dark_g), byte(lit.dark_b));
+        }
         const SDL_FRect dst{cmd.x * kSmall, cmd.y * kSmall, t.w * kSmall, t.h * kSmall};
         SDL_RenderCopyF(renderer_, t.mask, nullptr, &dst);
     }
@@ -727,9 +729,30 @@ void SdlPresenter::end_lit_scene() {
     SDL_RenderCopy(renderer_, rooms, nullptr, nullptr);
     for (const SceneLight& l : lit.lights) {
         if (l.radius <= 0 || l.intensity <= 0) continue;
-        SDL_SetTextureColorMod(light_spot_, byte(l.r * l.intensity), byte(l.g * l.intensity), byte(l.b * l.intensity));
+        const Uint8 r = byte(l.r * l.intensity), g = byte(l.g * l.intensity), b = byte(l.b * l.intensity);
+        if (l.beam) {
+            // A cone: a beam from the source down to the edges of its spot, fading as it goes (geometry with the lights'
+            // blend: the brightest wins, else added).
+            SDL_BlendMode blend = SDL_BLENDMODE_ADD;
+            SDL_GetTextureBlendMode(light_spot_, &blend);
+            SDL_SetRenderDrawBlendMode(renderer_, blend);
+            const auto half = [](Uint8 v) { return static_cast<Uint8>(v / 2); };
+            const SDL_Color top{half(r), half(g), half(b), 255}, bottom{static_cast<Uint8>(r / 5), static_cast<Uint8>(g / 5),
+                                                                        static_cast<Uint8>(b / 5), 255};
+            const SDL_Vertex v[3] = {{{l.bx, l.by}, top, {0, 0}},
+                                     {{l.x - l.radius * 0.7f, l.y}, bottom, {0, 0}},
+                                     {{l.x + l.radius * 0.7f, l.y}, bottom, {0, 0}}};
+            SDL_RenderGeometry(renderer_, nullptr, v, 3, nullptr, 0);
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+        }
+        SDL_SetTextureColorMod(light_spot_, r, g, b);
         const SDL_FRect dst{l.x - l.radius, l.y - l.radius * 0.5f, l.radius * 2, l.radius};
         SDL_RenderCopyF(renderer_, light_spot_, nullptr, &dst);
+        if (l.core > 0) {  // a sphere's bright core: the same light again, smaller (a flatter, harder light)
+            const float c = l.radius * std::min(l.core, 0.95f);
+            const SDL_FRect in{l.x - c, l.y - c * 0.5f, c * 2, c};
+            SDL_RenderCopyF(renderer_, light_spot_, nullptr, &in);
+        }
     }
     SDL_SetRenderTarget(renderer_, screen_target_);
     SDL_RenderCopy(renderer_, scene_target_, nullptr, nullptr);
@@ -761,6 +784,19 @@ void SdlPresenter::draw_light_debug() {
                 SDL_RenderDrawLineF(renderer_, m.x - 6, m.y - 6 + d, m.x + 6, m.y + 6 + d);
                 SDL_RenderDrawLineF(renderer_, m.x - 6, m.y + 6 + d, m.x + 6, m.y - 6 + d);
             }
+        } else if (m.style != 0) {  // the light editor's ambient areas (a square) and cones (a triangle)
+            SDL_SetRenderDrawColor(renderer_, c, m.picked ? 255 : (m.style == 1 ? 120 : 200), m.picked ? 255 : (m.style == 1 ? 255 : 60), 255);
+            const float r = m.picked ? 11.0f : 8.0f;
+            for (const float d : {0.0f, 1.0f}) {
+                if (m.style == 1) {
+                    const SDL_FRect sq{m.x - r - d, m.y - r - d, 2 * (r + d), 2 * (r + d)};
+                    SDL_RenderDrawRectF(renderer_, &sq);
+                } else {
+                    SDL_RenderDrawLineF(renderer_, m.x, m.y - r - d, m.x - r - d, m.y + r);
+                    SDL_RenderDrawLineF(renderer_, m.x - r - d, m.y + r + d, m.x + r + d, m.y + r + d);
+                    SDL_RenderDrawLineF(renderer_, m.x + r + d, m.y + r, m.x, m.y - r - d);
+                }
+            }
         } else {
             SDL_SetRenderDrawColor(renderer_, c, c, m.picked ? 255 : 60, 255);
             const float r = m.picked ? 10.0f : 7.0f;
@@ -773,11 +809,65 @@ void SdlPresenter::draw_light_debug() {
     }
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
     for (const LightDebugOverlay::Label& l : o.labels) {
-        const float half = text_width(l.text) * 0.5f;
-        text(l.x - half + 1, l.y + 1, l.text, 0, 0, 0);  // (a shadow, to read over any floor)
-        text(l.x - half, l.y, l.text, 255, 255, 255);
+        const float k = o.text_scale, half = text_width(l.text, k) * 0.5f;
+        text(l.x - half + k, l.y + k, l.text, 0, 0, 0, false, k);  // (a shadow, to read over any floor)
+        text(l.x - half, l.y, l.text, 255, 255, 255, false, k);
     }
-    text(8.0f, 18.0f, o.text, 255, 230, 120);
+    // The light editor's mini map: a dark panel, the level, the view's outline in yellow.
+    if (const LightDebugOverlay::MiniMap& m = o.minimap; m.polys && !m.polys->empty()) {
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 8, 10, 14, 220);
+        const SDL_FRect panel{m.x, m.y, m.w, m.h};
+        SDL_RenderFillRectF(renderer_, &panel);
+        const SDL_Rect clip{static_cast<int>(m.x), static_cast<int>(m.y), static_cast<int>(m.w) + 1, static_cast<int>(m.h) + 1};
+        SDL_RenderSetClipRect(renderer_, &clip);
+        std::vector<SDL_Vertex> mv;
+        std::vector<int> mi;
+        mv.reserve(m.polys->size() * 4);
+        mi.reserve(m.polys->size() * 6);
+        for (const MapPoly& poly : *m.polys) {
+            const int base = static_cast<int>(mv.size());
+            for (int i = 0; i < 4; ++i) {
+                mv.push_back({{m.ox + poly.x[i] * m.scale, m.oy + poly.y[i] * m.scale}, SDL_Color{poly.r, poly.g, poly.b, poly.a}, {0, 0}});
+            }
+            for (const int i : {0, 1, 2, 0, 2, 3}) mi.push_back(base + i);
+        }
+        SDL_RenderGeometry(renderer_, nullptr, mv.data(), static_cast<int>(mv.size()), mi.data(), static_cast<int>(mi.size()));
+        SDL_SetRenderDrawColor(renderer_, 255, 220, 60, 255);
+        for (int i = 0; i < 4; ++i) {
+            const int j = (i + 1) % 4;
+            SDL_RenderDrawLineF(renderer_, m.ox + m.view_x[i] * m.scale, m.oy + m.view_y[i] * m.scale, m.ox + m.view_x[j] * m.scale,
+                                m.oy + m.view_y[j] * m.scale);
+        }
+        SDL_RenderSetClipRect(renderer_, nullptr);
+        SDL_SetRenderDrawColor(renderer_, 120, 130, 150, 255);
+        SDL_RenderDrawRectF(renderer_, &panel);
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    }
+    const float k = o.text_scale;
+    text(8.0f * k + k, 18.0f * k + k, o.text, 0, 0, 0, false, k);  // (a shadow, to read over any floor)
+    text(8.0f * k, 18.0f * k, o.text, 255, 230, 120, false, k);
+    for (std::size_t i = 0; i < o.lines.size(); ++i) {
+        text(8.0f * k + k, (34.0f + 14.0f * static_cast<float>(i)) * k + k, o.lines[i], 0, 0, 0, false, k);
+        text(8.0f * k, (34.0f + 14.0f * static_cast<float>(i)) * k, o.lines[i], 210, 235, 255, false, k);
+    }
+    // The light editor's panels, over all the rest.
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    for (const LightDebugOverlay::Box& b : o.boxes) {
+        const SDL_FRect r{b.x, b.y, b.w, b.h};
+        SDL_SetRenderDrawColor(renderer_, b.fill[0], b.fill[1], b.fill[2], b.fill[3]);
+        SDL_RenderFillRectF(renderer_, &r);
+        if (b.edge[3]) {
+            SDL_SetRenderDrawColor(renderer_, b.edge[0], b.edge[1], b.edge[2], b.edge[3]);
+            SDL_RenderDrawRectF(renderer_, &r);
+        }
+    }
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    for (const LightDebugOverlay::Box& b : o.boxes) {
+        const float baseline = b.y + b.h * 0.5f + 3 * b.text_scale;
+        if (!b.text.empty()) text(b.x + 8 * b.text_scale, baseline, b.text, b.ink[0], b.ink[1], b.ink[2], false, b.text_scale);
+        if (!b.right.empty()) text(b.x + b.w - 8 * b.text_scale, baseline, b.right, b.ink[0], b.ink[1], b.ink[2], true, b.text_scale);
+    }
 }
 
 }  // namespace crusader

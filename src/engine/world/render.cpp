@@ -177,7 +177,7 @@ std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes,
 
 // @orig ?: display list (DLIST.C), not located
 std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes, const View& view, int w, int h,
-                                         RenderStats* stats) {
+                                         RenderStats* stats, bool show_hidden) {
     RenderStats local;
     RenderStats& st = stats ? *stats : local;
     st = {};
@@ -186,7 +186,8 @@ std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes,
 
     std::vector<DrawItem> items;
     world.for_each([&](const Item& item) {
-        if (item.off_map || item.parent != 0 || (item.flags & (kItemInvisible | kItemContained | kItemEthereal))) return;
+        if (item.off_map || item.parent != 0 || (item.flags & kItemContained)) return;
+        if (!show_hidden && (item.flags & (kItemInvisible | kItemEthereal))) return;
         const ShapeInfo* info = world.shape_info(item.shape);
         if (info && info->is(ShapeInfo::kEditor)) return;  // editor-only markers
         const Shape* shape = shapes.get(item.shape);

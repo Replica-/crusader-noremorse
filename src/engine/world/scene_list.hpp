@@ -4,6 +4,7 @@
 // (the frame's pixels of colour kSceneKey are left clear so the scene shows through) with one texture per picture.
 
 #include "core/shape.hpp"
+#include "engine/world/map_overlay.hpp"
 
 #include <cstdint>
 #include <string>
@@ -19,7 +20,7 @@ struct SceneCmd {
     int x = 0, y = 0;                   // a picture: its top-left corner on the view; a splat: its centre
     bool mirrored = false, translucent = false;
     float rx = 0, ry = 0, alpha = 0;    // a splat: its radii and opacity
-    float room = 0;                     // with the lighting: its room's ambient, times SceneLighting::ambient (0: dark)
+    float ambient_r = -1, ambient_g = 0, ambient_b = 0;  // with the lighting: its area's ambient (the light editor), <0 the map's
 };
 
 // Port addition (GameConfig::lighting): a light over the hardware scene, a soft ellipse twice as wide as high (the floor
@@ -29,16 +30,19 @@ struct SceneLight {
     float radius = 0;                   // half its width, view pixels
     float r = 1, g = 1, b = 1;          // its colour, 0..1
     float intensity = 1;                // multiplies the colour (the map saturates at 1)
+    float core = 0;                     // a bright core, this part of the radius (a sphere's size; 0: none)
+    bool beam = false;                  // a cone: a beam from its source (bx, by) on the view down to the spot
+    float bx = 0, by = 0;
 };
 
-// The light map the scene is multiplied by: each picture of the scene gives its pixels its room's ambient (SceneCmd::room
-// times `ambient`, `dark` outside any lit room), then the lights over it. A value of 0.5 leaves the scene's own colours
+// The light map the scene is multiplied by: each picture of the scene gives its pixels its area's ambient (SceneCmd, set
+// with the light editor; `dark`, the map's, elsewhere), then the lights over it. A value of 0.5 leaves the scene's colours
 // as drawn (the art has its light painted in), 1 doubles them.
 struct SceneLighting {
-    // By default the scene is shown at about 80 % of its painted light everywhere (0.4: 0.5 is the art as drawn), so the
-    // lights show without the rest going dark; the lit rooms a little more (SceneCmd::room, the ambient times it).
-    float dark_r = 0.40f, dark_g = 0.40f, dark_b = 0.41f;
-    float ambient_r = 0.40f, ambient_g = 0.40f, ambient_b = 0.41f;
+    // The map's ambient, the same everywhere: by default about 85 % of its painted light (0.425: 0.5 is the art as drawn),
+    // so the lights show without the rest going dark; the light editor sets it per map (MapLights::ambient).
+    float dark_r = 0.425f, dark_g = 0.425f, dark_b = 0.435f;
+    float ambient_r = 0.425f, ambient_g = 0.425f, ambient_b = 0.435f;
     std::vector<SceneLight> lights;
 };
 
@@ -56,6 +60,7 @@ struct LightDebugOverlay {
         float x, y;
         bool seed;  // where a room's search started (else a light)
         bool picked;
+        std::uint8_t style = 0;  // 0 ring or cross (seed), 1 square (an ambient area), 2 triangle (a cone)
     };
     std::vector<Mark> marks;
     struct Label {
@@ -64,6 +69,24 @@ struct LightDebugOverlay {
     };
     std::vector<Label> labels;  // each room's name, at its north-west floor cell
     std::string text;
+    std::vector<std::string> lines;  // more lines under it (the light editor's keys)
+    float text_scale = 1;            // its text's size (the light editor zoomed out: as large as at 1)
+    // The light editor's panels (its toolbar, the menu of a light): boxes with a line of text, drawn over all the rest.
+    struct Box {
+        float x, y, w, h;
+        std::uint8_t fill[4], edge[4], ink[3];
+        std::string text;
+        float text_scale = 1;
+        std::string right;  // more text, at its right end
+    };
+    std::vector<Box> boxes;
+    // The light editor's mini map of the whole level: `polys` (map pixels, MapOverlay's) drawn at map pixel * scale + (ox, oy)
+    // in the panel (x, y, w, h) of the view, with the view's outline (corners, map pixels). No polys: none.
+    struct MiniMap {
+        const std::vector<MapPoly>* polys = nullptr;
+        float x = 0, y = 0, w = 0, h = 0, ox = 0, oy = 0, scale = 1;
+        float view_x[4]{}, view_y[4]{};
+    } minimap;
 };
 
 }  // namespace crusader

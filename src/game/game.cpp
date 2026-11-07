@@ -359,6 +359,7 @@ void Game::pad_button(int button) {
 }
 
 void Game::key(std::uint8_t scancode, bool extended, bool pressed, std::uint16_t flags, std::uint8_t ascii) {
+    if (editor_key(scancode, extended, pressed)) return;  // (the light editor: all keys its own)
     // Port addition: F7 with the lighting on, the light debug mode (game_lighting.cpp).
     if (!extended && scancode == 0x41 && config_.lighting && world_ && !modal()) {
         if (pressed) set_light_debug(!light_debug_);
@@ -724,6 +725,11 @@ void Game::new_game(int difficulty, int map, bool all_items) {
 void Game::update(std::uint32_t elapsed_us) {
     // The enhancements window edits config_ in place.
     if (world_) world_->set_follow_player(config_.follow_player);
+    // The light editor: the world frozen (no process runs), only its camera moves.
+    if (editor_ && world_ && !movie_ && editor_frozen(elapsed_us)) {
+        update_editor(static_cast<float>(elapsed_us) / 1e6f);
+        return;
+    }
     if (world_ && aim_stick_ && !modal() && !movie_ && !world_->state.avatar_in_stasis && world_->state.controlled_npc == 1) {
         // Screen east is the world angle 315 degrees, north 225: 315 - screen.
         aim_at_angle(*kernel_, *world_, anims_, static_cast<int>(std::lround(315.0 - aim_stick_deg_)));
@@ -1731,6 +1737,11 @@ void Game::mouse_button(int button, bool pressed, int x, int y) {
     const std::uint16_t bit = button == 1 ? 1 : 2;
     mouse_buttons_ = static_cast<std::uint16_t>(pressed ? mouse_buttons_ | bit : mouse_buttons_ & ~bit);
     cursor_.move_to(x, y);
+    if (editor_ && !modal()) {  // (the light editor: the buttons its own)
+        mouse_buttons_ = static_cast<std::uint16_t>(mouse_buttons_ & ~bit);
+        editor_mouse(button, pressed);
+        return;
+    }
     // The light debug mode takes the left button: a click picks the light under the pointer.
     if (light_debug_ && config_.lighting && button == 1 && !modal()) {
         mouse_buttons_ = static_cast<std::uint16_t>(mouse_buttons_ & ~bit);
@@ -1944,8 +1955,13 @@ void Game::render_view(Surface8& screen, RenderStats* stats) {
     screen.clear(scene_on_ ? kSceneKey : 0);
     world_->set_view_size(screen.width, screen.height);
     const GameState& s = world_->state;
-    const auto list =
-        build_display_list(*world_, shapes_, View{s.view_left, s.view_top}, screen.width, screen.height, stats);
+    auto list =
+        build_display_list(*world_, shapes_, View{s.view_left, s.view_top}, screen.width, screen.height, stats, editor_);  // (the light editor: all of the map)
+    if (editor_) {
+        // The light editor: all of the map, its black covers (over the parts not reached yet) left out.
+        std::erase_if(list, [this](const DrawItem& d) { return d.frame && is_black_cover(*d.frame); });
+        editor_list_ = list;  // (what the pointer is over, for the editor's keys)
+    }
     // DLIST.C 11A0:05xx: right after item 1, in combat (or holstering,
     // last action 0xB), its weapon (WPNOVLAY.DAT), unmirrored, at the item's
     // screen place plus the offsets of the current action, direction, frame.
@@ -1965,6 +1981,8 @@ void Game::render_view(Surface8& screen, RenderStats* stats) {
     if (scene_on_) {
         turn_.captured = false;  // no software capture of the player: he is a plain picture in this mode
         if (config_.lighting) refresh_rooms();
+        if (config_.lighting) update_area_ambients();
+        if (config_.lighting) update_liquid_light(list);
         build_scene(list, splats);
         build_lights(list);
     } else {
@@ -2622,14 +2640,14 @@ std::vector<Game::FloorSplat> Game::plan_floor_splats(const std::vector<DrawItem
 void Game::build_scene(const std::vector<DrawItem>& list, const std::vector<FloorSplat>& splats) {
     scene_.clear();
     scene_.reserve(list.size() + splats.size() + 1);
-    float last_room = 0;  // the room of the last picture (a splat lies on the floor drawn before it)
+    SceneCmd last_area;  // the area ambient of the last picture (a splat lies on the floor drawn before it)
     std::size_t next = 0;
     for (std::size_t k = 0; k <= list.size(); ++k) {
         for (; next < splats.size() && splats[next].before <= k; ++next) {
             SceneCmd c;
             c.x = splats[next].sx, c.y = splats[next].sy;
             c.rx = splats[next].rx, c.ry = splats[next].ry, c.alpha = splats[next].alpha;
-            c.room = last_room;  // the floor it lies on
+            c.ambient_r = last_area.ambient_r, c.ambient_g = last_area.ambient_g, c.ambient_b = last_area.ambient_b;
             scene_.push_back(c);
         }
         if (k == list.size()) break;
@@ -2639,7 +2657,16 @@ void Game::build_scene(const std::vector<DrawItem>& list, const std::vector<Floo
         c.x = d.left, c.y = d.top;
         c.mirrored = d.mirrored;
         c.translucent = (d.shape_flags & ShapeInfo::kTranslucent) != 0;
-        if (config_.lighting) c.room = last_room = room_level(d);
+        const std::array<float, 3>* area = config_.lighting ? area_ambient(d) : nullptr;
+        if (const auto* liquid = config_.lighting ? liquid_light(d) : nullptr) {  // over water: lit by it (the brighter)
+            if (!area || (*liquid)[0] + (*liquid)[1] + (*liquid)[2] > (*area)[0] + (*area)[1] + (*area)[2]) area = liquid;
+        }
+        if (area) {
+            c.ambient_r = (*area)[0], c.ambient_g = (*area)[1], c.ambient_b = (*area)[2];
+            last_area = c;
+        } else {
+            last_area.ambient_r = -1;
+        }
         scene_.push_back(c);
         if (d.item->id != 1 || d.item->shape != 1) continue;
         // DLIST.C: right after item 1, in combat (or holstering), its weapon (WPNOVLAY.DAT), unmirrored.
@@ -2656,7 +2683,7 @@ void Game::build_scene(const std::vector<DrawItem>& list, const std::vector<Floo
         w.frame = &shape->frames()[piece->frame];
         w.x = d.sx + piece->dx - w.frame->xoff;
         w.y = d.sy + piece->dy - w.frame->yoff;
-        w.room = c.room;
+        w.ambient_r = c.ambient_r, w.ambient_g = c.ambient_g, w.ambient_b = c.ambient_b;
         scene_.push_back(w);
     }
 }

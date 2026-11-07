@@ -16,7 +16,7 @@
 // --shot it quits after --shot-after seconds). --lighting turns the lit scene on for that run; --light-debug shows the
 // rooms the lights light (F7), and --light-click FX FY clicks a light there (fractions of the screen) a second before.
 // --room-debug (with the lighting) shows the room you are in; a click on a floor shows that floor's room, on a light
-// the room it lights.
+// the room it lights. --light-editor opens the light editor (see game_light_editor.cpp) on the map started.
 //
 // Controls of the original (CRUSADER.C 12CF): arrows (shift runs), keypad,
 // Ctrl / Alt moves; see engine/world/avatar_mover.hpp. Escape opens the menu
@@ -127,6 +127,8 @@ int main(int argc, char** argv) {
     bool light_debug = false;  // --light-debug: the light debug mode on (F7)
     bool room_debug = false;  // --room-debug: the light debug mode on the rooms (yours, or the floor clicked)
     bool demo_keypad = false;  // --demo-keypad: terminal messages read, then a keypad with their codes listed
+    bool light_editor = false;  // --light-editor: the light editor (implies --lighting)
+    double demo_editor_fx = -1, demo_editor_fy = -1;  // --demo-light-editor FX FY: the editor test hook (light_editor)
     double light_click_fx = -1, light_click_fy = -1;  // --light-click FX FY: a debug click there (fractions of the screen), for tests
     bool size_given = false;
     double gamma = 1.0;
@@ -175,6 +177,8 @@ int main(int argc, char** argv) {
         else if (std::strcmp(argv[i], "--light-debug") == 0) light_debug = true;
         else if (std::strcmp(argv[i], "--room-debug") == 0) room_debug = lighting = true;
         else if (std::strcmp(argv[i], "--demo-keypad") == 0) demo_keypad = true;
+        else if (std::strcmp(argv[i], "--light-editor") == 0) light_editor = lighting = true;
+        else if (std::strcmp(argv[i], "--demo-light-editor") == 0 && i + 2 < argc) { demo_editor_fx = std::stod(argv[++i]); demo_editor_fy = std::stod(argv[++i]); }
         else if (std::strcmp(argv[i], "--light-click") == 0 && i + 2 < argc) { light_click_fx = std::stod(argv[++i]); light_click_fy = std::stod(argv[++i]); }
         else if (std::strcmp(argv[i], "--size") == 0 && i + 1 < argc) {  // with --png or --headless: the screen's size, e.g. 960x540
             size_given = true;
@@ -231,6 +235,7 @@ int main(int argc, char** argv) {
         if (new_game) game.new_game(0, mission, all_items);
         else if (start_up) game.start_up();
         else game.load_save(save);
+        if (light_editor) game.start_light_editor();
         if (turn_strip) {
             Surface8 strip(1, 1);
             game.debug_turn_strip(strip);
@@ -342,7 +347,11 @@ int main(int argc, char** argv) {
             int scale = std::max(1, std::min(w / Game::kScreenWidth, h / Game::kScreenHeight));
             game.set_view_zoom_limit(scale);
             if (const int zoom = game.config().view_zoom) scale = std::min(scale, zoom);
-            const int vw = std::max(Game::kScreenWidth, w / scale), vh = std::max(Game::kScreenHeight, h / scale);
+            int vw = std::max(Game::kScreenWidth, w / scale), vh = std::max(Game::kScreenHeight, h / scale);
+            if (game.light_editor()) {  // the light editor's zoom: any size of pixel, more of the map when smaller
+                vw = std::max(Game::kScreenWidth, static_cast<int>(static_cast<float>(w) / game.editor_zoom()));
+                vh = std::max(Game::kScreenHeight, static_cast<int>(static_cast<float>(h) / game.editor_zoom()));
+            }
             if (vw != screen.width || vh != screen.height) {
                 screen = Surface8(vw, vh);
                 presenter.resize(vw, vh);
@@ -392,6 +401,10 @@ int main(int argc, char** argv) {
                     game.key(k->scancode, k->extended, k->pressed, k->flags, k->ascii);
                 }
                 // The weapon / item wheel takes the mouse while it is open: move to pick, left click to choose, right click to close.
+                if (game.light_editor() && ev.type == SDL_MOUSEWHEEL) {  // the light editor: the wheel zooms
+                    game.editor_wheel(ev.wheel.y > 0 ? 1 : ev.wheel.y < 0 ? -1 : 0);
+                    continue;
+                }
                 if (game.wheel_overlay().on) {
                     if (auto m = translate_mouse(ev)) {
                         game.set_pointer(m->x, m->y);  // the arrow follows the mouse
@@ -498,6 +511,10 @@ int main(int argc, char** argv) {
             presenter.set_scene(game.scene());
             presenter.set_lighting(game.lighting());
             presenter.set_light_debug(game.light_debug_overlay());
+            if (demo_editor_fx >= 0 && SDL_GetTicks() / 1000.0 >= shot_after - 2.0) {
+                game.demo_light_editor(demo_editor_fx, demo_editor_fy);
+                demo_editor_fx = -1;
+            }
             if (demo_keypad && SDL_GetTicks() / 1000.0 >= shot_after - 2.0) {
                 game.demo_keypad();
                 demo_keypad = false;

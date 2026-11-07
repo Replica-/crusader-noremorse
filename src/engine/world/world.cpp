@@ -1024,6 +1024,7 @@ void World::clear_fast_area() {
 
 // @orig 10B0:13BE
 void World::update_fast_area(std::int32_t x, std::int32_t y) {
+    if (fast_area_frozen_) return;  // (the light editor)
     const FastArea before = fast_area_;
     const FastArea after = FastArea::around(x, y);
     if (after == before) return;

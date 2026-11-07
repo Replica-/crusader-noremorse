@@ -89,8 +89,9 @@ struct View {
 
 // Items of `world` visible on a w x h screen whose top-left corner is `view`,
 // in draw order.
+// `show_hidden` (port addition, the light editor): the items the game hides (invisible, ethereal) are listed too.
 std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes, const View& view, int w, int h,
-                                         RenderStats* stats = nullptr);
+                                         RenderStats* stats = nullptr, bool show_hidden = false);
 // Same, centred on `camera` (world units).
 std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes, const Camera& camera, int w,
                                          int h, RenderStats* stats = nullptr);

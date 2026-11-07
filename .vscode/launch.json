@@ -191,6 +191,45 @@
             "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
             "presentation": { "group": "4 Lighting", "order": 4 }
         },
+        // The light editor: the world frozen and all of it shown. WASD pan, the wheel zooms, Page Up / Down change maps;
+        // left click places or selects a light, right click removes it, T makes the sprite under the pointer light or not.
+        // Saved at once into assets/lights/map_NNN.cfg (commit them). Change "--mission" to start on another map.
+        {
+            "name": "🔨💡 Light editor: Build & Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/crusader.exe",
+            "args": ["tools/release", "--new-game", "--skip-movies", "--keyboard-mouse", "--mission", "1", "--light-editor"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "PATH", "value": "D:/development/msys64/ucrt64/bin;${env:PATH}" }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
+            "setupCommands": [
+                { "description": "Enable pretty-printing for gdb", "text": "-enable-pretty-printing", "ignoreFailures": true }
+            ],
+            "preLaunchTask": "build",
+            "presentation": { "group": "4 Lighting", "order": 5 }
+        },
+        {
+            "name": "💡 Light editor: Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/crusader.exe",
+            "args": ["tools/release", "--new-game", "--skip-movies", "--keyboard-mouse", "--mission", "1", "--light-editor"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "PATH", "value": "D:/development/msys64/ucrt64/bin;${env:PATH}" }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
+            "presentation": { "group": "4 Lighting", "order": 6 }
+        },
         {
             "name": "🎥 Record: Mission 1 (screen + game audio)",
             "type": "node-terminal",

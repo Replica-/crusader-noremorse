@@ -1,21 +1,19 @@
-// The lighting (GameConfig::lighting): the hardware scene is multiplied by a light map, about 80 % of the art everywhere,
-// a little more in the rooms with lamps, plus soft lights. The art has its light painted in, so the lights come from
-// what the pictures show:
+// The lighting (GameConfig::lighting): the hardware scene is multiplied by a light map, the map's ambient everywhere
+// (about 85 % of the art unless the light editor set another, MapLights::ambient), plus soft lights. The art has its light
+// painted in, so the lights come from what the pictures show:
 // - shapes picked by hand (kShapeLights): explosions, shots, lamps; a shape listed for some frames is dark in the others;
 // - glowing pixels: a picture with enough pixels of the palette's light colours gives a light of that colour. Those
 //   are the colours outside the shading ramps: 1..7 (yellows to red, rotated by the palette cycle), 8..14 (the
 //   translucent glows, cycled), and the lone bright entries (lamps, LEDs, screens);
-// - liquids: a flat picture that moves (a pool, a spill, a leak) glows in its own colour and lights its room (kLiquidRoom);
+// - liquids: a flat picture that moves (a pool, a spill, a leak) glows in its own colour;
+// - the lights placed and the sprites switched with the light editor (game_light_editor.cpp);
 // - the muzzle flash of each shot (GameState::muzzle_flashes), fading in a moment;
 // - a soft light around the controlled NPC, so that the dark places stay readable.
-// Lights do not add up: where they meet, the brightest wins.
+// Lights do not add up: where they meet, the brightest wins. They do not raise the ambient of their room.
 //
-// Rooms: each light of the map (lamps and glows, on screen or not) lights the room it faces. From the floor in front of
-// it, the room is every floor cell joined to it with no wall between (crates, machines, railings and doors do not part
-// rooms), found once and kept. A room is as bright as the strongest light in it (kLampRoom
-// for the lamps, kLiquidRoom, kGlowRoom for a screen or sign), and every picture in it (floor, walls, what stands there)
-// gets that ambient; the rest of the map has the base one. The presenter blurs it, so it fades from room to room.
-// The light debug mode (F7) shows the rooms and, for a clicked light, its own room and what it gives.
+// Rooms (the light debug mode, F7, and the room debug mode): from the floor in front of each light of the map, every
+// floor cell joined to it, tile to tile within a stair's height, stopping at walls and doors, found once and
+// kept, named by their north-west cell.
 #include "game/game.hpp"
 
 #include "engine/world/collision.hpp"
@@ -39,7 +37,7 @@ struct ShapeLight {
     std::uint16_t shape;
     float r, g, b, radius, intensity, rise;
     std::uint32_t frames = 0xFFFFFFFFu;  // every frame
-    float room = 0;
+    float room = 0;  // kMapLight: a light of the map (else a shot or an explosion)
     const char* name = nullptr;  // for the light debug mode, when the game has none for it
 };
 
@@ -50,12 +48,12 @@ constexpr std::uint32_t frame_bits(std::initializer_list<int> frames) {
 }
 
 constexpr float kAlertR = 1.0f, kAlertG = 0.16f, kAlertB = 0.1f;  // the red of the alert and alarm lamps
-// A room with a real lamp in it (flood, alert, alarm) is a little brighter than the rest (SceneLighting: about 80 %), one
-// with a glowing pool a little less; a screen or a sign only glows.
-constexpr float kLampRoom = 1.3f;  // about 105 % of the art
-constexpr float kGlowRoom = 1.0f;  // the same as elsewhere (80 %): its own glow shows
-constexpr float kLiquidRoom = 1.15f;  // a glowing pool or spill: between a screen and a lamp
+// A light of the map (a lamp, a liquid, a glowing screen or sign, as against a shot or an explosion): what the light
+// debug mode and the editor show and the room search starts from. Lights only light their spot: the ambient is the map's
+// (SceneLighting, set in the light editor), not raised by the lights in a room.
+constexpr float kMapLight = 1.0f;
 constexpr int kLiquidMinPixels = 400;
+constexpr float kLiquidLight = 0.6f;  // the ambient a liquid gives what stands over it (120 % of the art), in its colour
 
 constexpr std::array kShapeLights = {
     // Explosions and flashes (sprite_process.cpp, the ones drawn over the scene).
@@ -73,13 +71,13 @@ constexpr std::array kShapeLights = {
     ShapeLight{kProjectileShape, 1.0f, 0.85f, 0.55f, 46, 0.7f, 0},
     // Wall lamps (shape 0xBC): in threes, a flood light, a round alert lamp, a caged alert lamp, in two facings
     // (frames 0..5); frames 6..11 are the same shot out, dark. The flood light shines down onto the floor below it.
-    ShapeLight{0xBC, 1.0f, 0.96f, 0.86f, 150, 0.85f, -34, frame_bits({0, 3}), kLampRoom, "FLOOD LIGHT"},
-    ShapeLight{0xBC, kAlertR, kAlertG, kAlertB, 80, 0.85f, 0, frame_bits({1, 2, 4, 5}), kLampRoom, "ALERT LAMP"},
+    ShapeLight{0xBC, 1.0f, 0.96f, 0.86f, 150, 0.85f, -34, frame_bits({0, 3}), kMapLight, "FLOOD LIGHT"},
+    ShapeLight{0xBC, kAlertR, kAlertG, kAlertB, 80, 0.85f, 0, frame_bits({1, 2, 4, 5}), kMapLight, "ALERT LAMP"},
     // The alarm lights (world_intrinsics.hpp, set_alert): frame 1 while the alarm is on, dark otherwise.
-    ShapeLight{0x21, kAlertR, kAlertG, kAlertB, 100, 0.9f, 0, frame_bits({1}), kLampRoom, "ALARM LIGHT (ON)"},
-    ShapeLight{0x49, kAlertR, kAlertG, kAlertB, 100, 0.9f, 0, frame_bits({1}), kLampRoom, "ALARM LIGHT (ON)"},
-    ShapeLight{0x174, kAlertR, kAlertG, kAlertB, 100, 0.9f, 0, frame_bits({1}), kLampRoom, "ALARM LIGHT (ON)"},
-    ShapeLight{0x271, kAlertR, kAlertG, kAlertB, 100, 0.9f, 0, frame_bits({1}), kLampRoom, "ALARM LIGHT (ON)"},
+    ShapeLight{0x21, kAlertR, kAlertG, kAlertB, 100, 0.9f, 0, frame_bits({1}), kMapLight, "ALARM LIGHT (ON)"},
+    ShapeLight{0x49, kAlertR, kAlertG, kAlertB, 100, 0.9f, 0, frame_bits({1}), kMapLight, "ALARM LIGHT (ON)"},
+    ShapeLight{0x174, kAlertR, kAlertG, kAlertB, 100, 0.9f, 0, frame_bits({1}), kMapLight, "ALARM LIGHT (ON)"},
+    ShapeLight{0x271, kAlertR, kAlertG, kAlertB, 100, 0.9f, 0, frame_bits({1}), kMapLight, "ALARM LIGHT (ON)"},
 };
 
 // The light of `shape` in `frame`: its entry, a dark one when the shape is listed for other frames only, null when
@@ -115,9 +113,8 @@ constexpr int kRefreshFrames = 30;         // frames between refreshes of the li
 constexpr std::int32_t kLightRange = 3000;   // usecode units from the controlled NPC (x and y) where lights count
 constexpr std::int32_t kProbe = 8, kProbeHeight = 32;  // the room search's probe: what fits in a doorway, not a crate's gap
 constexpr std::int32_t kStair = 10;        // the most the floor rises or drops between two cells of a room
-constexpr std::int32_t kWallReach = 160;   // how far above a room's floor a tall picture still belongs to it (stacked walls)
 constexpr std::int32_t kWallHeight = 80;   // a wall: solid, thin, at least this tall, nameless (is_wall)
-constexpr std::int32_t kWallLook = 32;     // the height above the floor where walls are looked for
+constexpr std::int32_t kWallLook = 32;     // the height above the floor where walls and doors are looked for
 constexpr std::uint16_t kSolidMask = 1;    // solid shapes (collision.hpp)
 
 std::int32_t floor_div(std::int32_t a, std::int32_t b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }
@@ -161,7 +158,7 @@ const Game::Glow& Game::glow_of(const ShapeFrame& frame) {
     return glows_.emplace(&frame, g).first->second;
 }
 
-// Whether `shape` is a wall, the only thing that parts two rooms: solid, thin (one footpad unit), full height (kWallHeight
+// Whether `shape` is a wall (rooms stop at it, the mini map draws it): solid, thin (one footpad unit), full height (kWallHeight
 // and more) and nameless (doors, machines, railings, crates are named or low), the posts that join wall pieces included.
 // @orig none: port-only lighting
 bool Game::is_wall(std::uint16_t shape) {
@@ -173,33 +170,45 @@ bool Game::is_wall(std::uint16_t shape) {
     return wall_shapes_.emplace(shape, wall).first->second;
 }
 
-// Whether a wall (is_wall) stands at (x, y) across the height z + kWallLook, kept per 8 units (wall_at_uncached).
+// Whether `shape` is a door (the room search stops at it, open or shut): its usecode class is one (RDOOR_N, ...GATE,
+// ...HATCH, ...SHUTTER), as the mission map finds them.
 // @orig none: port-only lighting
-bool Game::wall_at(std::int32_t x, std::int32_t y, std::int32_t z) {
-    const std::int64_t key = (static_cast<std::int64_t>(floor_div(x, 8)) << 36) ^ (static_cast<std::int64_t>(floor_div(y, 8)) << 12) ^ (z >> 4);
-    if (const auto found = wall_cache_.find(key); found != wall_cache_.end()) return found->second;
-    return wall_cache_.emplace(key, wall_at_uncached(x, y, z)).first->second;
+bool Game::is_door(std::uint16_t shape) {
+    const auto found = door_shapes_.find(shape);
+    if (found != door_shapes_.end()) return found->second;
+    const std::string name = usecode_.class_name(shape);
+    bool door = false;
+    for (const char* s : {"DOOR", "GATE", "HATCH", "SHUTTER"}) door = door || name.find(s) != std::string::npos;
+    return door_shapes_.emplace(shape, door).first->second;
 }
 
-// What wall_at keeps (walls the game hides are not there).
+// Whether a wall or a door stands at (x, y) across the height z + kWallLook (the game's hidden ones are not there), kept
+// per 8 units.
 // @orig none: port-only lighting
-bool Game::wall_at_uncached(std::int32_t x, std::int32_t y, std::int32_t z) {
+bool Game::barrier_at(std::int32_t x, std::int32_t y, std::int32_t z) {
     if (x < 0 || y < 0) return false;
+    const std::int64_t key = (static_cast<std::int64_t>(floor_div(x, 8)) << 36) ^ (static_cast<std::int64_t>(floor_div(y, 8)) << 12) ^ (z >> 4);
+    if (const auto found = barrier_cache_.find(key); found != barrier_cache_.end()) return found->second;
     const std::int32_t look = z + kWallLook;
-    for (int gy = y >> World::kCellShift; gy <= (y + 0x100) >> World::kCellShift; ++gy) {
-        for (int gx = x >> World::kCellShift; gx <= (x + 0x100) >> World::kCellShift; ++gx) {
+    bool barrier = false;
+    for (int gy = y >> World::kCellShift; gy <= (y + 0x100) >> World::kCellShift && !barrier; ++gy) {
+        for (int gx = x >> World::kCellShift; gx <= (x + 0x100) >> World::kCellShift && !barrier; ++gx) {
             for (const ObjId id : world_->cell(gx, gy)) {
                 const Item* item = world_->get(id);
-                if (!item || item->sprite_only || (item->flags & (kItemInvisible | kItemEthereal)) || !is_wall(item->shape)) continue;
-                const ShapeInfo* wi = world_->shape_info(item->shape);
-                if (item->z > look || item->z + wi->footpad_z * 8 < look) continue;
+                if (!item || item->sprite_only || (item->flags & (kItemInvisible | kItemEthereal))) continue;
+                if (!is_wall(item->shape) && !is_door(item->shape)) continue;
+                const ShapeInfo* info = world_->shape_info(item->shape);
+                if (!info || item->z > look || item->z + info->footpad_z * 8 < look) continue;
                 const bool mirrored = item->flags & kItemFlipped;
-                const std::int32_t w = (mirrored ? wi->footpad_y : wi->footpad_x) * 16, d = (mirrored ? wi->footpad_x : wi->footpad_y) * 16;
-                if (x <= item->x && x > item->x - w && y <= item->y && y > item->y - d) return true;
+                const std::int32_t w = (mirrored ? info->footpad_y : info->footpad_x) * 16, d = (mirrored ? info->footpad_x : info->footpad_y) * 16;
+                if (x <= item->x && x > item->x - w && y <= item->y && y > item->y - d) {
+                    barrier = true;
+                    break;
+                }
             }
         }
     }
-    return false;
+    return barrier_cache_.emplace(key, barrier).first->second;
 }
 
 // Where a small probe (kProbe across, kProbeHeight high) stands at (x, y): on the top of a solid item under it (a floor
@@ -285,8 +294,8 @@ int Game::find_room(const Item& light) {
 }
 
 // The room of the floor at `seed`: the one that holds it already, else a new one: every floor cell joined to it a step of
-// kRoomCell at a time, with floor within a stair's height and no wall (is_wall) on the way. Only walls part rooms: what
-// stands on the floor (crates, pipes, railings, machines) is in the room.
+// kRoomCell at a time, with floor within a stair's height (an upper storey is not joined to the floor under it) and no
+// wall or door between them (barrier_at). What stands on the floor (crates, machines, railings) does not part rooms.
 // @orig none: port-only lighting
 int Game::room_from(const World::Point& seed) {
     if (const auto known = room_cells_.find(cell_key(seed.x, seed.y)); known != room_cells_.end()) {
@@ -313,11 +322,11 @@ int Game::room_from(const World::Point& seed) {
             const auto z = owner != room_cells_.end() ? std::optional<std::int32_t>{owner->second.z}
                                                       : probe_stand(x, y, here.z, kStair, false);
             if (!z || std::abs(*z - here.z) > kStair) continue;
-            bool walled = false;
-            for (std::int32_t t = 8; t <= kRoomCell && !walled; t += 8) {
-                walled = wall_at(here.x + side[0] * t, here.y + side[1] * t, std::min(here.z, *z));
+            bool blocked = false;  // a wall or a door between the two tiles (looked for every 8 units: a wall is 16 thick)
+            for (std::int32_t t = 8; t <= kRoomCell && !blocked; t += 8) {
+                blocked = barrier_at(here.x + side[0] * t, here.y + side[1] * t, std::min(here.z, *z));
             }
-            if (walled) continue;
+            if (blocked) continue;
             if (owner != room_cells_.end()) {
                 touching.push_back(owner->second.room);  // the same floor as a room found before: one room
                 continue;
@@ -347,7 +356,6 @@ int Game::room_from(const World::Point& seed) {
         room.label_x = cell_x(*first), room.label_y = cell_y(*first);
     }
     rooms_.push_back(std::move(room));
-    room_levels_.push_back(0);
     return index;
 }
 
@@ -403,17 +411,106 @@ const std::string& Game::object_name(std::uint16_t shape) {
     return object_names_.emplace(shape, std::move(name)).first->second;
 }
 
-// The ambient `item` gives the room it is in, as a light: its entry in kShapeLights, a liquid's, a glow's; 0 for none.
+// The ambient areas placed with the light editor: each lights the room of its floor (walls bound it) at its level and in
+// its colour; where two meet in a room, the brighter.
+// @orig none: port-only light editor
+void Game::update_area_ambients() {
+    area_ambients_.clear();
+    const MapLights* placed = current_map_lights();
+    if (!placed) return;
+    for (const PlacedLight& l : placed->lights) {
+        if (l.type != kAreaAmbient) continue;
+        const int room = live_room(room_at(World::Point{l.x, l.y, l.z}, 16));
+        if (room < 0) continue;
+        const std::array<float, 3> rgb{l.intensity * l.r, l.intensity * l.g, l.intensity * l.b};
+        auto [it, added] = area_ambients_.emplace(room, rgb);
+        if (!added && rgb[0] + rgb[1] + rgb[2] > it->second[0] + it->second[1] + it->second[2]) it->second = rgb;
+    }
+}
+
+// The ambient of the area a picture is in, null for the map's: a flat picture (a floor) by the room of its floor at its
+// height; a tall one (a wall, a machine) by the rooms it rises from, the cells under it and around it (walls stand on a
+// room's edge), the brightest.
+// @orig none: port-only light editor
+const std::array<float, 3>* Game::area_ambient(const DrawItem& d) const {
+    if (area_ambients_.empty() || room_cells_.empty()) return nullptr;
+    const Item& item = *d.item;
+    const ShapeInfo* info = world_->shape_info(item.shape);
+    const bool mirrored = item.flags & kItemFlipped;
+    const std::int32_t w = info ? (mirrored ? info->footpad_y : info->footpad_x) * 16 : 0;
+    const std::int32_t h = info ? (mirrored ? info->footpad_x : info->footpad_y) * 16 : 0;
+    const std::int32_t height = info ? info->footpad_z * 8 : 0, top = item.z + height;
+    const std::array<float, 3>* best = nullptr;
+    for (std::int32_t x = item.x - w - kRoomCell; x <= item.x + kRoomCell; x += kRoomCell) {
+        for (std::int32_t y = item.y - h - kRoomCell; y <= item.y + kRoomCell; y += kRoomCell) {
+            const auto cell = room_cells_.find(cell_key(x, y));
+            if (cell == room_cells_.end()) continue;
+            const bool in_room = height <= 8 ? std::abs(top - cell->second.z) <= 16 : item.z >= cell->second.z - 32 && item.z <= cell->second.z + 160;
+            if (!in_room) continue;
+            const auto found = area_ambients_.find(live_room(cell->second.room));
+            if (found == area_ambients_.end()) continue;
+            const auto& v = found->second;
+            if (!best || v[0] + v[1] + v[2] > (*best)[0] + (*best)[1] + (*best)[2]) best = &v;
+        }
+    }
+    return best;
+}
+
+// The liquids on screen (is_liquid: water, pools, spills): the cells of their footprints, with their floor and their
+// colour (their commonest one, at full strength) at kLiquidLight.
+// @orig none: port-only lighting
+void Game::update_liquid_light(const std::vector<DrawItem>& list) {
+    liquid_cells_.clear();
+    const Palette& palette = world_->state.screen_palette;
+    for (const DrawItem& d : list) {
+        if (!d.frame || is_npc_id(d.item->id)) continue;
+        const Glow& g = glow_of(*d.frame);
+        if (!is_liquid(*d.item, g)) continue;
+        const Rgb& c = palette.colors[g.main];
+        const float r = c.r / 255.0f, gr = c.g / 255.0f, b = c.b / 255.0f, bright = std::max({r, gr, b, 0.01f});
+        const std::array<float, 3> rgb{kLiquidLight * r / bright, kLiquidLight * gr / bright, kLiquidLight * b / bright};
+        const Item& item = *d.item;
+        const ShapeInfo* info = world_->shape_info(item.shape);
+        const bool mirrored = item.flags & kItemFlipped;
+        const std::int32_t w = info ? (mirrored ? info->footpad_y : info->footpad_x) * 16 : 0;
+        const std::int32_t h = info ? (mirrored ? info->footpad_x : info->footpad_y) * 16 : 0;
+        for (std::int32_t x = item.x - w + kRoomCell / 2; x <= item.x; x += kRoomCell) {
+            for (std::int32_t y = item.y - h + kRoomCell / 2; y <= item.y; y += kRoomCell) liquid_cells_[cell_key(x, y)] = {item.z, rgb};
+        }
+    }
+}
+
+// The light of a liquid under (or level with) a picture: the liquid cells its footprint covers, at their height or above
+// (a grating or a walkway over the water, the floor at its edge); null when none.
+// @orig none: port-only lighting
+const std::array<float, 3>* Game::liquid_light(const DrawItem& d) const {
+    if (liquid_cells_.empty()) return nullptr;
+    const Item& item = *d.item;
+    const ShapeInfo* info = world_->shape_info(item.shape);
+    const bool mirrored = item.flags & kItemFlipped;
+    const std::int32_t w = info ? (mirrored ? info->footpad_y : info->footpad_x) * 16 : 0;
+    const std::int32_t h = info ? (mirrored ? info->footpad_x : info->footpad_y) * 16 : 0;
+    for (std::int32_t x = item.x - w; x <= item.x + kRoomCell / 2; x += kRoomCell / 2) {
+        for (std::int32_t y = item.y - h; y <= item.y + kRoomCell / 2; y += kRoomCell / 2) {
+            const auto found = liquid_cells_.find(cell_key(x, y));
+            if (found != liquid_cells_.end() && item.z >= found->second.z - 8) return &found->second.rgb;
+        }
+    }
+    return nullptr;
+}
+
+// Whether `item` is a light of the map (kMapLight: its entry in kShapeLights, a liquid, a glow), 0 when not.
 // @orig none: port-only lighting
 float Game::room_light_level(const Item& item) {
+    if (const SpriteLight* sp = sprite_light(item)) return sp->on ? kMapLight : 0;  // (the light editor's word on it)
     if (const ShapeLight* l = shape_light(item.shape, item.frame)) return l->room;
     const Shape* shape = shapes_.get(item.shape);
     if (!shape || item.frame >= shape->frames().size()) return 0;
     const Glow& g = glow_of(shape->frames()[item.frame]);
-    if (is_liquid(item, g)) return kLiquidRoom;
+    if (is_liquid(item, g)) return kMapLight;
     // A glow counts only on something the game names (a screen, a sign, a console): unnamed scenery with a few bright
     // pixels painted in does not light a room.
-    return g.count >= kGlowMinPixels && !object_name(item.shape).empty() ? kGlowRoom : 0;
+    return g.count >= kGlowMinPixels && !object_name(item.shape).empty() ? kMapLight : 0;
 }
 
 // Every few frames: the rooms of the lights of the map (a few new searches at a time), and how bright each room is.
@@ -424,9 +521,8 @@ void Game::refresh_rooms() {
     const auto forget_rooms = [this] {
         room_cells_.clear();
         rooms_.clear();
-        room_levels_.clear();
         light_rooms_.clear();
-        wall_cache_.clear();
+        barrier_cache_.clear();
         player_room_ = -1;
         light_debug_room_ = -1;
         rooms_age_ = kRefreshFrames;
@@ -446,13 +542,14 @@ void Game::refresh_rooms() {
         forget_rooms();
         rooms_age_ = 0;
     }
-    std::fill(room_levels_.begin(), room_levels_.end(), 0.0f);
     int searches = 0;
     // The lights near the controlled NPC: the rest of the map waits until it comes near (and the scripts keep spare items
     // far off the level, which light nothing).
+    // (in the light editor: near the camera, which goes anywhere)
     const Item* npc = world_->get(world_->state.controlled_npc);
-    if (!npc) return;
-    const World::Point centre = world_->location(*npc);
+    if (!npc && !editor_) return;
+    const World::Point centre = editor_ || !npc ? World::Point{world_->state.camera_x, world_->state.camera_y, world_->state.camera_z}
+                                                : world_->location(*npc);
     world_->for_each([&](const Item& item) {
         if (item.parent != 0 || item.sprite_only || item.off_map || is_npc_id(item.id)) return;
         if (item.flags & (kItemInvisible | kItemEthereal)) return;  // a light the game hides lights nothing
@@ -465,39 +562,8 @@ void Game::refresh_rooms() {
             ++searches;
             known = light_rooms_.emplace(item.id, find_room(item)).first;
         }
-        if (live_room(known->second) >= 0) {
-            float& room = room_levels_[static_cast<std::size_t>(live_room(known->second))];
-            room = std::max(room, level);
-        }
     });
     if (searches >= kRoomSearchesPerPass) rooms_age_ = kRefreshFrames;  // more to search: again next frame
-}
-
-// The ambient of the room a picture stands in: the brightest lit room among the cells under it and next to it (walls
-// stand on a room's edge). A flat picture (a floor tile) belongs to the rooms whose floor it is (at its height); a tall
-// one (a wall, a machine, the upper pieces of a high wall) to the rooms it rises from or above.
-// @orig none: port-only lighting
-float Game::room_level(const DrawItem& d) const {
-    if (room_cells_.empty()) return 0;
-    const Item& item = *d.item;
-    const ShapeInfo* info = world_->shape_info(item.shape);
-    const bool mirrored = item.flags & kItemFlipped;
-    const std::int32_t w = info ? (mirrored ? info->footpad_y : info->footpad_x) * 16 : 0;
-    const std::int32_t h = info ? (mirrored ? info->footpad_x : info->footpad_y) * 16 : 0;
-    const std::int32_t height = info ? info->footpad_z * 8 : 0;
-    const std::int32_t top = item.z + height;
-    float level = 0;
-    for (std::int32_t x = item.x - w - kRoomCell; x <= item.x + kRoomCell; x += kRoomCell) {
-        for (std::int32_t y = item.y - h - kRoomCell; y <= item.y + kRoomCell; y += kRoomCell) {
-            const auto found = room_cells_.find(cell_key(x, y));
-            if (found == room_cells_.end()) continue;
-            const RoomCell& cell = found->second;
-            const bool in_room = height <= 8 ? std::abs(top - cell.z) <= 16                       // its floor
-                                             : item.z >= cell.z - 32 && item.z <= cell.z + kWallReach;  // rising from it
-            if (in_room) level = std::max(level, room_levels_[static_cast<std::size_t>(cell.room)]);
-        }
-    }
-    return level;
 }
 
 // The muzzle flashes of the shots fired since the last pass, then their fading.
@@ -521,6 +587,14 @@ void Game::build_lights(const std::vector<DrawItem>& list) {
     lighting_.lights.clear();
     light_spots_.clear();
     if (!config_.lighting) return;
+    // The map's ambient (the light editor's, else the default): the same everywhere, lights only add their spot.
+    {
+        const MapLights* map = current_map_lights();
+        const float a = map && map->ambient >= 0 ? map->ambient : SceneLighting{}.dark_r;
+        lighting_.dark_r = lighting_.ambient_r = a;
+        lighting_.dark_g = lighting_.ambient_g = a;
+        lighting_.dark_b = lighting_.ambient_b = a * 1.025f;  // (a touch cool, as before)
+    }
     const GameState& s = world_->state;
     const Palette& palette = s.screen_palette;
     for (const DrawItem& d : list) {
@@ -529,6 +603,18 @@ void Game::build_lights(const std::vector<DrawItem>& list) {
             light_spots_.push_back({d.item->id, d.left, d.top, d.right, d.bottom});
         }
         const float cx = static_cast<float>(d.left + d.right) * 0.5f, cy = static_cast<float>(d.top + d.bottom) * 0.5f;
+        // The light editor's word on this sprite: kept dark, or made to light in its own colour (its glow's, else its
+        // commonest), over all of it.
+        if (const SpriteLight* sp = sprite_light(*d.item)) {
+            if (sp->on) {
+                const Glow& g = glow_of(*d.frame);
+                const Rgb& c = palette.colors[g.count >= kGlowMinPixels ? g.colour : g.main];
+                const float r = c.r / 255.0f, gr = c.g / 255.0f, b = c.b / 255.0f, bright = std::max({r, gr, b, 0.01f});
+                lighting_.lights.push_back({cx, cy, std::clamp(static_cast<float>(d.right - d.left) * 0.8f, 60.0f, 240.0f), r / bright,
+                                            gr / bright, b / bright, 0.8f});
+            }
+            continue;
+        }
         if (const ShapeLight* l = shape_light(d.item->shape, d.item->frame)) {
             if (l->radius > 0) lighting_.lights.push_back({cx, cy - l->rise, l->radius, l->r, l->g, l->b, l->intensity});
             continue;
@@ -567,7 +653,32 @@ void Game::build_lights(const std::vector<DrawItem>& list) {
         const float y = static_cast<float>((static_cast<std::uint16_t>(ux + uy) >> 2) - static_cast<int>(f.z) - s.view_top);
         lighting_.lights.push_back({x, y, 120, 1.0f, 0.82f, 0.5f, 1.1f * f.left / kFlashSeconds});
     }
+    // The lights placed with the light editor: a sphere at its height above its floor; a cone's spot on the floor (its
+    // tilt away from under the source) with a beam from the source; an ambient area lights no spot (update_area_ambients).
+    if (const MapLights* placed = current_map_lights()) {
+        const auto project = [&](float x, float y, float z, float& sx, float& sy) {
+            sx = (x - y) * 0.5f - static_cast<float>(s.view_left);
+            sy = (x + y) * 0.25f - z - static_cast<float>(s.view_top);
+        };
+        for (const PlacedLight& l : placed->lights) {
+            const float lx = static_cast<float>(l.x), ly = static_cast<float>(l.y), lz = static_cast<float>(l.z);
+            SceneLight out{0, 0, l.radius, l.r, l.g, l.b, l.intensity};
+            if (l.type == kSphereLight) {
+                project(lx, ly, lz + l.height, out.x, out.y);
+                out.core = l.size;
+            } else if (l.type == kConeLight) {
+                const float a = 6.2831853f * static_cast<float>(l.dir) / 16.0f;
+                project(lx + std::cos(a) * l.tilt, ly + std::sin(a) * l.tilt, lz, out.x, out.y);
+                project(lx, ly, lz + l.height, out.bx, out.by);
+                out.beam = true;
+            } else {
+                continue;
+            }
+            lighting_.lights.push_back(out);
+        }
+    }
     build_light_debug();
+    build_editor_overlay();
 }
 
 // The light debug mode's overlay: the floor cells of the rooms near the view (all of them, or the clicked light's), the
@@ -608,10 +719,9 @@ void Game::build_light_debug() {
     const int w = s.screen_right + 1, h = s.screen_bottom + 1;
     for (std::size_t r = 0; r < rooms_.size(); ++r) {
         if (rooms_[r].merged >= 0 || (picked_room != -1 && static_cast<int>(r) != picked_room)) continue;
-        const float level = room_levels_[r];
-        // A colour per room by its name (the same in every run), brighter for a brighter room (dim: no light in it now).
+        // A colour per room by its name (the same in every run).
         const std::uint32_t hash = (static_cast<std::uint32_t>(rooms_[r].label_x) * 73856093u) ^ (static_cast<std::uint32_t>(rooms_[r].label_y) * 19349663u);
-        const float k = level > 0 ? 0.6f + 0.4f * std::min(level / kLampRoom, 1.0f) : 0.35f;
+        constexpr float k = 0.8f;
         const auto channel = [&](int shift) { return static_cast<std::uint8_t>(static_cast<float>(90 + ((hash >> shift) & 0x7F)) * k); };
         float lx = 0, ly = 0;  // the middle of its cells on screen, for its name
         int shown = 0;
@@ -643,7 +753,6 @@ void Game::build_light_debug() {
     char line[256];
     if (light_debug_pick_) {
         const Item* item = world_->get(light_debug_pick_);
-        const float level = item ? room_light_level(*item) : 0;
         const char* kind = !item ? "" : shape_light(item->shape, item->frame) ? "LAMP" : [&] {
             const Shape* shape = shapes_.get(item->shape);
             return shape && item->frame < shape->frames().size() && is_liquid(*item, glow_of(shape->frames()[item->frame])) ? "LIQUID" : "GLOW";
@@ -654,12 +763,12 @@ void Game::build_light_debug() {
         if (name.empty()) name = "(NO NAME)";
         if (picked_room >= 0) {
             const auto room = static_cast<std::size_t>(picked_room);
-            std::snprintf(line, sizeof line, "%s %s (0x%X FRAME %d) GIVES %.1f - %s: %zu CELLS, AMBIENT %.1f (CLICK A FLOOR: ITS ROOM; F7 TWICE: ALL)", kind,
-                          name.c_str(), item ? item->shape : 0, item ? item->frame : 0, static_cast<double>(level), room_name(picked_room).c_str(),
-                          rooms_[room].cells.size(), static_cast<double>(room_levels_[room]));
+            std::snprintf(line, sizeof line, "%s %s (0x%X FRAME %d) - %s: %zu CELLS (CLICK A FLOOR: ITS ROOM; F7 TWICE: ALL)", kind,
+                          name.c_str(), item ? item->shape : 0, item ? item->frame : 0, room_name(picked_room).c_str(),
+                          rooms_[room].cells.size());
         } else {
-            std::snprintf(line, sizeof line, "%s %s (0x%X FRAME %d) GIVES %.1f - %s", kind, name.c_str(), item ? item->shape : 0,
-                          item ? item->frame : 0, static_cast<double>(level), picked_room == -3 ? "NO FLOOR FOUND NEAR IT" : "NOT SEARCHED YET");
+            std::snprintf(line, sizeof line, "%s %s (0x%X FRAME %d) - %s", kind, name.c_str(), item ? item->shape : 0,
+                          item ? item->frame : 0, picked_room == -3 ? "NO FLOOR FOUND NEAR IT" : "NOT SEARCHED YET");
         }
     } else if (picked_room >= 0 || light_debug_room_ == -2) {
         // A room by its floor: the one clicked, or the NPC's own.
@@ -671,8 +780,8 @@ void Game::build_light_debug() {
         }
         if (picked_room >= 0) {
             const auto room = static_cast<std::size_t>(picked_room);
-            std::snprintf(line, sizeof line, "%s %s: %zu CELLS, AMBIENT %.1f%s - CLICK A FLOOR OR A LIGHT", clicked ? "CLICKED" : "YOUR",
-                          room_name(picked_room).c_str(), rooms_[room].cells.size(), static_cast<double>(room_levels_[room]),
+            std::snprintf(line, sizeof line, "%s %s: %zu CELLS%s - CLICK A FLOOR OR A LIGHT", clicked ? "CLICKED" : "YOUR",
+                          room_name(picked_room).c_str(), rooms_[room].cells.size(),
                           picked_room == live_room(player_room_) ? " (YOU ARE IN IT)" : "");
         } else {
             std::snprintf(line, sizeof line, "NO FLOOR THERE (AT YOUR FLOOR'S HEIGHT) - CLICK A FLOOR OR A LIGHT");

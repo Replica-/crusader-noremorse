@@ -175,6 +175,17 @@ public:
     // The same, showing the room the controlled NPC is in until something is clicked;
     // a click on the floor shows that floor's room.
     void set_room_debug() { set_light_debug(true), light_debug_own_room_ = true; }
+    // The light editor (game_light_editor.cpp, --light-editor): the world frozen and all of it shown, WASD pans, the
+    // wheel zooms, Page Up / Down change maps; lights placed, changed and removed with the mouse and keys, sprites
+    // made to light or not, all saved at once into assets/lights/map_NNN.cfg (loaded whenever the lighting is on).
+    void start_light_editor();
+    bool light_editor() const { return editor_; }
+    float editor_zoom() const { return editor_zoom_; }  // pixels of the window per pixel of the view
+    void editor_wheel(int steps);
+    // Test hook (--demo-light-editor): a light placed in the middle of the view, made wider and red, then the sprite at
+    // (fx, fy) of the view toggled (T); with fy above 1.5, the next map instead, zoomed
+    // out twice; above 2.5, only zoomed out twice; above 3.5, the map's ambient four steps up.
+    void demo_light_editor(double fx, double fy);
     void light_debug_click(int screen_x, int screen_y);
     const LightDebugOverlay* light_debug_overlay() const { return light_debug_overlay_.on ? &light_debug_overlay_ : nullptr; }
     // Mission map (M in the keyboard and mouse mode, or --map): the level seen from above in the isometric orientation, the
@@ -538,13 +549,93 @@ private:
     // The walls (game_lighting.cpp), the only things that part two rooms: which shapes are walls, and where they stand.
     std::unordered_map<std::uint16_t, bool> wall_shapes_;
     bool is_wall(std::uint16_t shape);
-    std::unordered_map<std::int64_t, bool> wall_cache_;
-    bool wall_at(std::int32_t x, std::int32_t y, std::int32_t z);
-    bool wall_at_uncached(std::int32_t x, std::int32_t y, std::int32_t z);
+    std::unordered_map<std::uint16_t, bool> door_shapes_;
+    bool is_door(std::uint16_t shape);
+    std::unordered_map<std::int64_t, bool> barrier_cache_;
+    bool barrier_at(std::int32_t x, std::int32_t y, std::int32_t z);
     std::unordered_map<std::uint16_t, std::string> object_names_;
     const std::string& object_name(std::uint16_t shape);
+    // The lights of the maps (game_light_editor.cpp): read from assets/lights/map_NNN.cfg, changed by the light editor.
+    enum LightType : int { kSphereLight, kConeLight, kAreaAmbient };
+    struct PlacedLight {
+        int type = kSphereLight;
+        std::int32_t x = 0, y = 0, z = 0;           // usecode units: the floor under it
+        float r = 1.0f, g = 0.96f, b = 0.86f;
+        float radius = 150, intensity = 0.8f;       // an ambient area: intensity is its level (0.5 the art as drawn)
+        float height = 32;                          // a sphere's or a cone's source above its floor
+        float size = 0;                             // a sphere's bright core (part of its radius)
+        int dir = 0;                                // a cone: the way it leans (16 directions)
+        float tilt = 0;                             // a cone: how far from under its source its spot is (usecode units)
+    };
+    // The ambients of the areas (rooms) with an ambient light of the editor, by room, this frame.
+    std::unordered_map<int, std::array<float, 3>> area_ambients_;
+    void update_area_ambients();
+    const std::array<float, 3>* area_ambient(const DrawItem& d) const;
+    // The light of the liquids on screen (water, pools, spills): their footprints' cells, with their floor and colour, this
+    // frame; what stands over them, at their height or above, is lit by them.
+    struct LiquidCell {
+        std::int32_t z;
+        std::array<float, 3> rgb;
+    };
+    std::unordered_map<std::int64_t, LiquidCell> liquid_cells_;
+    void update_liquid_light(const std::vector<DrawItem>& list);
+    const std::array<float, 3>* liquid_light(const DrawItem& d) const;
+    struct SpriteLight {                            // a sprite made to light (on) or not (off), by its place on the map
+        std::uint16_t shape = 0;
+        std::int32_t x = 0, y = 0, z = 0;
+        bool on = false;
+    };
+    struct MapLights {
+        std::vector<PlacedLight> lights;
+        std::vector<SpriteLight> sprites;
+        float ambient = -1;                         // the map's ambient (SceneLighting: 0.5 the art as drawn), -1 the default
+    };
+    std::map<int, MapLights> map_lights_;
+    bool map_lights_loaded_ = false;
+    void load_map_lights();
+    void save_map_lights(int map) const;
+    MapLights* current_map_lights();
+    const SpriteLight* sprite_light(const Item& item);  // the editor's word on `item`, null for none
+    // The editor.
+    bool editor_ = false;
+    float editor_zoom_ = 1.0f;
+    float editor_warmup_ = 0;                       // seconds the game has run on a map since the editor started
+    std::array<bool, 4> editor_pan_{};              // W, A, S, D held
+    std::int32_t editor_z_ = 0;                     // the height new lights are placed at (above it: their own height)
+    int editor_selected_ = -1;                      // the placed light selected (index on this map)
+    int editor_menu_ = -1;                          // the light whose menu is open (right click), -1 none
+    int editor_drag_ = -1;                          // the type of light dragged from the toolbar, -1 none
+    struct EditorButton {
+        float x, y, w, h;
+        int action;                                 // 100 + a type: the toolbar's; else a menu row (LightOption)
+    };
+    std::vector<EditorButton> editor_buttons_;      // the toolbar and the menu as last drawn
+    void editor_mouse(int button, bool pressed);
+    int editor_button_at(int x, int y) const;
+    void editor_place(int type, int screen_x, int screen_y);
+    void editor_adjust(PlacedLight& l, int option, int step);
+    std::string editor_status_;                     // the last thing done
+    std::vector<DrawItem> editor_list_;             // the pictures of the last frame (what the pointer is over)
+    bool editor_key(std::uint8_t scancode, bool extended, bool pressed);
+    bool editor_frozen(std::uint32_t elapsed_us);  // the game left to run until its map is there (and faded in)
+    void update_editor(float seconds);
+    void editor_goto_map(int step);
+    World::Point editor_point(int screen_x, int screen_y) const;  // the floor at editor_z_ under a point of the view
+    int editor_light_at(int screen_x, int screen_y) const;
+    void build_editor_overlay();
+    // The mini map (map pixels as the mission map's): the floors and walls of the whole level, built again on a new map or
+    // once the editor has expanded its globs; the panel it was last drawn in, for clicks.
+    std::vector<MapPoly> editor_minimap_;
+    int editor_minimap_map_ = -1;
+    bool editor_minimap_dirty_ = true;
+    float mini_min_x_ = 0, mini_min_y_ = 0, mini_max_x_ = 1, mini_max_y_ = 1;
+    LightDebugOverlay::MiniMap editor_mini_panel_;
+    void build_editor_minimap();
+    // A black cover: a picture all black (BLACK16, BLACK8 and their walls), laid over the parts of a map not reached yet
+    // and hidden by the scripts when a door opens there. The editor leaves them out. Kept per picture.
+    std::unordered_map<const ShapeFrame*, bool> black_covers_;
+    bool is_black_cover(const ShapeFrame& frame);
     std::vector<Room> rooms_;
-    std::vector<float> room_levels_;
     std::unordered_map<ObjId, int> light_rooms_;  // a light's room, -1 when it has none
     int rooms_map_ = -1;
     int rooms_age_ = 0;  // frames since the levels were last worked out
@@ -557,7 +648,6 @@ private:
     int live_room(int room) const;  // `room`, or the room it was joined to
     int room_at(const World::Point& at, std::int32_t reach = -1);  // `reach`: how far up or down the floor may be (-1: a stair)
     int room_cell(std::int32_t x, std::int32_t y, std::int32_t* z = nullptr) const;
-    float room_level(const DrawItem& d) const;
     std::string room_name(int room) const;  // "ROOM x.y" by its north-west floor cell
     // What a picture holds of the light colours, worked out once per picture.
     struct Glow {

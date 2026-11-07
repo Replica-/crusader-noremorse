@@ -544,6 +544,9 @@ public:
     const FastArea& fast_area() const { return fast_area_; }
     void set_fast_area(const FastArea& area) { fast_area_ = area; }
     void update_fast_area(std::int32_t x, std::int32_t y);
+    // Port addition (the light editor): the fast area left as it is (nothing enters or leaves it, no glob item is
+    // destroyed), the map's glob eggs then expanded all at once.
+    void freeze_fast_area(bool on) { fast_area_frozen_ = on; }
     // Empties the fast area as if arriving on the map: glob items (0x82) are
     // destroyed, other items lose the fast-area flag. The next set_camera
     // rebuilds it, expanding the globs again and starting the items' events.
@@ -706,6 +709,7 @@ private:
     FastArea fast_area_;
     void shift_camera(int dx, int dy);  // the view moves by (dx, dy) pixels
     bool follow_player_ = false;
+    bool fast_area_frozen_ = false;
     bool follow_active_ = false;  // follow_goal_ is set
     std::int32_t follow_goal_[3] = {0, 0, 0};
     bool expanding_glob_ = false;  // DAT_10FC: no fast area entry while set
