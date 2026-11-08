@@ -54,6 +54,7 @@ add_library(crusader_core
   src/core/sound_flex.cpp
   src/core/amf_module.cpp
   src/core/png_writer.cpp
+  src/core/png_reader.cpp
   src/core/avi_movie.cpp
   src/core/movie_subtitles.cpp)
 target_include_directories(crusader_core PUBLIC src)
@@ -145,7 +146,7 @@ target_link_libraries(crusader_platform PUBLIC crusader_engine ${SDL2_TARGET})
 
 # The game without platform code (testable headless), and its executable.
 add_library(crusader_game src/game/game.cpp src/game/game_map.cpp src/game/game_wheel.cpp src/game/game_jump.cpp src/game/game_colours.cpp
-    src/game/game_lighting.cpp)
+    src/game/game_lighting.cpp src/game/game_light_editor.cpp src/game/game_guards.cpp)
 target_link_libraries(crusader_game PUBLIC crusader_engine)
 
 if(WIN32)
@@ -180,6 +181,12 @@ target_link_libraries(useprobe PRIVATE crusader_game)
 
 add_executable(shapedump src/tools/shapedump.cpp)
 target_link_libraries(shapedump PRIVATE crusader_core)
+
+add_executable(spriteexport src/tools/spriteexport.cpp)
+target_link_libraries(spriteexport PRIVATE crusader_engine)
+
+add_executable(angleexport src/tools/angleexport.cpp)
+target_link_libraries(angleexport PRIVATE crusader_engine)
 
 enable_testing()
 # tests/: no game data needed, run by the GitHub CI.

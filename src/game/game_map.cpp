@@ -7,6 +7,7 @@
 #include "engine/world/render.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <map>
 #include <string>
@@ -157,6 +158,7 @@ void Game::update_map_markers() {
         if (const Item* me = world_->get(1)) project(static_cast<float>(me->x) * 2.0f, static_cast<float>(me->y) * 2.0f, map_.center_x, map_.center_y);
     }
     map_.markers.clear();
+    map_.zones.clear();
     if (!world_) return;
     auto add = [&](float x, float y, int kind) {
         MapMarker m;
@@ -164,6 +166,26 @@ void Game::update_map_markers() {
         m.kind = kind;
         map_.markers.push_back(m);
     };
+    // The guard triggers: a trigger egg (family 4) whose group (its map number) still has spawn markers (shape 0x4D0,
+    // frame 0, the quality's low byte the group) makes guards appear when the player walks into its box (EggHatcher:
+    // half-sizes 32 x the NPC number's high nibble across, 32 x its low nibble down); firing, it destroys them.
+    constexpr std::uint16_t kSpawnMarker = 0x4D0;
+    std::array<bool, 256> armed{};
+    world_->for_each([&](const Item& item) {
+        if (item.shape == kSpawnMarker && item.frame == 0 && item.parent == 0 && !item.off_map) armed[item.quality & 0xFF] = true;
+    });
+    world_->for_each([&](const Item& item) {
+        if (item.parent != 0 || item.off_map || world_->family_of(item.shape) != World::kFamilyUnkEgg) return;
+        if (!armed[item.map_number]) return;
+        const float x = static_cast<float>(item.x) * 2.0f, y = static_cast<float>(item.y) * 2.0f;
+        const float hx = 32.0f * static_cast<float>(item.npc_number >> 4) * 2.0f, hy = 32.0f * static_cast<float>(item.npc_number & 0xF) * 2.0f;
+        MapPoly zone{};
+        const float cx[4] = {x - hx, x + hx, x + hx, x - hx}, cy[4] = {y - hy, y - hy, y + hy, y + hy};
+        for (int i = 0; i < 4; ++i) project(cx[i], cy[i], zone.x[i], zone.y[i]);
+        zone.r = 255, zone.g = 220, zone.b = 40, zone.a = 70;
+        map_.zones.push_back(zone);
+        add(x, y, 6);
+    });
     world_->for_each([&](const Item& item) {
         if (item.off_map || item.parent != 0 || (item.flags & (kItemContained | kItemEthereal))) return;
         const ShapeInfo* info = world_->shape_info(item.shape);

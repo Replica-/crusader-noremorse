@@ -194,7 +194,7 @@ void OptionsScreen::draw(Surface8& screen) const {
 // The rows of the port settings screen, in one column down the middle (the last, `kRowBack`, closes it).
 // @orig none: port-only settings screen
 OptionsScreen::Rect OptionsScreen::port_row_rect(int row) const {
-    constexpr int kX0 = 130, kX1 = 509, kY0 = 80, kRowStep = 22, kHeight = 21;
+    constexpr int kX0 = 130, kX1 = 509, kY0 = 72, kRowStep = 20, kHeight = 19;
     const int y = kY0 + kRowStep * row;
     return {kX0, y, kX1, y + kHeight - 1};
 }
@@ -216,6 +216,8 @@ std::string OptionsScreen::port_row_name(int row) const {
     case kRowPickupNear: return tr("OBJETS PRES DU COFFRE", "PICKUPS NEAR SOURCE");
     case kRowHardware: return tr("SCENE MATERIELLE", "HARDWARE SCENE");
     case kRowLighting: return tr("ECLAIRAGE", "LIGHTING");
+    case kRowUpscaled: return tr("SPRITES AGRANDIS", "UPSCALED SPRITES");
+    case kRowAngles: return tr("ANGLES SUPPLEMENTAIRES", "EXTRA ANGLES");
     case kRowController: return tr("MANETTE", "CONTROLLER");
     default: return tr("COULEURS DU PERSONNAGE", "CHARACTER COLOURS");
     }
@@ -226,7 +228,10 @@ std::string OptionsScreen::port_row_value(int row) const {
     const GameConfig& c = *config_;
     bool on = false;
     switch (row) {
-    case kRowFollow: on = c.follow_player; break;
+    case kRowFollow:
+        if (c.follow_player == 2) return tr("SUIVI DIFFERE", "DELAY FOLLOW");
+        on = c.follow_player != 0;
+        break;
     case kRowDirectionalMove: on = c.directional_move; break;
     case kRowDirectionalAim: on = c.directional_aim; break;
     case kRowNative: on = c.native_resolution; break;
@@ -240,6 +245,11 @@ std::string OptionsScreen::port_row_value(int row) const {
     case kRowPickupNear: on = c.pickup_near_source; break;
     case kRowHardware: on = c.hardware_scene; break;
     case kRowLighting: on = c.lighting; break;
+    case kRowAngles: on = c.extra_angles; break;
+    case kRowUpscaled:
+        if (c.upscaled_sprites == 1) return tr("DEGRAIN + SDXL", "DEGRAIN + SDXL");
+        if (c.upscaled_sprites == 2) return tr("ESRGAN + SDXL", "ESRGAN + SDXL");
+        break;
     default: return "";  // a button
     }
     return on ? tr("MARCHE", "ON") : tr("ARRET", "OFF");
@@ -330,7 +340,7 @@ void OptionsScreen::more_mouse_down(int x, int y) {
 void OptionsScreen::port_row_acted(int row) {
     GameConfig& c = *config_;
     switch (row) {
-    case kRowFollow: c.follow_player = !c.follow_player; break;
+    case kRowFollow: c.follow_player = (c.follow_player + 1) % 3; break;
     case kRowDirectionalMove: c.directional_move = !c.directional_move; break;
     case kRowDirectionalAim: c.directional_aim = !c.directional_aim; break;
     case kRowNative: c.native_resolution = !c.native_resolution; break;
@@ -344,6 +354,8 @@ void OptionsScreen::port_row_acted(int row) {
     case kRowPickupNear: c.pickup_near_source = !c.pickup_near_source; break;
     case kRowHardware: c.hardware_scene = !c.hardware_scene; break;
     case kRowLighting: c.lighting = !c.lighting; break;
+    case kRowUpscaled: c.upscaled_sprites = (c.upscaled_sprites + 1) % GameConfig::kUpscaledModes; break;
+    case kRowAngles: c.extra_angles = !c.extra_angles; break;
     case kRowController: open_controller(); break;
     default: open_colours(); break;
     }

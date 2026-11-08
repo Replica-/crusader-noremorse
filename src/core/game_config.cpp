@@ -51,11 +51,14 @@ GameConfig GameConfig::parse(std::string_view text) {
         else if (key == "bigvideo") c.big_video = value == "true";
         else if (key == "subtitles") c.subtitles = value == "true";
         else if (key == "noweasel") c.no_weasel = value == "true";
-        else if (key == "followplayer") c.follow_player = value == "true";
+        else if (key == "followplayer") c.follow_player = value == "delay" ? 2 : value == "true" ? 1 : 0;
         else if (key == "directionalmove") c.directional_move = value == "true";
         else if (key == "viewzoom") c.view_zoom = std::clamp(number(value), 0, 4);
         else if (key == "hardwarescene") c.hardware_scene = value == "true";
         else if (key == "lighting") c.lighting = value == "true";
+        else if (key == "upscaledsprites") c.upscaled_sprites = value == "sdxl55" ? 2 : value == "degrain" || value == "true" ? 1 : 0;
+        else if (key == "waitingguards") c.waiting_guards = value == "true";
+        else if (key == "extraangles") c.extra_angles = value == "true";
         else if (key == "pickupnear") c.pickup_near_source = value != "false";
         else if (key == "showpath") c.show_path = value != "false";
         else if (key == "nativeresolution") c.native_resolution = value != "false";
@@ -119,7 +122,7 @@ std::string GameConfig::text() const {
     // Written only when set (DS:0178 != 0).
     if (no_weasel) out.set("noweasel", "true");
     else out.erase("noweasel");
-    if (follow_player) out.set("followplayer", "true");
+    if (follow_player) out.set("followplayer", follow_player == 2 ? "delay" : "true");
     else out.erase("followplayer");
     if (directional_move) out.set("directionalmove", "true");
     else out.erase("directionalmove");
@@ -129,6 +132,12 @@ std::string GameConfig::text() const {
     else out.erase("hardwarescene");
     if (lighting) out.set("lighting", "true");
     else out.erase("lighting");
+    if (upscaled_sprites > 0 && upscaled_sprites < kUpscaledModes) out.set("upscaledsprites", kUpscaledFolders[upscaled_sprites]);
+    else out.erase("upscaledsprites");
+    if (waiting_guards) out.set("waitingguards", "true");
+    else out.erase("waitingguards");
+    if (extra_angles) out.set("extraangles", "true");
+    else out.erase("extraangles");
     if (!pickup_near_source) out.set("pickupnear", "false");
     else out.erase("pickupnear");
     if (!show_path) out.set("showpath", "false");

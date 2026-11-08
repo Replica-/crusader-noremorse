@@ -7,3 +7,12 @@ private/
 isos/*.iso
 /tools/release
 recordings/
+
+# F11 / Print Screen screenshots (the game run from the repo)
+screenshots/
+
+# Made from the original game's art and data, so never committed (each is regenerated locally from a copy of the game):
+# the upscaled sprites (tools/upscale), the Silencer's extra facings (tools/angles) and the guard scan (--probe-guards).
+/assets/sprites/
+/assets/angles/
+/assets/guards/

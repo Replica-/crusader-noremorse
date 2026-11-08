@@ -138,6 +138,7 @@ private:
         if (world_.family_of(egg.shape) == 8) {
             spawn_teleport(kernel_, world_, egg.map_number, egg.quality & 0xFF, (egg.quality >> 8) != 0);
         } else if (world_.hooks().start_event) {
+            if (world_.hooks().egg_hatched) world_.hooks().egg_hatched(egg.id);  // (port: the guard scan)
             world_.hooks().start_event(egg.id, 7);
         }
     }

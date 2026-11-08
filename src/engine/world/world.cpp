@@ -6,6 +6,7 @@
 #include "engine/audio/audio.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <set>
 #include <stdexcept>
@@ -897,6 +898,7 @@ void World::track_camera_target(std::int32_t x, std::int32_t y, std::int32_t z) 
         follow_active_ = true;
         return;
     }
+    if (camera_hold_) return;  // (port: the player firing, rolling or crouched: no jump now)
     // Screen position of the target (SHAPHAND.C projection), feet at z.
     const auto ux = static_cast<std::int16_t>(x), uy = static_cast<std::int16_t>(y);
     const int sx = static_cast<std::int16_t>(((ux - uy) >> 1) - state.view_left);
@@ -952,15 +954,46 @@ void World::shift_camera(int dx, int dy) {
 }
 
 // @orig none: port-only camera follow
-void World::update_follow_camera() {
+void World::update_follow_camera(std::uint32_t elapsed_us) {
     if (!follow_player_ || !follow_active_ || state.camera_target == 0 ||
         state.camera_target != state.controlled_npc) return;
+    if (camera_hold_) return;  // (port: the player firing, rolling or crouched: it waits, and so does the delay)
     const auto ux = static_cast<std::int16_t>(follow_goal_[0]), uy = static_cast<std::int16_t>(follow_goal_[1]);
     const int sx = static_cast<std::int16_t>(((ux - uy) >> 1) - state.view_left);
     const int sy = static_cast<std::int16_t>((static_cast<std::uint16_t>(ux + uy) >> 2) - state.view_top -
                                              (follow_goal_[2] & 0xFF));
-    int dx = sx - (state.screen_right + 1) / 2;
-    int dy = sy - ((state.screen_bottom + 1) / 2 + 0x28);
+    const int w = state.screen_right, h = state.screen_bottom;
+    int dx = sx - (w + 1) / 2;
+    int dy = sy - ((h + 1) / 2 + 0x28);
+    if (follow_delayed_) {
+        if (!follow_anchored_) {  // where the NPC was at the last snap
+            std::copy(std::begin(follow_goal_), std::end(follow_goal_), std::begin(follow_anchor_));
+            std::copy(std::begin(follow_goal_), std::end(follow_goal_), std::begin(follow_last_));
+            follow_anchored_ = true;
+        }
+        if (follow_goal_[0] != follow_last_[0] || follow_goal_[1] != follow_last_[1] || follow_goal_[2] != follow_last_[2]) {
+            follow_walked_ = true;
+            std::copy(std::begin(follow_goal_), std::end(follow_goal_), std::begin(follow_last_));
+        }
+        // At once when it nears an edge (the original's margins, track_camera_target) or is far off (a teleport).
+        bool snap = sy < 0x8C || sy > h - 0x46 || sx < 100 || sx > w - 100;
+        follow_wait_us_ += elapsed_us;
+        if (follow_wait_us_ >= kFollowDelayUs) {
+            // Every few seconds, if it walked: a snap when it went far enough from where it was at the last one.
+            const int ax = follow_goal_[0] - follow_anchor_[0], ay = follow_goal_[1] - follow_anchor_[1];
+            const int moved_x = (ax - ay) / 2, moved_y = (ax + ay) / 4 - (follow_goal_[2] - follow_anchor_[2]);
+            const float far = kFollowDrift * static_cast<float>(std::min(w, h) + 1);
+            snap = snap || (follow_walked_ && std::hypot(static_cast<float>(moved_x), static_cast<float>(moved_y)) > far);
+            follow_wait_us_ = 0;
+            follow_walked_ = false;
+        }
+        if (!snap || (dx == 0 && dy == 0)) return;
+        std::copy(std::begin(follow_goal_), std::end(follow_goal_), std::begin(follow_anchor_));
+        follow_wait_us_ = 0;
+        follow_walked_ = false;
+        shift_camera(dx, dy);  // the whole way: a snap, no glide
+        return;
+    }
     if (dx == 0 && dy == 0) return;
     // The NPC moves by steps: the view eases towards it (about a tenth of the
     // gap per frame) instead of jumping with each step; a teleport or a map
@@ -1024,6 +1057,7 @@ void World::clear_fast_area() {
 
 // @orig 10B0:13BE
 void World::update_fast_area(std::int32_t x, std::int32_t y) {
+    if (fast_area_frozen_) return;  // (the light editor)
     const FastArea before = fast_area_;
     const FastArea after = FastArea::around(x, y);
     if (after == before) return;
@@ -1128,6 +1162,7 @@ ObjId World::pop() {
 void World::destroy(ObjId id) {
     Item* item = get(id);
     if (!item) return;
+    if (hooks_.destroying) hooks_.destroying(*item);  // (port: the fires left burning, Game::linger_fire)
     // Item_I_destroy -> ITEMCACH_10b0_1ab3 (not for the player).
     if (id != 1 && is_trackable(item->shape) && !(item->flags & kItemBroken)) untrack(id);
     if (id != 1 && state.target_designation && id == state.aim.target && hooks_.designated_target_forgotten)

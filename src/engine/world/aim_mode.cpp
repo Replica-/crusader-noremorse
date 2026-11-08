@@ -482,23 +482,30 @@ std::optional<LaserBeam> laser_beam(const World& world, const AnimDat& anims) {
         snapped = npc_under_pointer(world, aim.free_x, aim.free_y, id, at);
         if (snapped != 0) target = at;
     }
-    // Not a very long sweep: the beam stops at 1500 units.
-    const std::int32_t dx = target.x - beam.from.x, dy = target.y - beam.from.y;
+    // The beam goes a fifth past the crosshair (not past an NPC it snapped to), and not very far: 1800 units at most.
+    const World::Point aimed = target;
+    std::int32_t dx = target.x - beam.from.x, dy = target.y - beam.from.y;
+    if (snapped == 0) {
+        dx = dx * 6 / 5, dy = dy * 6 / 5;
+        target.x = beam.from.x + dx, target.y = beam.from.y + dy;
+    }
     const std::int32_t longest = std::max(std::abs(dx), std::abs(dy));
-    if (longest > 1500) {
-        target.x = beam.from.x + dx * 1500 / longest;
-        target.y = beam.from.y + dy * 1500 / longest;
+    if (longest > 1800) {
+        target.x = beam.from.x + dx * 1800 / longest;
+        target.y = beam.from.y + dy * 1800 / longest;
     }
     const SweepResult r = sweep(world, kProjectileShape, id, beam.from, target, kSweepNoGround);
-    // The dot is where the crosshair is, unless something is clearly in the way before it (the target itself lies on a
+    // The dot is at the beam's end, unless something is clearly in the way before it (the target itself lies on a
     // surface, which the sweep reports as a hit a unit or two short of it).
     const bool short_of_target = r.blocker != 0 && r.blocker != snapped && std::max(std::abs(r.end.x - target.x), std::abs(r.end.y - target.y)) > 24;
     beam.to = short_of_target ? r.end : target;
-    // "Hit": cut short well before the target (the target itself is on a surface).
-    beam.hit = r.blocker != 0 && r.blocker != snapped && std::max(std::abs(beam.to.x - target.x), std::abs(beam.to.y - target.y)) > 24;
+    // "Hit": cut short well before the crosshair (what is past it does not count; the target itself is on a surface).
+    const auto from_muzzle = [&](const World::Point& p) { return std::max(std::abs(p.x - beam.from.x), std::abs(p.y - beam.from.y)); };
+    beam.hit = r.blocker != 0 && r.blocker != snapped && from_muzzle(beam.to) + 24 < from_muzzle(aimed);
     // The weapon's accuracy at that distance, as fire_weapon will apply it.
     if (const Item* gun = world.get(world.active_weapon(id))) {
-        beam.spread = player_shot_spread(world, dtable::weapon(gun->shape).fire_type(), beam.from, beam.to, &beam.spread_z);
+        // (at the crosshair, where the shot goes: not at the end of the longer beam)
+        beam.spread = player_shot_spread(world, dtable::weapon(gun->shape).fire_type(), beam.from, short_of_target ? beam.to : aimed, &beam.spread_z);
     }
     return beam;
 }

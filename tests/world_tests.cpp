@@ -582,19 +582,60 @@ void test_scripted_camera() {
     w.set_follow_player(true);
     w.set_camera(1000, 1000, 0);
     w.track_camera_target(1100, 1100, 0);
-    w.update_follow_camera();
+    w.update_follow_camera(16667);
     CHECK(w.state.camera_x != 1000 || w.state.camera_y != 1000);
     w.move_camera_to(3000, 4000, 0, 0);
-    for (int f = 0; f < 100; ++f) w.update_follow_camera();
+    for (int f = 0; f < 100; ++f) w.update_follow_camera(16667);
     CHECK(w.state.camera_x == 3000 && w.state.camera_y == 4000);
     // The next player move resumes following, but an unfollowed camera stays put.
     w.track_camera_target(1100, 1100, 0);
     w.state.camera_target = 0;
-    w.update_follow_camera();
+    w.update_follow_camera(16667);
     CHECK(w.state.camera_x == 3000 && w.state.camera_y == 4000);
     w.state.camera_target = 1;
-    w.update_follow_camera();
+    w.update_follow_camera(16667);
     CHECK(w.state.camera_x != 3000 || w.state.camera_y != 4000);
+}
+
+// Delay follow: the view stays while the player walks a little, snaps to him at the next check (every 3 s) once
+// he went far enough from where he was at the last snap (no glide after), and at once when he nears an edge.
+void test_delayed_camera() {
+    World w;
+    w.state.controlled_npc = w.state.camera_target = 1;
+    w.set_follow_player(true);
+    w.set_camera(1000, 1000, 0);
+    w.track_camera_target(1000, 1000, 0);
+    for (int f = 0; f < 300; ++f) w.update_follow_camera(16667);  // centred on him first
+    w.set_follow_delayed(true);
+    const auto camera = [&] { return std::pair{w.state.camera_x, w.state.camera_y}; };
+    const auto run = [&](double seconds) {
+        for (int f = 0; f < static_cast<int>(seconds * 60); ++f) w.update_follow_camera(16667);
+    };
+    auto at = camera();
+    w.track_camera_target(1040, 960, 0);  // 40 pixels right: not far enough
+    run(6);
+    CHECK(camera() == at);
+    w.track_camera_target(1150, 850, 0);  // 150 pixels right: a snap at the next check, not before
+    run(1);
+    CHECK(camera() == at);
+    run(5);
+    CHECK(camera() != at);
+    at = camera();
+    run(3);
+    CHECK(camera() == at);  // the whole way at once: nothing more after
+    at = camera();
+    w.track_camera_target(1400, 600, 0);  // near the right edge: at once
+    run(0.1);
+    CHECK(camera() != at);
+    // Held (the player firing, rolling, crouched): not even at an edge; let go, at once.
+    at = camera();
+    w.set_camera_hold(true);
+    w.track_camera_target(1700, 300, 0);
+    run(4);
+    CHECK(camera() == at);
+    w.set_camera_hold(false);
+    run(0.1);
+    CHECK(camera() != at);
 }
 
 void test_support_and_fall() {
@@ -870,6 +911,7 @@ int main() {
     test_collisions();
     test_walk_alignment();
     test_scripted_camera();
+    test_delayed_camera();
     test_support_and_fall();
     test_gravity_step();
     test_gravity_step();

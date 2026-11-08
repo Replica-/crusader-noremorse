@@ -177,7 +177,7 @@ std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes,
 
 // @orig ?: display list (DLIST.C), not located
 std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes, const View& view, int w, int h,
-                                         RenderStats* stats) {
+                                         RenderStats* stats, bool show_hidden, std::span<const Item> extras) {
     RenderStats local;
     RenderStats& st = stats ? *stats : local;
     st = {};
@@ -185,8 +185,9 @@ std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes,
     const int cam_sx = view.left + w / 2, cam_sy = view.top + h / 2;
 
     std::vector<DrawItem> items;
-    world.for_each([&](const Item& item) {
-        if (item.off_map || item.parent != 0 || (item.flags & (kItemInvisible | kItemContained | kItemEthereal))) return;
+    const auto consider = [&](const Item& item) {
+        if (item.off_map || item.parent != 0 || (item.flags & kItemContained)) return;
+        if (!show_hidden && (item.flags & (kItemInvisible | kItemEthereal))) return;
         const ShapeInfo* info = world.shape_info(item.shape);
         if (info && info->is(ShapeInfo::kEditor)) return;  // editor-only markers
         const Shape* shape = shapes.get(item.shape);
@@ -218,7 +219,9 @@ std::vector<DrawItem> build_display_list(const World& world, ShapeCache& shapes,
         d.bottom = d.top + fh;
         if (d.right <= 0 || d.bottom <= 0 || d.left >= w || d.top >= h) return;
         items.push_back(d);
-    });
+    };
+    world.for_each(consider);
+    for (const Item& item : extras) consider(item);  // (not the world's: drawn with it, in its order)
     st.candidates = items.size();
 
     // Dependency graph between screen-overlapping items, then DFS topological

@@ -34,8 +34,10 @@ public:
     bool subtitles = false;    // "subtitles" (DS:0179): the cutscenes' subtitles
     bool no_weasel = false;    // "noweasel" (DS:0178): no movies in Weasel's shop
     // Port addition, written only when set: "followplayer", the camera keeps
-    // the controlled NPC at the centre of the screen.
-    bool follow_player = false;
+    // the controlled NPC at the centre of the screen (1, "true"), or brings it
+    // back there every few seconds of walking far enough one way, at once near
+    // an edge (2, "delay": World::set_follow_delayed); 0 the original's jumps.
+    int follow_player = 0;
     // Port addition, written only when set: "directionalmove", the controller's
     // left stick walks the NPC in the direction it points (the keypad's screen
     // directions) instead of the original's tank controls.
@@ -58,8 +60,20 @@ public:
     // are not drawn in this mode yet.
     bool hardware_scene = false;
     // Port addition, written only when set: "lighting", the scene is darkened and lit again by lights (lamps and glowing
-    // pictures, shots and explosions, a soft light around the player). It needs the hardware scene, which it turns on.
+    // pictures, shots and explosions). It needs the hardware scene, which it turns on.
     bool lighting = false;
+    // Port addition, written only when set: "upscaledsprites" = degrain | sdxl55, the pictures of assets/sprites/<that>
+    // (SSSS_FFF.png, made larger by tools/upscale, one folder per method) drawn in place of the game's own where there is
+    // one; 0 off. It needs the hardware scene, which it turns on.
+    int upscaled_sprites = 0;
+    static constexpr int kUpscaledModes = 3;
+    static constexpr const char* kUpscaledFolders[kUpscaledModes] = {"", "degrain", "sdxl55"};
+    // Port addition, off by default, written only when set: "waitingguards", the guards a trigger will make shown
+    // standing where they will appear before it fires (game_guards.cpp; a picture only, but experimental).
+    bool waiting_guards = false;
+    // Port addition, written only when set: "extraangles", the player standing with his gun out drawn facing the
+    // pointer's exact way, 64 facings (assets/angles, made by tools/angles from the 16 drawn ones); the hardware scene.
+    bool extra_angles = false;
     // Port addition, written when switched off: "pickupnear", the items just picked up show for a moment above the chest,
     // body or spot they came from instead of in the top left corner.
     bool pickup_near_source = true;

@@ -21,12 +21,14 @@
 #include "engine/world/pickup_list.hpp"
 #include "engine/world/screen_sprites.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bitset>
 
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
@@ -151,6 +153,8 @@ struct GameState {
     // wait, the scripts); the keys of World_on_key that act on the player do
     // nothing.
     bool avatar_in_stasis = false;
+    // Port addition (crusader --god): the player takes no damage, its hit points kept full (Game::update).
+    bool god_mode = false;
     // DS:5FFB (Ultima8Engine::I_setCruStasis / I_clrCruStasis): the keys
     // of WORLD_13e8_14b4 (Escape to the menu, item and save keys) are ignored.
     bool cru_stasis = false;
@@ -336,6 +340,14 @@ struct WorldHooks {
     // A trigger egg (family 4, or 8 at frame 0) entered the fast area: its
     // EggHatcher process starts (SHAPHAND_1098_068b).
     std::function<void(ObjId egg)> egg_hatcher;
+    // Port additions (the guard scan, crusader --probe-guards): an EggHatcher sent its egg event 7 ("hatch"); an NPC
+    // was made from a spawn marker pair (Actor::I_createActorCru: `egg` the marker of its place, before it is gone).
+    std::function<void(ObjId egg)> egg_hatched;
+    std::function<void(const Item& egg, ObjId npc)> actor_created;
+    // Port addition: an item is about to be destroyed (World::destroy).
+    std::function<void(const Item& item)> destroying;
+    // A sprite effect started (create_sprite: a teleport's flash, an explosion) at (x, y, z).
+    std::function<void(std::uint16_t shape, std::int32_t x, std::int32_t y, std::int32_t z)> sprite_created;
     // The player landed after a long fall (GravityProcess end, 1040:04BC).
     std::function<void(ObjId npc)> hard_landing;
     // The engine's message box (GUMPSHAP_1358_0046 then Gump_run_modal):
@@ -544,6 +556,9 @@ public:
     const FastArea& fast_area() const { return fast_area_; }
     void set_fast_area(const FastArea& area) { fast_area_ = area; }
     void update_fast_area(std::int32_t x, std::int32_t y);
+    // Port addition (the light editor): the fast area left as it is (nothing enters or leaves it, no glob item is
+    // destroyed), the map's glob eggs then expanded all at once.
+    void freeze_fast_area(bool on) { fast_area_frozen_ = on; }
     // Empties the fast area as if arriving on the map: glob items (0x82) are
     // destroyed, other items lose the fast-area flag. The next set_camera
     // rebuilds it, expanding the globs again and starting the items' events.
@@ -593,8 +608,24 @@ public:
         follow_player_ = on;
         if (!on) follow_active_ = false;
     }
+    // Port addition ("delay follow"): with the follow on, the view stays put while the NPC walks; every kFollowDelayUs
+    // it snaps to centre it (no glide) if it walked, kFollowDrift of the view or more from where it was at the last
+    // snap - at once when it nears an edge (the original's margins).
+    void set_follow_delayed(bool on) {
+        if (on != follow_delayed_) follow_anchored_ = follow_active_ && on;  // anchored where the NPC is now
+        if (follow_anchored_ && on != follow_delayed_) {
+            std::copy(std::begin(follow_goal_), std::end(follow_goal_), std::begin(follow_anchor_));
+            std::copy(std::begin(follow_goal_), std::end(follow_goal_), std::begin(follow_last_));
+        }
+        follow_delayed_ = on;
+    }
+    // Port addition: while set (the player firing, rolling or crouched: Game::update), the camera moves by itself in no
+    // way (no follow, no snap, none of the original's jumps); it catches up once cleared.
+    void set_camera_hold(bool on) { camera_hold_ = on; }
+    static constexpr std::uint32_t kFollowDelayUs = 3'000'000;
+    static constexpr float kFollowDrift = 0.2f;
     // Once a frame: moves the view a step towards the followed NPC.
-    void update_follow_camera();
+    void update_follow_camera(std::uint32_t elapsed_us);
 
     // Item::I_isPartlyOnScreen: the item's frame overlaps the screen. Uses
     // the item's own x/y/z, like the original.
@@ -706,8 +737,16 @@ private:
     FastArea fast_area_;
     void shift_camera(int dx, int dy);  // the view moves by (dx, dy) pixels
     bool follow_player_ = false;
+    bool fast_area_frozen_ = false;
     bool follow_active_ = false;  // follow_goal_ is set
     std::int32_t follow_goal_[3] = {0, 0, 0};
+    bool follow_delayed_ = false;
+    bool camera_hold_ = false;  // (set_camera_hold)
+    bool follow_anchored_ = false;     // delayed: follow_anchor_ is set
+    std::int32_t follow_anchor_[3] = {0, 0, 0};  // delayed: where the NPC was at the last snap
+    bool follow_walked_ = false;       // delayed: the NPC moved since the last check
+    std::uint32_t follow_wait_us_ = 0; // delayed: time since the last check
+    std::int32_t follow_last_[3] = {0, 0, 0};
     bool expanding_glob_ = false;  // DAT_10FC: no fast area entry while set
     std::array<ObjId, kTrackedSlots> tracked_{};
     std::size_t tracked_count_ = 0;

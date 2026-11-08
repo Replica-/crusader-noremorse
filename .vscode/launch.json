@@ -77,6 +77,81 @@
             "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
             "presentation": { "group": "1 Mission 1", "order": 2 }
         },
+        // Extra angles: the Silencer standing with his gun out faces the pointer's exact way, 64 facings instead of 16
+        // (--extra-angles, the EXTRA ANGLES option; pictures in assets/angles, made by tools/angles/make_angles.sh).
+        {
+            "name": "🔨🎯 Mission 1 (extra angles): Build & Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/crusader.exe",
+            "args": ["tools/release", "--new-game", "--skip-movies", "--keyboard-mouse", "--mission", "1", "--extra-angles"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "PATH", "value": "D:/development/msys64/ucrt64/bin;${env:PATH}" }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
+            "setupCommands": [
+                { "description": "Enable pretty-printing for gdb", "text": "-enable-pretty-printing", "ignoreFailures": true }
+            ],
+            "preLaunchTask": "build",
+            "presentation": { "group": "1 Mission 1", "order": 5 }
+        },
+        {
+            "name": "🎯 Mission 1 (extra angles): Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/crusader.exe",
+            "args": ["tools/release", "--new-game", "--skip-movies", "--keyboard-mouse", "--mission", "1", "--extra-angles"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "PATH", "value": "D:/development/msys64/ucrt64/bin;${env:PATH}" }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
+            "presentation": { "group": "1 Mission 1", "order": 6 }
+        },
+        // God mode: the player takes no damage (--god). Change "--mission" to start on another map.
+        {
+            "name": "🔨🛡️ Mission 1 (god mode): Build & Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/crusader.exe",
+            "args": ["tools/release", "--new-game", "--skip-movies", "--keyboard-mouse", "--mission", "1", "--god"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "PATH", "value": "D:/development/msys64/ucrt64/bin;${env:PATH}" }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
+            "setupCommands": [
+                { "description": "Enable pretty-printing for gdb", "text": "-enable-pretty-printing", "ignoreFailures": true }
+            ],
+            "preLaunchTask": "build",
+            "presentation": { "group": "1 Mission 1", "order": 3 }
+        },
+        {
+            "name": "🛡️ Mission 1 (god mode): Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/crusader.exe",
+            "args": ["tools/release", "--new-game", "--skip-movies", "--keyboard-mouse", "--mission", "1", "--god"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "PATH", "value": "D:/development/msys64/ucrt64/bin;${env:PATH}" }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
+            "presentation": { "group": "1 Mission 1", "order": 4 }
+        },
         // Mission 2 is map 3 of the game's data; --all-items gives every weapon, its ammunition and every inventory item
         // (what the slots do not hold lies at the start).
         {
@@ -190,6 +265,45 @@
             "MIMode": "gdb",
             "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
             "presentation": { "group": "4 Lighting", "order": 4 }
+        },
+        // The light editor: the world frozen and all of it shown. WASD pan, the wheel zooms, Page Up / Down change maps;
+        // left click places or selects a light, right click removes it, T makes the sprite under the pointer light or not.
+        // Saved at once into assets/lights/map_NNN.cfg (commit them). Change "--mission" to start on another map.
+        {
+            "name": "🔨💡 Light editor: Build & Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/crusader.exe",
+            "args": ["tools/release", "--new-game", "--skip-movies", "--keyboard-mouse", "--mission", "1", "--light-editor"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "PATH", "value": "D:/development/msys64/ucrt64/bin;${env:PATH}" }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
+            "setupCommands": [
+                { "description": "Enable pretty-printing for gdb", "text": "-enable-pretty-printing", "ignoreFailures": true }
+            ],
+            "preLaunchTask": "build",
+            "presentation": { "group": "4 Lighting", "order": 5 }
+        },
+        {
+            "name": "💡 Light editor: Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/crusader.exe",
+            "args": ["tools/release", "--new-game", "--skip-movies", "--keyboard-mouse", "--mission", "1", "--light-editor"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [
+                { "name": "PATH", "value": "D:/development/msys64/ucrt64/bin;${env:PATH}" }
+            ],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "D:/development/msys64/ucrt64/bin/gdb.exe",
+            "presentation": { "group": "4 Lighting", "order": 6 }
         },
         {
             "name": "🎥 Record: Mission 1 (screen + game audio)",

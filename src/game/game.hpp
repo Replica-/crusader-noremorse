@@ -52,6 +52,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -149,7 +150,16 @@ public:
     // Click-to-walk, for the debug overlay: the planned path as view pixels (the NPC first,
     // the goal last), empty when no walk is under way; and a line of text about it.
     std::vector<std::pair<float, float>> path_debug_screen() const;
+    // The spot a click sent the character walking to, on the view (shown with a marker until the walk ends); none for a
+    // walk held with W. False when there is none.
+    bool walk_target_screen(float& x, float& y) const;
     std::string path_status() const;
+    // F8: the controlled NPC's position and the floor point under the pointer (world units), empty when hidden.
+    std::string coords_status() const;
+    void show_coords(bool on) { show_coords_ = on; }  // (--coords)
+    // F11 (or Print Screen): a screenshot asked for since the last call (the main loop saves it into screenshots/).
+    void request_screenshot() { screenshot_requested_ = true; }
+    bool take_screenshot_request() { return std::exchange(screenshot_requested_, false); }
     // Developer trace (--path-test): draws the weapon if asked, then holds W towards a point (dx, dy) away and
     // prints where the character goes for `frames` frames.
     void debug_path_trace(int dx, int dy, bool draw_weapon, int frames);
@@ -167,6 +177,8 @@ public:
     std::vector<BloodDotScreen> blood_screen() const;
     // The scene for the graphics card, or null when the frame holds the whole picture.
     const std::vector<SceneCmd>* scene() const { return scene_on_ ? &scene_ : nullptr; }
+    // Port addition: the muzzle flashes over that scene (smooth glows; the hardware scene only), in view pixels.
+    const std::vector<SceneFlash>* scene_flashes() const { return scene_on_ ? &scene_flashes_ : nullptr; }
     // The light map over that scene (game_lighting.cpp), or null when the scene is not lit.
     const SceneLighting* lighting() const { return scene_on_ && config_.lighting ? &lighting_ : nullptr; }
     // The light debug mode (F7 with the lighting on, or --light-debug): the rooms the lights light; a left click on a
@@ -175,6 +187,23 @@ public:
     // The same, showing the room the controlled NPC is in until something is clicked;
     // a click on the floor shows that floor's room.
     void set_room_debug() { set_light_debug(true), light_debug_own_room_ = true; }
+    // The light editor (game_light_editor.cpp, --light-editor): the world frozen and all of it shown, WASD pans, the
+    // wheel zooms, Page Up / Down change maps; lights placed, changed and removed with the mouse and keys, sprites
+    // made to light or not, all saved at once into assets/lights/map_NNN.cfg (loaded whenever the lighting is on).
+    void start_light_editor();
+    bool light_editor() const { return editor_; }
+    float editor_zoom() const { return editor_zoom_; }  // pixels of the window per pixel of the view
+    void editor_wheel(int steps);
+    // Test hook (--demo-light-editor): a light placed in the middle of the view, made wider and red, then the sprite at
+    // (fx, fy) of the view toggled (T); with fy above 1.5, the next map instead, zoomed
+    // out twice; above 2.5, only zoomed out twice; above 3.5, the map's ambient four steps up.
+    void demo_light_editor(double fx, double fy);
+    // --list-sprites FILE (with the light editor): each picture of the map, NPCs aside, "shape frame width height name".
+    bool write_map_sprites(const std::string& path);
+    // --probe-guards: the scan of the guards the map's triggers make (game_guards.cpp), written to assets/guards; done
+    // when written (the program then ends).
+    void start_guard_probe();
+    bool guard_probe_done() const { return guard_probe_done_; }
     void light_debug_click(int screen_x, int screen_y);
     const LightDebugOverlay* light_debug_overlay() const { return light_debug_overlay_.on ? &light_debug_overlay_ : nullptr; }
     // Mission map (M in the keyboard and mouse mode, or --map): the level seen from above in the isometric orientation, the
@@ -347,6 +376,10 @@ public:
     // Port addition (--keyboard-mouse): forces the keyboard and mouse mode on for this run.
     void force_keyboard_mouse() { config_.keyboard_mouse = true; }
     void force_lighting() { config_.lighting = true; }
+    void force_upscaled_sprites(int mode) { config_.upscaled_sprites = mode; }
+    // --god: the player takes no damage (GameState::god_mode), whatever the map or saved game.
+    void force_god_mode() { god_mode_ = true; }
+    void force_extra_angles() { config_.extra_angles = true; }  // (--extra-angles)
     // Replaces it, the sound settings applied (tests).
     void set_config(GameConfig config);
     // Port addition: the biggest pixel size the window allows (the enhancements window stops there).
@@ -440,6 +473,16 @@ private:
     bool path_run_ = false;       // a double click: run there whatever Shift says
     int path_best_ = 1 << 30;              // the closest to the goal (Chebyshev, map units) the character has been
     World::Point path_goal_seen_{};        // the goal as of the last step (a moving goal resets path_best_)
+    // The places of the last steps of a walk and how close to the goal it had been by then (a loop stops it).
+    struct PathTrail {
+        World::Point at;
+        int best;
+    };
+    std::vector<PathTrail> path_trail_;
+    int path_route_last_ = 1 << 30;        // the route left when the last step was sent (a step back without a gain is refused)
+    static constexpr int kLoopReach = 32;  // map units: back at a place this near is back there (half a step: a step
+                                           // back lands a little off where it started)
+    static constexpr int kLoopGain = 8;    // ... unless it got this much closer to the goal since
     unsigned path_bad_dirs_ = 0;           // directions that went nowhere from the current spot (bit per direction)
     int path_step_dir_ = -1;               // the direction of the last step sent
     std::uint32_t last_click_tick_ = 0;
@@ -463,6 +506,9 @@ private:
     int turn_angle_ = 0, turn_step_ = 1;
     PlayerSprite player_sprite_;
     void compute_turn_angle();
+    // The extra angles (GameConfig::extra_angles): the player's picture between two drawn facings.
+    bool extra_angle(const DrawItem& d, SceneCmd& c);
+    std::map<std::string, bool> angle_files_;  // assets/angles/<name> there or not, looked up once
     void turn_before(const Surface8& screen, const DrawItem& d);
     void turn_capture(Surface8& screen, const DrawItem& d, const ShapeFrame* weapon, int weapon_x, int weapon_y);
     void finish_turn_sprite(const Surface8& screen);
@@ -503,6 +549,26 @@ private:
     std::vector<FloorSplat> plan_floor_splats(const std::vector<DrawItem>& list, int width, int height) const;
     // The hardware scene (GameConfig::hardware_scene): filled by render_view for the presenter.
     std::vector<SceneCmd> scene_;
+    std::vector<SceneFlash> scene_flashes_;
+    // The fires and explosions drawn as glowing particles in the hardware scene (SceneCmd::fx).
+    static bool is_fire_effect(std::uint16_t shape);
+    void build_scene_flashes();
+    // The flames an explosion leaves, burning on a while longer (game_lighting.cpp, linger_fire).
+    static constexpr std::uint16_t kLeftFire = 0x44A;
+    static constexpr std::uint32_t kFireLingerUs = 6'000'000, kFireFrameUs = 90'000;
+    struct PendingFire {
+        std::int32_t x, y, z;
+        std::uint16_t frame;
+    };
+    struct LingeringFire {
+        ObjId id;
+        std::uint32_t left_us, frame_us;
+    };
+    std::vector<PendingFire> pending_fires_;
+    std::vector<LingeringFire> lingering_fires_;
+    int fires_map_ = -1;
+    void linger_fire(const Item& item);
+    void update_lingering_fires(std::uint32_t elapsed_us);
     bool scene_on_ = false;
     void build_scene(const std::vector<DrawItem>& list, const std::vector<FloorSplat>& splats);
     // The lighting (GameConfig::lighting, game_lighting.cpp): the lights of the scene, gathered by render_view each frame.
@@ -538,13 +604,133 @@ private:
     // The walls (game_lighting.cpp), the only things that part two rooms: which shapes are walls, and where they stand.
     std::unordered_map<std::uint16_t, bool> wall_shapes_;
     bool is_wall(std::uint16_t shape);
-    std::unordered_map<std::int64_t, bool> wall_cache_;
-    bool wall_at(std::int32_t x, std::int32_t y, std::int32_t z);
-    bool wall_at_uncached(std::int32_t x, std::int32_t y, std::int32_t z);
+    std::unordered_map<std::uint16_t, bool> door_shapes_;
+    bool is_door(std::uint16_t shape);
+    std::unordered_map<std::int64_t, bool> barrier_cache_;
+    bool barrier_at(std::int32_t x, std::int32_t y, std::int32_t z);
     std::unordered_map<std::uint16_t, std::string> object_names_;
     const std::string& object_name(std::uint16_t shape);
+    // The guards waiting where a trigger or a monster egg will make them (game_guards.cpp), and the scan that finds the
+    // triggers' (--probe-guards).
+    struct GuardSpawn {
+        std::int32_t x = 0, y = 0, z = 0;
+        std::uint16_t shape = 0;
+        auto operator<=>(const GuardSpawn&) const = default;
+    };
+    static constexpr std::uint8_t kMonsterEggFamily = 7;
+    static constexpr std::int32_t kPadReach = 96;  // usecode units: a guard made this near a teleporter pad beams in
+    bool god_mode_ = false;
+    bool show_coords_ = false;  // F8: the coordinates readout (coords_status)
+    bool screenshot_requested_ = false;  // F11
+    // The NPC the player moves: the Silencer (1), or a robot taken over (the keyboard and mouse mode drives either).
+    ObjId pawn() const { return world_ ? world_->state.controlled_npc : 1; }
+    std::vector<Item> waiting_guards_;
+    std::map<int, std::vector<GuardSpawn>> guard_spawns_;
+    std::span<const Item> update_waiting_guards();
+    const std::vector<GuardSpawn>& guard_spawns(int map);
+    std::vector<std::pair<std::int32_t, std::int32_t>> teleporter_pads();
+    bool guard_probe_ = false, guard_probe_done_ = false, guard_probe_listed_ = false;
+    std::uint32_t guard_probe_wait_us_ = 0, guard_probe_hatch_tick_ = 0;
+    std::vector<ObjId> guard_probe_eggs_;
+    std::size_t guard_probe_next_ = 0;
+    std::vector<GuardSpawn> guard_probe_found_;
+    struct PendingGuard {
+        GuardSpawn spawn;
+        std::uint32_t tick = 0;
+    };
+    struct ProbeSprite {
+        std::uint32_t tick = 0;
+        std::uint16_t shape = 0;
+        std::int32_t x = 0, y = 0;
+    };
+    std::vector<PendingGuard> guard_probe_pending_;
+    std::vector<ProbeSprite> guard_probe_sprites_;
+    void settle_guard_probe(bool all);
+    void guard_probe_sprite(std::uint16_t shape, std::int32_t x, std::int32_t y, std::int32_t z);
+    void update_guard_probe(std::uint32_t elapsed_us);
+    void guard_probe_hatched(ObjId egg);
+    void guard_probe_created(const Item& egg, ObjId npc);
+    // The lights of the maps (game_light_editor.cpp): read from assets/lights/map_NNN.cfg, changed by the light editor.
+    enum LightType : int { kSphereLight, kConeLight, kAreaAmbient };
+    struct PlacedLight {
+        int type = kSphereLight;
+        std::int32_t x = 0, y = 0, z = 0;           // usecode units: the floor under it
+        float r = 1.0f, g = 0.96f, b = 0.86f;
+        float radius = 150, intensity = 0.8f;       // an ambient area: intensity is its level (0.5 the art as drawn)
+        float height = 32;                          // a sphere's or a cone's source above its floor
+        float size = 0;                             // a sphere's bright core (part of its radius)
+        int dir = 0;                                // a cone: the way it leans (16 directions)
+        float tilt = 0;                             // a cone: how far from under its source its spot is (usecode units)
+    };
+    // The ambients of the areas (rooms) with an ambient light of the editor, by room, this frame.
+    std::unordered_map<int, std::array<float, 3>> area_ambients_;
+    void update_area_ambients();
+    const std::array<float, 3>* area_ambient(const DrawItem& d) const;
+    // The light of the liquids on screen (water, pools, spills): their footprints' cells, with their floor and colour, this
+    // frame; what stands over them, at their height or above, is lit by them.
+    struct LiquidCell {
+        std::int32_t z;
+        std::array<float, 3> rgb;
+    };
+    std::unordered_map<std::int64_t, LiquidCell> liquid_cells_;
+    void update_liquid_light(const std::vector<DrawItem>& list);
+    const std::array<float, 3>* liquid_light(const DrawItem& d) const;
+    struct SpriteLight {                            // a sprite made to light (on) or not (off), by its place on the map
+        std::uint16_t shape = 0;
+        std::int32_t x = 0, y = 0, z = 0;
+        bool on = false;
+    };
+    struct MapLights {
+        std::vector<PlacedLight> lights;
+        std::vector<SpriteLight> sprites;
+        float ambient = -1;                         // the map's ambient (SceneLighting: 0.5 the art as drawn), -1 the default
+    };
+    std::map<int, MapLights> map_lights_;
+    bool map_lights_loaded_ = false;
+    void load_map_lights();
+    void save_map_lights(int map) const;
+    MapLights* current_map_lights();
+    const SpriteLight* sprite_light(const Item& item);  // the editor's word on `item`, null for none
+    // The editor.
+    bool editor_ = false;
+    float editor_zoom_ = 1.0f;
+    float editor_warmup_ = 0;                       // seconds the game has run on a map since the editor started
+    std::array<bool, 4> editor_pan_{};              // W, A, S, D held
+    std::int32_t editor_z_ = 0;                     // the height new lights are placed at (above it: their own height)
+    int editor_selected_ = -1;                      // the placed light selected (index on this map)
+    int editor_menu_ = -1;                          // the light whose menu is open (right click), -1 none
+    int editor_drag_ = -1;                          // the type of light dragged from the toolbar, -1 none
+    struct EditorButton {
+        float x, y, w, h;
+        int action;                                 // 100 + a type: the toolbar's; else a menu row (LightOption)
+    };
+    std::vector<EditorButton> editor_buttons_;      // the toolbar and the menu as last drawn
+    void editor_mouse(int button, bool pressed);
+    int editor_button_at(int x, int y) const;
+    void editor_place(int type, int screen_x, int screen_y);
+    void editor_adjust(PlacedLight& l, int option, int step);
+    std::string editor_status_;                     // the last thing done
+    std::vector<DrawItem> editor_list_;             // the pictures of the last frame (what the pointer is over)
+    bool editor_key(std::uint8_t scancode, bool extended, bool pressed);
+    bool editor_frozen(std::uint32_t elapsed_us);  // the game left to run until its map is there (and faded in)
+    void update_editor(float seconds);
+    void editor_goto_map(int step);
+    World::Point editor_point(int screen_x, int screen_y) const;  // the floor at editor_z_ under a point of the view
+    int editor_light_at(int screen_x, int screen_y) const;
+    void build_editor_overlay();
+    // The mini map (map pixels as the mission map's): the floors and walls of the whole level, built again on a new map or
+    // once the editor has expanded its globs; the panel it was last drawn in, for clicks.
+    std::vector<MapPoly> editor_minimap_;
+    int editor_minimap_map_ = -1;
+    bool editor_minimap_dirty_ = true;
+    float mini_min_x_ = 0, mini_min_y_ = 0, mini_max_x_ = 1, mini_max_y_ = 1;
+    LightDebugOverlay::MiniMap editor_mini_panel_;
+    void build_editor_minimap();
+    // A black cover: a picture all black (BLACK16, BLACK8 and their walls), laid over the parts of a map not reached yet
+    // and hidden by the scripts when a door opens there. The editor leaves them out. Kept per picture.
+    std::unordered_map<const ShapeFrame*, bool> black_covers_;
+    bool is_black_cover(const ShapeFrame& frame);
     std::vector<Room> rooms_;
-    std::vector<float> room_levels_;
     std::unordered_map<ObjId, int> light_rooms_;  // a light's room, -1 when it has none
     int rooms_map_ = -1;
     int rooms_age_ = 0;  // frames since the levels were last worked out
@@ -557,7 +743,6 @@ private:
     int live_room(int room) const;  // `room`, or the room it was joined to
     int room_at(const World::Point& at, std::int32_t reach = -1);  // `reach`: how far up or down the floor may be (-1: a stair)
     int room_cell(std::int32_t x, std::int32_t y, std::int32_t* z = nullptr) const;
-    float room_level(const DrawItem& d) const;
     std::string room_name(int room) const;  // "ROOM x.y" by its north-west floor cell
     // What a picture holds of the light colours, worked out once per picture.
     struct Glow {

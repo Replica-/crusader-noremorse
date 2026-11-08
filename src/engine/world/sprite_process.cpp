@@ -94,6 +94,7 @@ void SpriteProcess::on_terminate() {
 
 Pid create_sprite(Kernel& kernel, World& world, std::uint16_t shape, int first, int last, int delay,
                   World::Point at) {
+    if (world.hooks().sprite_created) world.hooks().sprite_created(shape, at.x, at.y, at.z);  // (port: the guard scan)
     return kernel.add(std::make_unique<SpriteProcess>(world, shape, first, last, delay, at));
 }
 

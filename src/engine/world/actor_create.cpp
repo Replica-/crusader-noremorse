@@ -161,7 +161,9 @@ ObjId create_actor(Kernel& kernel, World& world, const AnimDat& anims, const dta
     spec.defaults[2] = kind->map_number;
     spec.unk63 = static_cast<std::uint8_t>(egg->quality);
     spec.start_default = false;
-    return make_actor(kernel, world, anims, types, {egg->x, egg->y, egg->z & 0xFF}, spec);
+    const ObjId npc = make_actor(kernel, world, anims, types, {egg->x, egg->y, egg->z & 0xFF}, spec);
+    if (npc && world.hooks().actor_created) world.hooks().actor_created(*egg, npc);  // (port: the guard scan)
+    return npc;
 }
 
 // @orig 10E0:0247

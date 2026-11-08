@@ -313,6 +313,10 @@ void Game::reset_world() {
     // the player's saved stance.
     hooks.monster_egg = [this](ObjId egg) { spawn_from_egg(*kernel_, *world_, anims_, npc_types_, egg); };
     hooks.egg_hatcher = [this](ObjId egg) { start_egg_hatcher(*kernel_, *world_, egg); };
+    hooks.egg_hatched = [this](ObjId egg) { guard_probe_hatched(egg); };  // (--probe-guards)
+    hooks.actor_created = [this](const Item& egg, ObjId npc) { guard_probe_created(egg, npc); };
+    hooks.sprite_created = [this](std::uint16_t shape, std::int32_t x, std::int32_t y, std::int32_t z) { guard_probe_sprite(shape, x, y, z); };
+    hooks.destroying = [this](const Item& item) { linger_fire(item); };
     // 1040:04BC: stumble (0x3B, replacing the current animations), stand
     // up (4 in combat, else 0), and a grunt on the NPC's voice.
     hooks.hard_landing = [this](ObjId npc) {
@@ -359,9 +363,21 @@ void Game::pad_button(int button) {
 }
 
 void Game::key(std::uint8_t scancode, bool extended, bool pressed, std::uint16_t flags, std::uint8_t ascii) {
+    if (editor_key(scancode, extended, pressed)) return;  // (the light editor: all keys its own)
     // Port addition: F7 with the lighting on, the light debug mode (game_lighting.cpp).
     if (!extended && scancode == 0x41 && config_.lighting && world_ && !modal()) {
         if (pressed) set_light_debug(!light_debug_);
+        return;
+    }
+    // Port addition: F11 takes a screenshot (the main loop saves it: take_screenshot_request; Print Screen too). Not F12:
+    // Windows breaks into an attached debugger on it.
+    if (!extended && scancode == 0x57) {
+        if (pressed) screenshot_requested_ = true;
+        return;
+    }
+    // Port addition: F8 shows or hides the coordinates (coords_status).
+    if (!extended && scancode == 0x42 && world_ && !modal()) {
+        if (pressed) show_coords_ = !show_coords_;
         return;
     }
     // Port addition (GameConfig::keyboard_mouse): W / S walk forward / backward
@@ -370,7 +386,7 @@ void Game::key(std::uint8_t scancode, bool extended, bool pressed, std::uint16_t
     // W (keyboard and mouse mode): no key to the game; it walks the path to the pointer for as long
     // as it is held (see update_walk_path), running with Shift.
     if (!extended && scancode == 0x11) {
-        if (pressed && !w_held_ && free_pointer() && world_->state.controlled_npc == 1) {
+        if (pressed && !w_held_ && free_pointer()) {  // (the Silencer or a robot taken over)
             w_held_ = true;
             pending_stand_ = false;
             start_walk_to_pointer();
@@ -723,7 +739,15 @@ void Game::new_game(int difficulty, int map, bool all_items) {
 // @orig 11D8:31CF
 void Game::update(std::uint32_t elapsed_us) {
     // The enhancements window edits config_ in place.
-    if (world_) world_->set_follow_player(config_.follow_player);
+    if (world_) {
+        world_->set_follow_player(config_.follow_player != 0);
+        world_->set_follow_delayed(config_.follow_player == 2);
+    }
+    // The light editor: the world frozen (no process runs), only its camera moves.
+    if (editor_ && world_ && !movie_ && editor_frozen(elapsed_us)) {
+        update_editor(static_cast<float>(elapsed_us) / 1e6f);
+        return;
+    }
     if (world_ && aim_stick_ && !modal() && !movie_ && !world_->state.avatar_in_stasis && world_->state.controlled_npc == 1) {
         // Screen east is the world angle 315 degrees, north 225: 315 - screen.
         aim_at_angle(*kernel_, *world_, anims_, static_cast<int>(std::lround(315.0 - aim_stick_deg_)));
@@ -781,7 +805,7 @@ void Game::update(std::uint32_t elapsed_us) {
     if (right_consumed_ && !right_firing_ && free_pointer() && kernel_->ticks() - right_down_at_ >= 10) {
         right_firing_ = true;
         mouse_buttons_ = static_cast<std::uint16_t>(mouse_buttons_ | 1);
-        mouse_queue_.press(false, cursor_.x(), cursor_.y(), 1);
+        mouse_queue_.press_now(false, cursor_.x(), cursor_.y(), 1);  // (no double-click wait: it fires at once)
     }
     update_jump_preview();
     if (world_ && world_->state.jump_pending_until != 0) {  // a jump asked for while busy
@@ -870,7 +894,25 @@ void Game::update(std::uint32_t elapsed_us) {
         return;
     }
     dispatch_mouse();
-    if (!modal()) world_->update_follow_camera();
+    {
+        // The camera holds still while the player fires (the shot, the fire button held), rolls, kneels or gets up, or
+        // stays crouched: a recentring then is jarring (World::set_camera_hold). It catches up after.
+        const ObjId me = pawn();
+        const auto record = world_->npc_record(me);
+        const bool crouched = !record.empty() && (record[npc::kFlags13] & 0x04);
+        const ActorAnimProcess* now = current_anim(*kernel_, me);
+        const int action = now ? now->action() : -1;
+        const bool busy_moving = action == 8 || action == 0x2A || action == 0x17 || action == 0x18 || action == 0x3D ||
+                                 action == 0x3E || action == 0x28 || action == 0x29;
+        world_->set_camera_hold(crouched || right_firing_ || busy_moving);
+    }
+    if (!modal()) world_->update_follow_camera(elapsed_us);
+    update_guard_probe(elapsed_us);
+    update_lingering_fires(elapsed_us);
+    if (god_mode_ && world_) {  // --god: no damage, and the hit points full whatever took them (a fall, a script)
+        world_->state.god_mode = true;
+        if (!world_->is_dead(1) && static_cast<std::int16_t>(world_->npc_hp(1)) < 150) world_->set_npc_word(1, 0x00, 150);
+    }
     const std::uint32_t before = kernel_->ticks();
     kernel_->advance_time(elapsed_us);
     kernel_->run_slice();
@@ -1731,6 +1773,11 @@ void Game::mouse_button(int button, bool pressed, int x, int y) {
     const std::uint16_t bit = button == 1 ? 1 : 2;
     mouse_buttons_ = static_cast<std::uint16_t>(pressed ? mouse_buttons_ | bit : mouse_buttons_ & ~bit);
     cursor_.move_to(x, y);
+    if (editor_ && !modal()) {  // (the light editor: the buttons its own)
+        mouse_buttons_ = static_cast<std::uint16_t>(mouse_buttons_ & ~bit);
+        editor_mouse(button, pressed);
+        return;
+    }
     // The light debug mode takes the left button: a click picks the light under the pointer.
     if (light_debug_ && config_.lighting && button == 1 && !modal()) {
         mouse_buttons_ = static_cast<std::uint16_t>(mouse_buttons_ & ~bit);
@@ -1765,12 +1812,14 @@ void Game::mouse_button(int button, bool pressed, int x, int y) {
         right_cancel_ = false;
         return;
     }
-    if (pressed && free_pointer() && world_->state.controlled_npc == 1 && !world_->state.avatar_in_stasis &&
-        !world_->state.selection.active) {
+    if (pressed && free_pointer() && !world_->state.avatar_in_stasis && !world_->state.selection.active) {
+        // A robot taken over: the same clicks, but it has no holster (its weapon is always out) and uses nothing: a
+        // left click walks it there (double: runs), the right button held fires.
+        const bool robot = pawn() != 1;
         // The draw animation counts as drawn: pressing then puts the weapon back at once.
-        const ActorAnimProcess* now_anim = current_anim(*kernel_, 1);
+        const ActorAnimProcess* now_anim = robot ? nullptr : current_anim(*kernel_, 1);
         const bool drawing = now_anim && now_anim->action() == 7;
-        const bool drawn = weapon_drawn(*world_, 1) || drawing;
+        const bool drawn = !robot && (weapon_drawn(*world_, 1) || drawing);
         if (button == 1) {
             // With the weapon out, a left click puts it away first (half way through drawing it, at once) and then does what a click does
             // with it away: walk to the spot, or walk up to the item and use it.
@@ -1789,7 +1838,7 @@ void Game::mouse_button(int button, bool pressed, int x, int y) {
             last_click_x_ = pointer_x_;
             last_click_y_ = pointer_y_;
             bool in_range = false;
-            if (const ObjId target = hover_item(*world_, pointer_x_, pointer_y_, &in_range); target == 0) {
+            if (const ObjId target = robot ? 0 : hover_item(*world_, pointer_x_, pointer_y_, &in_range); target == 0) {
                 start_walk_to_pointer();
             } else if (in_range && interact_item(*world_, target)) {
                 // used or picked up at once
@@ -1811,7 +1860,7 @@ void Game::mouse_button(int button, bool pressed, int x, int y) {
                 right_down_at_ = kernel_->ticks();
                 return;
             }
-            if (!drawn) {
+            if (!drawn && !robot) {
                 // The character is often in the middle of a turn or a step: the draw waits for it instead of being lost.
                 right_drew_ = true;
                 if (!actor_busy(*kernel_, 1)) do_anim(*kernel_, *world_, anims_, 1, 7, kDirCurrent);
@@ -1940,12 +1989,19 @@ void Game::render(Surface8& screen, RenderStats* stats) {
 // @orig 1188:12F1
 void Game::render_view(Surface8& screen, RenderStats* stats) {
     // Hardware scene: the view is left clear (the key colour) for the graphics card's scene to show through.
-    scene_on_ = config_.hardware_scene || config_.lighting;  // the lighting needs the scene on the graphics card
+    // The lighting, the upscaled sprites and the extra angles need the scene on the graphics card.
+    scene_on_ = config_.hardware_scene || config_.lighting || config_.upscaled_sprites || config_.extra_angles;
     screen.clear(scene_on_ ? kSceneKey : 0);
     world_->set_view_size(screen.width, screen.height);
     const GameState& s = world_->state;
-    const auto list =
-        build_display_list(*world_, shapes_, View{s.view_left, s.view_top}, screen.width, screen.height, stats);
+    auto list =
+        build_display_list(*world_, shapes_, View{s.view_left, s.view_top}, screen.width, screen.height, stats, editor_,
+                           update_waiting_guards());  // (the light editor: all of the map)
+    if (editor_) {
+        // The light editor: all of the map, its black covers (over the parts not reached yet) left out.
+        std::erase_if(list, [this](const DrawItem& d) { return d.frame && is_black_cover(*d.frame); });
+        editor_list_ = list;  // (what the pointer is over, for the editor's keys)
+    }
     // DLIST.C 11A0:05xx: right after item 1, in combat (or holstering,
     // last action 0xB), its weapon (WPNOVLAY.DAT), unmirrored, at the item's
     // screen place plus the offsets of the current action, direction, frame.
@@ -1965,6 +2021,8 @@ void Game::render_view(Surface8& screen, RenderStats* stats) {
     if (scene_on_) {
         turn_.captured = false;  // no software capture of the player: he is a plain picture in this mode
         if (config_.lighting) refresh_rooms();
+        if (config_.lighting) update_area_ambients();
+        if (config_.lighting) update_liquid_light(list);
         build_scene(list, splats);
         build_lights(list);
     } else {
@@ -2086,8 +2144,10 @@ namespace crusader {
 // @orig none: port-only click-to-walk
 void Game::start_walk_to_pointer() {
     path_best_ = 1 << 30;
+    path_trail_.clear();
+    path_route_last_ = 1 << 30;
     path_item_ = 0;
-    const Item* player = world_->get(1);
+    const Item* player = world_->get(pawn());
     if (!player) return;
     // The point of the player's plane under the pointer.
     const int u = 2 * (pointer_x_ + world_->state.view_left);
@@ -2101,6 +2161,8 @@ void Game::start_walk_to_pointer() {
 
 // @orig none: port-only click-to-walk
 void Game::stop_walk_path() {
+    path_trail_.clear();
+    path_route_last_ = 1 << 30;
     path_run_ = false;
     path_item_ = 0;
     path_hold_ = false;
@@ -2114,24 +2176,24 @@ void Game::stop_walk_path() {
 void Game::update_walk_path() {
     if (!world_ || modal() || movie_) return;
     // W released: stand once the last step is over, as the movement keys do on release.
-    if (pending_stand_ && !actor_busy(*kernel_, 1)) {
+    if (pending_stand_ && !actor_busy(*kernel_, pawn())) {
         pending_stand_ = false;
-        const auto r = world_->npc_record(1);
+        const auto r = world_->npc_record(pawn());
         const std::uint16_t last = r.empty() ? 0 : static_cast<std::uint16_t>(r[npc::kLastAnim] | r[npc::kLastAnim + 1] << 8);
         if (last == 3 || last == 0x30 || last == 0x31 || last == 0x38 || last == 0x26 || last == 0x22 || last == 0x23) {
-            do_anim(*kernel_, *world_, anims_, 1, 0x27, kDirCurrent);
+            do_anim(*kernel_, *world_, anims_, pawn(), 0x27, kDirCurrent);
         } else if (!r.empty() && (r[npc::kFlags13] & 0x04)) {
-            do_anim(*kernel_, *world_, anims_, 1, 0x2E, kDirCurrent);
-        } else if (weapon_drawn(*world_, 1)) {
-            do_anim(*kernel_, *world_, anims_, 1, 4, kDirCurrent);
+            do_anim(*kernel_, *world_, anims_, pawn(), 0x2E, kDirCurrent);
+        } else if (weapon_drawn(*world_, pawn())) {
+            do_anim(*kernel_, *world_, anims_, pawn(), 4, kDirCurrent);
         } else if (last == 1 || last == 0x24) {
-            do_anim(*kernel_, *world_, anims_, 1, 0, kDirCurrent);
+            do_anim(*kernel_, *world_, anims_, pawn(), 0, kDirCurrent);
         }
     }
     // Walking up to an item: use it as soon as it is in reach and close.
     if (path_active_ && path_item_) {
         const Item* target = world_->get(path_item_);
-        const Item* me = world_->get(1);
+        const Item* me = world_->get(pawn());
         if (!target || !me) {
             stop_walk_path();
         } else if (item_in_range(*world_, path_item_)) {  // in reach is enough: stop walking and use it
@@ -2142,24 +2204,24 @@ void Game::update_walk_path() {
         }
     }
     // W held: walk to the pointer, wherever it goes.
-    if (w_held_ && !path_active_ && free_pointer() && world_->state.controlled_npc == 1) {
+    if (w_held_ && !path_active_ && free_pointer()) {
         start_walk_to_pointer();
         path_hold_ = true;
     }
     if (!path_active_) return;
-    const Item* player = world_->get(1);
-    if (!player || world_->is_dead(1) || world_->state.controlled_npc != 1 || world_->state.avatar_in_stasis) {
+    const Item* player = world_->get(pawn());
+    if (!player || world_->is_dead(pawn()) || world_->state.avatar_in_stasis) {
         stop_walk_path();
         return;
     }
-    if (actor_busy(*kernel_, 1)) return;
+    if (actor_busy(*kernel_, pawn())) return;
     if (path_hold_) {
         path_goal_ = pointer_goal();
         if (kernel_->ticks() < path_wait_) return;
     }
     // Running (Shift held, or toggled on) uses the same path: the run start, then the run, as the
     // movement keys do; arriving while running ends the run.
-    const auto record = world_->npc_record(1);
+    const auto record = world_->npc_record(pawn());
     const std::uint16_t last =
         record.empty() ? 0 : static_cast<std::uint16_t>(record[npc::kLastAnim] | record[npc::kLastAnim + 1] << 8);
     const bool running = last == 3 || last == 0x30 || last == 0x31 || last == 0x38;
@@ -2167,7 +2229,7 @@ void Game::update_walk_path() {
     const bool want_run = path_run_ || (keyboard_.flags() & (kLeftShift | kRightShift)) || (config_.toggle_run && run_toggled_);
     const World::Point pos = world_->location(*player);
     if (std::max(std::abs(pos.x - path_goal_.x), std::abs(pos.y - path_goal_.y)) <= 20) {
-        if (running || run_start) do_anim(*kernel_, *world_, anims_, 1, 0x27, kDirCurrent);
+        if (running || run_start) do_anim(*kernel_, *world_, anims_, pawn(), 0x27, kDirCurrent);
         if (path_item_ && item_in_range(*world_, path_item_)) interact_item(*world_, path_item_);
         if (!path_hold_) stop_walk_path();  // held with W: stay put, the pointer may move on
         return;
@@ -2195,14 +2257,41 @@ void Game::update_walk_path() {
     const auto distance_to_goal = [&](const World::Point& p) { return std::max(std::abs(p.x - path_goal_.x), std::abs(p.y - path_goal_.y)); };
     if (distance_to_goal(path_goal_seen_) != 0 && std::max(std::abs(path_goal_seen_.x - path_goal_.x), std::abs(path_goal_seen_.y - path_goal_.y)) > 24) {
         path_best_ = 1 << 30;  // the goal moved (the pointer): start again
+        path_trail_.clear();
     }
     path_goal_seen_ = path_goal_;
     path_best_ = std::min(path_best_, distance_to_goal(pos));
-    const PlannedPath plan = plan_path(*world_, 1, pos, path_goal_);
+    // A loop: back where it stood before (any place but the one it has just left: a step back the way it came, A to B
+    // and back to A, is the loop it must not go on with) without having got any closer to the goal since, so going on
+    // would only go round again - it stops (held with W: waits a moment and starts afresh, the pointer may move on).
+    for (std::size_t i = 0; i + 1 < path_trail_.size(); ++i) {
+        const PathTrail& t = path_trail_[i];
+        if (std::max(std::abs(t.at.x - pos.x), std::abs(t.at.y - pos.y)) > kLoopReach || path_best_ < t.best - kLoopGain) continue;
+        if (path_hold_) {
+            path_trail_.clear();
+            path_wait_ = kernel_->ticks() + 30;
+        } else {
+            stop_walk_path();
+        }
+        return;
+    }
+    // (a step that went nowhere is no new place: the stuck steps above deal with it)
+    if (path_trail_.empty() || std::max(std::abs(path_trail_.back().at.x - pos.x), std::abs(path_trail_.back().at.y - pos.y)) > kLoopReach) {
+        path_trail_.push_back({pos, path_best_});
+    }
+    if (path_trail_.size() > 48) path_trail_.erase(path_trail_.begin());
+    const PlannedPath plan = plan_path(*world_, pawn(), pos, path_goal_);
     path_expanded_ = plan.expanded;
     path_reaches_ = plan.reaches_goal;
     path_points_.assign(1, pos);
     path_points_.insert(path_points_.end(), plan.points.begin(), plan.points.end());
+    // What is left of the route (the plan's length from here) and whether the last step shortened it: a detour round
+    // an obstacle does, each step, even where it turns back; a step that only went to and fro does not.
+    int route_left = 0;
+    for (std::size_t i = 1; i < path_points_.size(); ++i) {
+        route_left += std::max(std::abs(path_points_[i].x - path_points_[i - 1].x), std::abs(path_points_[i].y - path_points_[i - 1].y));
+    }
+    const bool gained = route_left < path_route_last_ - kLoopGain;
     if (!plan.reaches_goal && !plan.points.empty() && distance_to_goal(plan.points.back()) >= path_best_ - 8) {
         // It leads no closer than we have been: this is as near as it gets.
         if (path_hold_) path_wait_ = kernel_->ticks() + 12;
@@ -2216,7 +2305,7 @@ void Game::update_walk_path() {
     }
     const bool has_weapon = !record.empty() && (record[npc::kWeapon] | record[npc::kWeapon + 1]) != 0;
     // (with the weapon drawn a walk is the combat step, action 0x24)
-    const int walk = weapon_drawn(*world_, 1) || world_->state.aim.active ? 0x24 : 1;
+    const int walk = weapon_drawn(*world_, pawn()) || world_->state.aim.active ? 0x24 : 1;
     const int run_action = (running || run_start) ? (has_weapon ? 0x30 : 3) : 0x22;
     // A step of the animation moves the NPC far (a run several cells) along its direction, and a blocked
     // step makes it stop dead. So the step is simulated, frame by frame as the engine will play it, and
@@ -2231,7 +2320,10 @@ void Game::update_walk_path() {
                 }
                 const int dir = (towards + offset) & 0xF;
                 if (path_bad_dirs_ & (1u << dir)) continue;
-                if (stride_fits(*world_, anims_, 1, static_cast<std::uint16_t>(act), dir)) {
+                // Back the way it came (within 45 degrees of the opposite of its last step) while the last step gained
+                // nothing on the route: the start of a loop, refused (with no other way, the stuck steps stop it).
+                if (!gained && path_step_dir_ >= 0 && std::abs(((dir - path_step_dir_ + 16) % 16) - 8) <= 2) continue;
+                if (stride_fits(*world_, anims_, pawn(), static_cast<std::uint16_t>(act), dir)) {
                     dir_out = dir;
                     return true;
                 }
@@ -2245,6 +2337,11 @@ void Game::update_walk_path() {
     if (want_run) candidates.push_back(run_action);
     candidates.push_back(walk);
     if (walk != 1) candidates.push_back(1);
+    if (pawn() != 1) candidates.push_back(0x24);  // a robot's only step (it has no plain walk)
+    // Only the steps the NPC has (a robot: the combat step, some the run start).
+    const std::uint16_t body = player->shape;
+    std::erase_if(candidates, [&](int act) { return !anims_.action(body, static_cast<std::uint16_t>(act)); });
+    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
     int action = 0, dir = 0;
     bool found = false;
     for (const int act : candidates) {
@@ -2261,7 +2358,18 @@ void Game::update_walk_path() {
     }
     // The step starts straight in its new direction (no turning animation first), so a bend in the route costs no pause.
     path_step_dir_ = dir;
-    do_anim(*kernel_, *world_, anims_, 1, static_cast<std::uint16_t>(action), dir);
+    path_route_last_ = route_left;
+    do_anim(*kernel_, *world_, anims_, pawn(), static_cast<std::uint16_t>(action), dir);
+}
+
+// @orig none: port-only click-to-walk target marker
+bool Game::walk_target_screen(float& x, float& y) const {
+    if (!world_ || !path_active_ || path_hold_ || modal()) return false;
+    const GameState& s = world_->state;
+    const auto ux = static_cast<std::int16_t>(path_goal_.x), uy = static_cast<std::int16_t>(path_goal_.y);
+    x = static_cast<float>(((ux - uy) >> 1) - s.view_left);
+    y = static_cast<float>((static_cast<std::uint16_t>(ux + uy) >> 2) - (path_goal_.z & 0xFF) - s.view_top);
+    return true;
 }
 
 std::vector<std::pair<float, float>> Game::path_debug_screen() const {
@@ -2329,8 +2437,22 @@ std::vector<Game::HitBarScreen> Game::hit_bars_screen() {
 namespace crusader {
 
 // @orig none: port-only click-to-walk
+// F8: where the controlled NPC stands and the point of its floor under the pointer, in world (usecode) units; empty
+// when hidden.
+// @orig none: port-only coordinates readout
+std::string Game::coords_status() const {
+    if (!show_coords_ || !world_) return {};
+    const Item* me = world_->get(pawn());
+    if (!me) return {};
+    const World::Point at = pointer_goal();
+    char line[160];
+    std::snprintf(line, sizeof line, "PLAYER X %d  Y %d  Z %d    POINTER X %d  Y %d  (F8 HIDES)", me->x, me->y, me->z & 0xFF, at.x,
+                  at.y);
+    return line;
+}
+
 World::Point Game::pointer_goal() const {
-    const Item* player = world_->get(1);
+    const Item* player = world_->get(pawn());
     const int z = player ? player->z : 0;
     const int u = 2 * (pointer_x_ + world_->state.view_left);
     const int v = 4 * (pointer_y_ + world_->state.view_top + (z & 0xFF));
@@ -2341,13 +2463,13 @@ World::Point Game::pointer_goal() const {
 // is planned a few times a second and only shown (debug): the keys still decide where it goes.
 // @orig none: port-only debug overlay
 void Game::update_path_preview() {
-    const Item* player = world_ ? world_->get(1) : nullptr;
-    const auto record = player ? world_->npc_record(1) : std::span<std::uint8_t>{};
+    const Item* player = world_ ? world_->get(pawn()) : nullptr;
+    const auto record = player ? world_->npc_record(pawn()) : std::span<std::uint8_t>{};
     const std::uint16_t last =
         record.empty() ? 0 : static_cast<std::uint16_t>(record[npc::kLastAnim] | record[npc::kLastAnim + 1] << 8);
     const bool running = last == 3 || last == 0x30 || last == 0x31 || last == 0x38 || last == 0x22 || last == 0x23 || last == 0x26;
     const bool moving = w_held_ || remap_mod_[0x1F] || remap_mod_[0x1E] || remap_mod_[0x20] || running;
-    if (!player || path_active_ || !free_pointer() || !moving || world_->is_dead(1)) {
+    if (!player || path_active_ || !free_pointer() || !moving || world_->is_dead(pawn())) {
         preview_points_.clear();
         return;
     }
@@ -2355,7 +2477,7 @@ void Game::update_path_preview() {
     if (!preview_points_.empty() && now - preview_at_ < 8) return;
     preview_at_ = now;
     const World::Point pos = world_->location(*player);
-    const PlannedPath plan = plan_path(*world_, 1, pos, pointer_goal());
+    const PlannedPath plan = plan_path(*world_, pawn(), pos, pointer_goal());
     path_expanded_ = plan.expanded;
     path_reaches_ = plan.reaches_goal;
     preview_points_.assign(1, pos);
@@ -2369,8 +2491,10 @@ namespace crusader {
 // @orig none: port-only, a click on an item that is out of reach
 void Game::start_walk_to_item(ObjId id) {
     path_best_ = 1 << 30;
+    path_trail_.clear();
+    path_route_last_ = 1 << 30;
     const Item* item = world_->get(id);
-    const Item* player = world_->get(1);
+    const Item* player = world_->get(pawn());
     if (!item || !player) return;
     path_goal_ = World::Point{item->x, item->y, item->z};
     path_item_ = id;
@@ -2622,26 +2746,39 @@ std::vector<Game::FloorSplat> Game::plan_floor_splats(const std::vector<DrawItem
 void Game::build_scene(const std::vector<DrawItem>& list, const std::vector<FloorSplat>& splats) {
     scene_.clear();
     scene_.reserve(list.size() + splats.size() + 1);
-    float last_room = 0;  // the room of the last picture (a splat lies on the floor drawn before it)
+    build_scene_flashes();
+    SceneCmd last_area;  // the area ambient of the last picture (a splat lies on the floor drawn before it)
     std::size_t next = 0;
     for (std::size_t k = 0; k <= list.size(); ++k) {
         for (; next < splats.size() && splats[next].before <= k; ++next) {
             SceneCmd c;
             c.x = splats[next].sx, c.y = splats[next].sy;
             c.rx = splats[next].rx, c.ry = splats[next].ry, c.alpha = splats[next].alpha;
-            c.room = last_room;  // the floor it lies on
+            c.ambient_r = last_area.ambient_r, c.ambient_g = last_area.ambient_g, c.ambient_b = last_area.ambient_b;
             scene_.push_back(c);
         }
         if (k == list.size()) break;
         const DrawItem& d = list[k];
         SceneCmd c;
         c.frame = d.frame;
+        c.shape = d.item->shape, c.frame_no = d.item->frame;
+        c.fx = is_fire_effect(d.item->shape);
         c.x = d.left, c.y = d.top;
         c.mirrored = d.mirrored;
         c.translucent = (d.shape_flags & ShapeInfo::kTranslucent) != 0;
-        if (config_.lighting) c.room = last_room = room_level(d);
+        const std::array<float, 3>* area = config_.lighting ? area_ambient(d) : nullptr;
+        if (const auto* liquid = config_.lighting ? liquid_light(d) : nullptr) {  // over water: lit by it (the brighter)
+            if (!area || (*liquid)[0] + (*liquid)[1] + (*liquid)[2] > (*area)[0] + (*area)[1] + (*area)[2]) area = liquid;
+        }
+        if (area) {
+            c.ambient_r = (*area)[0], c.ambient_g = (*area)[1], c.ambient_b = (*area)[2];
+            last_area = c;
+        } else {
+            last_area.ambient_r = -1;
+        }
+        const bool angled = extra_angle(d, c);  // (the extra angles: the gun is in that picture)
         scene_.push_back(c);
-        if (d.item->id != 1 || d.item->shape != 1) continue;
+        if (d.item->id != 1 || d.item->shape != 1 || angled) continue;
         // DLIST.C: right after item 1, in combat (or holstering), its weapon (WPNOVLAY.DAT), unmirrored.
         const auto record = world_->npc_record(1);
         const std::uint16_t last = static_cast<std::uint16_t>(record[npc::kLastAnim] | record[npc::kLastAnim + 1] << 8);
@@ -2656,7 +2793,7 @@ void Game::build_scene(const std::vector<DrawItem>& list, const std::vector<Floo
         w.frame = &shape->frames()[piece->frame];
         w.x = d.sx + piece->dx - w.frame->xoff;
         w.y = d.sy + piece->dy - w.frame->yoff;
-        w.room = c.room;
+        w.ambient_r = c.ambient_r, w.ambient_g = c.ambient_g, w.ambient_b = c.ambient_b;
         scene_.push_back(w);
     }
 }

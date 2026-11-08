@@ -1,12 +1,17 @@
 #include "platform/sdl_presenter.hpp"
 
+#include "core/png_reader.hpp"
+#include "core/png_writer.hpp"
+
 #include <SDL.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <tuple>
 
 namespace crusader {
 
@@ -52,6 +57,10 @@ SdlPresenter::SdlPresenter(const std::string& title, int width, int height, int 
 
 SdlPresenter::~SdlPresenter() {
     clear_scene_textures();
+    clear_upscaled_textures();
+    for (auto& entry : angle_textures_) {
+        if (entry.second) SDL_DestroyTexture(entry.second);
+    }
     if (font_tex_) SDL_DestroyTexture(font_tex_);
     if (jump_tex_) SDL_DestroyTexture(jump_tex_);
     if (colours_tex_) SDL_DestroyTexture(colours_tex_);
@@ -63,7 +72,7 @@ SdlPresenter::~SdlPresenter() {
     for (IconTexture& i : wheel_icons_) {
         if (i.texture) SDL_DestroyTexture(i.texture);
     }
-    for (SDL_Texture* t : {scene_target_, light_target_, light_spot_, screen_target_, room_small_[0], room_small_[1]}) {
+    for (SDL_Texture* t : {scene_target_, light_target_, light_spot_, screen_target_, room_small_[0], room_small_[1], fx_blob_}) {
         if (t) SDL_DestroyTexture(t);
     }
     if (texture_) SDL_DestroyTexture(texture_);
@@ -142,7 +151,7 @@ void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
     }
     SDL_UnlockTexture(texture_);
 
-    SDL_SetRenderTarget(renderer_, screen_target_);
+    use_screen_target();
     SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
     SDL_RenderClear(renderer_);
     if (scene_) {
@@ -156,6 +165,7 @@ void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
     draw_jump();
     draw_laser();
     draw_debug_path();
+    draw_walk_target();
     draw_light_debug();
     draw_blood();
     draw_hit_bars();
@@ -169,7 +179,17 @@ void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
         if (screen_target_) SDL_QueryTexture(screen_target_, nullptr, nullptr, &w, &h);
         else SDL_GetRendererOutputSize(renderer_, &w, &h);
         if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888)) {
-            if (SDL_RenderReadPixels(renderer_, nullptr, SDL_PIXELFORMAT_ARGB8888, s->pixels, s->pitch) == 0) SDL_SaveBMP(s, shot_path_.c_str());
+            if (SDL_RenderReadPixels(renderer_, nullptr, SDL_PIXELFORMAT_ARGB8888, s->pixels, s->pitch) == 0) {
+                // A .png (the F12 screenshots) is written as one, anything else as a BMP (--shot).
+                if (std::filesystem::path(shot_path_).extension() == ".png") {
+                    try {
+                        write_png_rgb(shot_path_, w, h, static_cast<const std::uint32_t*>(s->pixels), s->pitch);
+                    } catch (const std::exception&) {
+                    }
+                } else {
+                    SDL_SaveBMP(s, shot_path_.c_str());
+                }
+            }
             SDL_FreeSurface(s);
         }
         shot_path_.clear();
@@ -182,13 +202,32 @@ void SdlPresenter::present(const Surface8& frame, const Palette& palette) {
     SDL_RenderPresent(renderer_);
 }
 
-// Headless: the picture everything is drawn into, of the frame's size (made again when it changes).
+// Headless: the picture everything is drawn into, of the frame's size (made again when it changes); with the upscaled
+// sprites, of the size the frame takes in the hidden window, as a shown one would draw it.
 // @orig none: port-only headless mode
 void SdlPresenter::make_screen_target() {
     if (!headless_) return;
     if (screen_target_) SDL_DestroyTexture(screen_target_);
-    screen_target_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, width_, height_);
+    screen_scale_ = upscaled_ ? window_scale() : 1.0f;
+    const int w = static_cast<int>(std::lround(width_ * screen_scale_)), h = static_cast<int>(std::lround(height_ * screen_scale_));
+    screen_target_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, w, h);
     if (!screen_target_) throw std::runtime_error(std::string("SDL headless target: ") + SDL_GetError());
+}
+
+// The drawing pointed at the screen: the window, or headless its picture (in view pixels, whatever its size).
+// @orig none: port-only headless mode
+void SdlPresenter::use_screen_target() {
+    SDL_SetRenderTarget(renderer_, screen_target_);
+    if (screen_target_) SDL_RenderSetScale(renderer_, screen_scale_, screen_scale_);
+}
+
+// The window's pixels per view pixel (the view fitted in it as SDL_RenderSetLogicalSize does), at least 1.
+// @orig none: port-only upscaled sprites
+float SdlPresenter::window_scale() const {
+    int ow = 0, oh = 0;
+    if (headless_) SDL_GetWindowSize(window_, &ow, &oh);
+    else SDL_GetRendererOutputSize(renderer_, &ow, &oh);
+    return std::max(1.0f, std::min(static_cast<float>(ow) / static_cast<float>(width_), static_cast<float>(oh) / static_cast<float>(height_)));
 }
 
 }  // namespace crusader
@@ -301,6 +340,29 @@ void SdlPresenter::draw_laser() {
 }  // namespace crusader
 
 namespace crusader {
+
+// The click-to-walk target: a diamond lying on the floor (twice as wide as high, the view's floor), filled faintly and
+// outlined, pulsing gently, until the walk ends.
+// @orig none: port-only click-to-walk target marker
+void SdlPresenter::draw_walk_target() {
+    if (!walk_target_) return;
+    const float t = static_cast<float>(SDL_GetTicks()) / 1000.0f;
+    const float pulse = 0.5f + 0.5f * std::sin(t * 6.0f);
+    const float hw = 15.0f + 3.0f * pulse, hh = hw * 0.5f;
+    const float cx = walk_target_x_, cy = walk_target_y_;
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    const SDL_Color fill{90, 255, 130, static_cast<Uint8>(50 + 40 * pulse)};
+    const SDL_Vertex v[4] = {{{cx, cy - hh}, fill, {0, 0}}, {{cx + hw, cy}, fill, {0, 0}},
+                             {{cx, cy + hh}, fill, {0, 0}}, {{cx - hw, cy}, fill, {0, 0}}};
+    const int idx[6] = {0, 1, 2, 0, 2, 3};
+    SDL_RenderGeometry(renderer_, nullptr, v, 4, idx, 6);
+    SDL_SetRenderDrawColor(renderer_, 120, 255, 150, static_cast<Uint8>(170 + 85 * pulse));
+    for (const float d : {0.0f, 1.0f}) {  // two pixels thick
+        const SDL_FPoint p[5] = {{cx, cy - hh - d}, {cx + hw + d, cy}, {cx, cy + hh + d}, {cx - hw - d, cy}, {cx, cy - hh - d}};
+        SDL_RenderDrawLinesF(renderer_, p, 5);
+    }
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+}
 
 // The planned click-to-walk path: a cyan line through its nodes, a dot on each, and a
 // magenta cross on the goal.
@@ -526,6 +588,64 @@ void SdlPresenter::clear_scene_textures() {
     scene_textures_.clear();
 }
 
+// @orig none: port-only upscaled sprites
+void SdlPresenter::set_upscaled_sprites(bool on, const std::filesystem::path& dir) {
+    if (on == upscaled_ && dir == upscaled_dir_) return;
+    clear_upscaled_textures();
+    upscaled_ = on;
+    upscaled_dir_ = dir;
+    make_screen_target();  // (headless: its picture at the hidden window's size, or the view's)
+}
+
+// @orig none: port-only upscaled sprites
+void SdlPresenter::clear_upscaled_textures() {
+    for (auto& entry : upscaled_textures_) {
+        if (entry.second) SDL_DestroyTexture(entry.second);
+    }
+    upscaled_textures_.clear();
+}
+
+// The upscaled picture of a shape's frame (dir/SSSS_FFF.png), loaded once; null when there is none.
+// @orig none: port-only upscaled sprites
+SDL_Texture* SdlPresenter::upscaled_texture(int shape, int frame) {
+    const std::uint32_t key = static_cast<std::uint32_t>(shape) << 16 | static_cast<std::uint32_t>(frame & 0xFFFF);
+    const auto found = upscaled_textures_.find(key);
+    if (found != upscaled_textures_.end()) return found->second;
+    char name[32];
+    std::snprintf(name, sizeof name, "%04d_%03d.png", shape, frame);
+    SDL_Texture* t = nullptr;
+    if (const auto img = read_png(upscaled_dir_ / name)) {
+        t = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, img->width, img->height);
+        if (t) {
+            SDL_UpdateTexture(t, nullptr, img->pixels.data(), img->width * static_cast<int>(sizeof(Uint32)));
+            SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
+        }
+    }
+    upscaled_textures_.emplace(key, t);
+    return t;
+}
+
+// The extra angles' picture (assets/angles/<set>_sNN.png, tools/angles), loaded once; null when there is none.
+// @orig none: port-only extra angles
+SDL_Texture* SdlPresenter::angle_texture(const char* set, int step) {
+    char name[32];
+    std::snprintf(name, sizeof name, "%s_s%02d.png", set, step);
+    const auto found = angle_textures_.find(name);
+    if (found != angle_textures_.end()) return found->second;
+    SDL_Texture* t = nullptr;
+    if (const auto img = read_png(std::filesystem::current_path() / "assets" / "angles" / name)) {
+        t = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, img->width, img->height);
+        if (t) {
+            SDL_UpdateTexture(t, nullptr, img->pixels.data(), img->width * static_cast<int>(sizeof(Uint32)));
+            SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
+        }
+    }
+    angle_textures_.emplace(name, t);
+    return t;
+}
+
 // The hardware scene: the pictures in order as textures made from the palette, and the splats of blood on the floor.
 // A change of palette (a fade, a colour cycle) or of gamma makes the textures again as they are next needed.
 // @orig none: port-only hardware scene
@@ -585,7 +705,8 @@ void SdlPresenter::draw_scene(const Palette& palette) {
             if (t.texture) {
                 SDL_UpdateTexture(t.texture, nullptr, pixels.data(), f.width * static_cast<int>(sizeof(Uint32)));
                 SDL_SetTextureBlendMode(t.texture, SDL_BLENDMODE_BLEND);
-                SDL_SetTextureScaleMode(t.texture, SDL_ScaleModeNearest);
+                // (a fire or an explosion smoothly filtered at the window's size: draw_fx)
+                SDL_SetTextureScaleMode(t.texture, cmd.fx ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
             }
             if (lighting_) {
                 // Its shape in white, coloured by its room's ambient in the light map.
@@ -601,10 +722,90 @@ void SdlPresenter::draw_scene(const Palette& palette) {
         }
         const SceneTexture& t = found->second;
         if (!t.texture) continue;
+        if (cmd.angle_step >= 0) {  // the player between two drawn facings (the extra angles), his gun in the picture
+            if (SDL_Texture* angled = angle_texture(cmd.angle_set, cmd.angle_step)) {
+                SDL_SetTextureAlphaMod(angled, 255);
+                const SDL_Rect cell{cmd.anchor_x - kAngleAnchorX, cmd.anchor_y - kAngleAnchorY, kAngleCell, kAngleCell};
+                SDL_RenderCopy(renderer_, angled, nullptr, &cell);
+                continue;
+            }
+        }
+        if (cmd.fx) {  // a fire or an explosion: glowing particles instead of the picture
+            draw_fx(cmd, t.texture, t.w, t.h);
+            continue;
+        }
+        const SDL_Rect dst{cmd.x, cmd.y, t.w, t.h};
+        // Its upscaled picture where there is one: larger, stretched over the same place (the window's pixels show it).
+        if (SDL_Texture* big = upscaled_ && cmd.shape >= 0 ? upscaled_texture(cmd.shape, cmd.frame_no) : nullptr) {
+            SDL_SetTextureAlphaMod(big, cmd.translucent ? 150 : 255);
+            SDL_RenderCopyEx(renderer_, big, nullptr, &dst, 0, nullptr, cmd.mirrored ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+            continue;
+        }
         // Windows, force fields: the original blends them through a table; here they are simply half see-through.
         SDL_SetTextureAlphaMod(t.texture, cmd.translucent ? 150 : 255);
-        const SDL_Rect dst{cmd.x, cmd.y, t.w, t.h};
         SDL_RenderCopy(renderer_, t.texture, nullptr, &dst);
+    }
+    draw_scene_flashes();
+}
+
+// @orig none: port-only hardware effects
+bool SdlPresenter::make_fx_blob() {
+    if (fx_blob_) return true;
+    constexpr int kSize = 64;
+    std::vector<Uint32> pixels(kSize * kSize);
+    for (int y = 0; y < kSize; ++y) {
+        for (int x = 0; x < kSize; ++x) {
+            const float dx = (x + 0.5f) / (kSize / 2) - 1, dy = (y + 0.5f) / (kSize / 2) - 1;
+            const float t = std::clamp(1.0f - std::sqrt(dx * dx + dy * dy), 0.0f, 1.0f);
+            const auto a = static_cast<Uint32>(std::lround(255.0f * t * t));  // soft, brighter in the middle
+            pixels[static_cast<std::size_t>(y * kSize + x)] = a << 24 | 0xFFFFFFu;
+        }
+    }
+    fx_blob_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, kSize, kSize);
+    if (!fx_blob_) return false;
+    SDL_UpdateTexture(fx_blob_, nullptr, pixels.data(), kSize * static_cast<int>(sizeof(Uint32)));
+    SDL_SetTextureScaleMode(fx_blob_, SDL_ScaleModeLinear);
+    return true;
+}
+
+// A fire or an explosion: its own picture (the original animation, frame by frame), smoothly filtered at the window's
+// size, over a glow of the same shape - the picture again, larger and added on, flickering a little.
+// @orig none: port-only hardware effects
+void SdlPresenter::draw_fx(const SceneCmd& cmd, SDL_Texture* texture, int w, int h) {
+    const float t = static_cast<float>(SDL_GetTicks()) / 1000.0f;
+    const SDL_RendererFlip flip = SDL_FLIP_NONE;  // (a mirrored picture's texture is drawn mirrored already)
+    const float fw = static_cast<float>(w), fh = static_cast<float>(h);
+    const float cx = static_cast<float>(cmd.x) + fw / 2, cy = static_cast<float>(cmd.y) + fh / 2;
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_ADD);
+    for (const auto [grow, alpha] : {std::pair{1.35f, 70.0f}, std::pair{1.12f, 90.0f}}) {
+        const float flicker = 1.0f + 0.04f * std::sin(t * 17.0f + grow * 5.0f);
+        const float gw = fw * grow * flicker, gh = fh * grow * flicker;
+        const SDL_FRect glow{cx - gw / 2, cy - gh / 2, gw, gh};
+        SDL_SetTextureAlphaMod(texture, static_cast<Uint8>(alpha));
+        SDL_RenderCopyExF(renderer_, texture, nullptr, &glow, 0, nullptr, flip);
+    }
+    // A translucent one (the jets of flame: the original blends them through a table that brightens what is under them)
+    // is added on, light; the others are drawn over.
+    SDL_SetTextureBlendMode(texture, cmd.translucent ? SDL_BLENDMODE_ADD : SDL_BLENDMODE_BLEND);
+    SDL_SetTextureAlphaMod(texture, 255);
+    const SDL_FRect dst{static_cast<float>(cmd.x), static_cast<float>(cmd.y), fw, fh};
+    SDL_RenderCopyExF(renderer_, texture, nullptr, &dst, 0, nullptr, flip);
+}
+
+// The muzzle flashes: a warm glow and a white core, bright as the shot leaves, gone in a moment.
+// @orig none: port-only hardware effects
+void SdlPresenter::draw_scene_flashes() {
+    if (!scene_flashes_ || scene_flashes_->empty() || !make_fx_blob()) return;
+    SDL_SetTextureBlendMode(fx_blob_, SDL_BLENDMODE_ADD);
+    for (const SceneFlash& fl : *scene_flashes_) {
+        const float k = std::clamp(fl.strength, 0.0f, 1.0f);
+        for (const auto& [radius, r, g, b] : {std::tuple{22.0f, 255, 170, 70}, std::tuple{9.0f, 255, 250, 230}}) {
+            SDL_SetTextureColorMod(fx_blob_, static_cast<Uint8>(r), static_cast<Uint8>(g), static_cast<Uint8>(b));
+            SDL_SetTextureAlphaMod(fx_blob_, static_cast<Uint8>(255.0f * k));
+            const float s = radius * (0.7f + 0.3f * k) * 2;
+            const SDL_FRect dst{fl.x - s / 2, fl.y - s / 2, s, s};
+            SDL_RenderCopyF(renderer_, fx_blob_, nullptr, &dst);
+        }
     }
 }
 
@@ -621,12 +822,18 @@ bool SdlPresenter::begin_lit_scene() {
         lighting_broken_ = true;
         return false;
     }
-    if (!scene_target_ || target_w_ != width_ || target_h_ != height_) {
+    // The targets: the size the view takes in the window (the upscaled sprites' and the effects' detail kept).
+    const float s = window_scale();
+    const int want_w = static_cast<int>(std::lround(width_ * s)), want_h = static_cast<int>(std::lround(height_ * s));
+    if (!scene_target_ || target_w_ != want_w || target_h_ != want_h || small_w_ != std::max(1, width_ / kRoomScale) ||
+        small_h_ != std::max(1, height_ / kRoomScale)) {
         for (SDL_Texture** t : {&scene_target_, &light_target_}) {
             if (*t) SDL_DestroyTexture(*t);
-            *t = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, width_, height_);
+            *t = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, want_w, want_h);
         }
-        target_w_ = width_, target_h_ = height_;
+        target_w_ = want_w, target_h_ = want_h;
+        target_scale_x_ = static_cast<float>(want_w) / static_cast<float>(width_);
+        target_scale_y_ = static_cast<float>(want_h) / static_cast<float>(height_);
         small_w_ = std::max(1, width_ / kRoomScale), small_h_ = std::max(1, height_ / kRoomScale);
         for (SDL_Texture*& t : room_small_) {
             if (t) SDL_DestroyTexture(t);
@@ -672,6 +879,7 @@ bool SdlPresenter::begin_lit_scene() {
         if (!light_brightest_) SDL_SetTextureBlendMode(light_spot_, SDL_BLENDMODE_ADD);
     }
     SDL_SetRenderTarget(renderer_, scene_target_);
+    SDL_RenderSetScale(renderer_, target_scale_x_, target_scale_y_);  // (the scene in view pixels, whatever its size)
     SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
     SDL_RenderClear(renderer_);
     return true;
@@ -690,14 +898,18 @@ void SdlPresenter::end_lit_scene() {
     SDL_RenderClear(renderer_);
     constexpr float kSmall = 1.0f / kRoomScale;
     for (const SceneCmd& cmd : *scene_) {
-        if (!cmd.frame || cmd.translucent) continue;  // a splat or a window: the light of what is under it
+        if (!cmd.frame || (cmd.translucent && !cmd.fx)) continue;  // a splat or a window: the light of what is under it
         const std::uintptr_t key = reinterpret_cast<std::uintptr_t>(cmd.frame) << 1 | (cmd.mirrored ? 1u : 0u);
         const auto found = scene_textures_.find(key);
         if (found == scene_textures_.end() || !found->second.mask) continue;
         const SceneTexture& t = found->second;
-        const float k = std::max(cmd.room, 0.0f);
-        SDL_SetTextureColorMod(t.mask, byte(std::max(lit.ambient_r * k, lit.dark_r)), byte(std::max(lit.ambient_g * k, lit.dark_g)),
-                               byte(std::max(lit.ambient_b * k, lit.dark_b)));
+        if (cmd.fx) {  // a fire or an explosion gives light: shown as drawn, whatever lights the room (a red alarm)
+            SDL_SetTextureColorMod(t.mask, byte(0.5f), byte(0.5f), byte(0.5f));
+        } else if (cmd.ambient_r >= 0) {  // an area with its own ambient (the light editor)
+            SDL_SetTextureColorMod(t.mask, byte(cmd.ambient_r), byte(cmd.ambient_g), byte(cmd.ambient_b));
+        } else {
+            SDL_SetTextureColorMod(t.mask, byte(lit.dark_r), byte(lit.dark_g), byte(lit.dark_b));
+        }
         const SDL_FRect dst{cmd.x * kSmall, cmd.y * kSmall, t.w * kSmall, t.h * kSmall};
         SDL_RenderCopyF(renderer_, t.mask, nullptr, &dst);
     }
@@ -723,15 +935,37 @@ void SdlPresenter::end_lit_scene() {
     };
     SDL_Texture* rooms = blur();
     SDL_SetRenderTarget(renderer_, light_target_);
+    SDL_RenderSetScale(renderer_, target_scale_x_, target_scale_y_);
     SDL_SetTextureBlendMode(rooms, SDL_BLENDMODE_NONE);
     SDL_RenderCopy(renderer_, rooms, nullptr, nullptr);
     for (const SceneLight& l : lit.lights) {
         if (l.radius <= 0 || l.intensity <= 0) continue;
-        SDL_SetTextureColorMod(light_spot_, byte(l.r * l.intensity), byte(l.g * l.intensity), byte(l.b * l.intensity));
+        const Uint8 r = byte(l.r * l.intensity), g = byte(l.g * l.intensity), b = byte(l.b * l.intensity);
+        if (l.beam) {
+            // A cone: a beam from the source down to the edges of its spot, fading as it goes (geometry with the lights'
+            // blend: the brightest wins, else added).
+            SDL_BlendMode blend = SDL_BLENDMODE_ADD;
+            SDL_GetTextureBlendMode(light_spot_, &blend);
+            SDL_SetRenderDrawBlendMode(renderer_, blend);
+            const auto half = [](Uint8 v) { return static_cast<Uint8>(v / 2); };
+            const SDL_Color top{half(r), half(g), half(b), 255}, bottom{static_cast<Uint8>(r / 5), static_cast<Uint8>(g / 5),
+                                                                        static_cast<Uint8>(b / 5), 255};
+            const SDL_Vertex v[3] = {{{l.bx, l.by}, top, {0, 0}},
+                                     {{l.x - l.radius * 0.7f, l.y}, bottom, {0, 0}},
+                                     {{l.x + l.radius * 0.7f, l.y}, bottom, {0, 0}}};
+            SDL_RenderGeometry(renderer_, nullptr, v, 3, nullptr, 0);
+            SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+        }
+        SDL_SetTextureColorMod(light_spot_, r, g, b);
         const SDL_FRect dst{l.x - l.radius, l.y - l.radius * 0.5f, l.radius * 2, l.radius};
         SDL_RenderCopyF(renderer_, light_spot_, nullptr, &dst);
+        if (l.core > 0) {  // a sphere's bright core: the same light again, smaller (a flatter, harder light)
+            const float c = l.radius * std::min(l.core, 0.95f);
+            const SDL_FRect in{l.x - c, l.y - c * 0.5f, c * 2, c};
+            SDL_RenderCopyF(renderer_, light_spot_, nullptr, &in);
+        }
     }
-    SDL_SetRenderTarget(renderer_, screen_target_);
+    use_screen_target();
     SDL_RenderCopy(renderer_, scene_target_, nullptr, nullptr);
     SDL_RenderCopy(renderer_, light_target_, nullptr, nullptr);
 }
@@ -761,6 +995,19 @@ void SdlPresenter::draw_light_debug() {
                 SDL_RenderDrawLineF(renderer_, m.x - 6, m.y - 6 + d, m.x + 6, m.y + 6 + d);
                 SDL_RenderDrawLineF(renderer_, m.x - 6, m.y + 6 + d, m.x + 6, m.y - 6 + d);
             }
+        } else if (m.style != 0) {  // the light editor's ambient areas (a square) and cones (a triangle)
+            SDL_SetRenderDrawColor(renderer_, c, m.picked ? 255 : (m.style == 1 ? 120 : 200), m.picked ? 255 : (m.style == 1 ? 255 : 60), 255);
+            const float r = m.picked ? 11.0f : 8.0f;
+            for (const float d : {0.0f, 1.0f}) {
+                if (m.style == 1) {
+                    const SDL_FRect sq{m.x - r - d, m.y - r - d, 2 * (r + d), 2 * (r + d)};
+                    SDL_RenderDrawRectF(renderer_, &sq);
+                } else {
+                    SDL_RenderDrawLineF(renderer_, m.x, m.y - r - d, m.x - r - d, m.y + r);
+                    SDL_RenderDrawLineF(renderer_, m.x - r - d, m.y + r + d, m.x + r + d, m.y + r + d);
+                    SDL_RenderDrawLineF(renderer_, m.x + r + d, m.y + r, m.x, m.y - r - d);
+                }
+            }
         } else {
             SDL_SetRenderDrawColor(renderer_, c, c, m.picked ? 255 : 60, 255);
             const float r = m.picked ? 10.0f : 7.0f;
@@ -773,11 +1020,65 @@ void SdlPresenter::draw_light_debug() {
     }
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
     for (const LightDebugOverlay::Label& l : o.labels) {
-        const float half = text_width(l.text) * 0.5f;
-        text(l.x - half + 1, l.y + 1, l.text, 0, 0, 0);  // (a shadow, to read over any floor)
-        text(l.x - half, l.y, l.text, 255, 255, 255);
+        const float k = o.text_scale, half = text_width(l.text, k) * 0.5f;
+        text(l.x - half + k, l.y + k, l.text, 0, 0, 0, false, k);  // (a shadow, to read over any floor)
+        text(l.x - half, l.y, l.text, 255, 255, 255, false, k);
     }
-    text(8.0f, 18.0f, o.text, 255, 230, 120);
+    // The light editor's mini map: a dark panel, the level, the view's outline in yellow.
+    if (const LightDebugOverlay::MiniMap& m = o.minimap; m.polys && !m.polys->empty()) {
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer_, 8, 10, 14, 220);
+        const SDL_FRect panel{m.x, m.y, m.w, m.h};
+        SDL_RenderFillRectF(renderer_, &panel);
+        const SDL_Rect clip{static_cast<int>(m.x), static_cast<int>(m.y), static_cast<int>(m.w) + 1, static_cast<int>(m.h) + 1};
+        SDL_RenderSetClipRect(renderer_, &clip);
+        std::vector<SDL_Vertex> mv;
+        std::vector<int> mi;
+        mv.reserve(m.polys->size() * 4);
+        mi.reserve(m.polys->size() * 6);
+        for (const MapPoly& poly : *m.polys) {
+            const int base = static_cast<int>(mv.size());
+            for (int i = 0; i < 4; ++i) {
+                mv.push_back({{m.ox + poly.x[i] * m.scale, m.oy + poly.y[i] * m.scale}, SDL_Color{poly.r, poly.g, poly.b, poly.a}, {0, 0}});
+            }
+            for (const int i : {0, 1, 2, 0, 2, 3}) mi.push_back(base + i);
+        }
+        SDL_RenderGeometry(renderer_, nullptr, mv.data(), static_cast<int>(mv.size()), mi.data(), static_cast<int>(mi.size()));
+        SDL_SetRenderDrawColor(renderer_, 255, 220, 60, 255);
+        for (int i = 0; i < 4; ++i) {
+            const int j = (i + 1) % 4;
+            SDL_RenderDrawLineF(renderer_, m.ox + m.view_x[i] * m.scale, m.oy + m.view_y[i] * m.scale, m.ox + m.view_x[j] * m.scale,
+                                m.oy + m.view_y[j] * m.scale);
+        }
+        SDL_RenderSetClipRect(renderer_, nullptr);
+        SDL_SetRenderDrawColor(renderer_, 120, 130, 150, 255);
+        SDL_RenderDrawRectF(renderer_, &panel);
+        SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    }
+    const float k = o.text_scale;
+    text(8.0f * k + k, 18.0f * k + k, o.text, 0, 0, 0, false, k);  // (a shadow, to read over any floor)
+    text(8.0f * k, 18.0f * k, o.text, 255, 230, 120, false, k);
+    for (std::size_t i = 0; i < o.lines.size(); ++i) {
+        text(8.0f * k + k, (34.0f + 14.0f * static_cast<float>(i)) * k + k, o.lines[i], 0, 0, 0, false, k);
+        text(8.0f * k, (34.0f + 14.0f * static_cast<float>(i)) * k, o.lines[i], 210, 235, 255, false, k);
+    }
+    // The light editor's panels, over all the rest.
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    for (const LightDebugOverlay::Box& b : o.boxes) {
+        const SDL_FRect r{b.x, b.y, b.w, b.h};
+        SDL_SetRenderDrawColor(renderer_, b.fill[0], b.fill[1], b.fill[2], b.fill[3]);
+        SDL_RenderFillRectF(renderer_, &r);
+        if (b.edge[3]) {
+            SDL_SetRenderDrawColor(renderer_, b.edge[0], b.edge[1], b.edge[2], b.edge[3]);
+            SDL_RenderDrawRectF(renderer_, &r);
+        }
+    }
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_NONE);
+    for (const LightDebugOverlay::Box& b : o.boxes) {
+        const float baseline = b.y + b.h * 0.5f + 3 * b.text_scale;
+        if (!b.text.empty()) text(b.x + 8 * b.text_scale, baseline, b.text, b.ink[0], b.ink[1], b.ink[2], false, b.text_scale);
+        if (!b.right.empty()) text(b.x + b.w - 8 * b.text_scale, baseline, b.right, b.ink[0], b.ink[1], b.ink[2], true, b.text_scale);
+    }
 }
 
 }  // namespace crusader
