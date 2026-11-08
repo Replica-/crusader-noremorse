@@ -766,4 +766,33 @@ void Game::demo_light_editor(double fx, double fy) {
     editor_key(0x14, false, true);  // T
 }
 
+// --list-sprites FILE: every picture the map shows (all of it, its glob eggs expanded), once each, without the NPCs
+// and their animations or the editor's markers; one line each: shape, frame, width, height, its class name. The list
+// the upscaled sprites are made from (tools/upscale).
+// @orig none: port-only tool hook
+bool Game::write_map_sprites(const std::string& path) {
+    if (!editor_ || !world_) return false;
+    std::vector<std::pair<std::uint16_t, std::uint16_t>> seen;
+    world_->for_each([&](const Item& item) {
+        if (item.off_map || item.parent != 0 || (item.flags & kItemContained) || is_npc_id(item.id)) return;
+        const ShapeInfo* info = world_->shape_info(item.shape);
+        if (info && (info->is(ShapeInfo::kEditor) || info->is(ShapeInfo::kNpc))) return;
+        if (anims_.has_shape(item.shape)) return;  // an actor's shape (its animations), dead or alive
+        seen.emplace_back(item.shape, item.frame);
+    });
+    std::sort(seen.begin(), seen.end());
+    seen.erase(std::unique(seen.begin(), seen.end()), seen.end());
+    std::ofstream out(path);
+    if (!out) return false;
+    for (const auto& [shape, frame] : seen) {
+        const Shape* s = shapes_.get(shape);
+        if (!s || frame >= s->frames().size()) continue;
+        const ShapeFrame& f = s->frames()[frame];
+        if (f.width <= 0 || f.height <= 0) continue;
+        const std::string& name = object_name(shape);
+        out << shape << ' ' << frame << ' ' << f.width << ' ' << f.height << ' ' << (name.empty() ? "-" : name) << '\n';
+    }
+    return true;
+}
+
 }  // namespace crusader

@@ -113,4 +113,31 @@ void write_png(const std::filesystem::path& path, const Surface8& s, const Palet
     out.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
 }
 
+// @orig none: port-only screenshots
+void write_png_rgb(const std::filesystem::path& path, int width, int height, const std::uint32_t* argb, int pitch) {
+    std::vector<std::uint8_t> png{0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+    std::vector<std::uint8_t> ihdr;
+    put_u32be(ihdr, static_cast<std::uint32_t>(width));
+    put_u32be(ihdr, static_cast<std::uint32_t>(height));
+    ihdr.insert(ihdr.end(), {8, 2, 0, 0, 0});  // 8-bit, RGB, deflate, no filter, no interlace
+    put_chunk(png, "IHDR", ihdr);
+    std::vector<std::uint8_t> raw;
+    raw.reserve(static_cast<std::size_t>(width * 3 + 1) * static_cast<std::size_t>(height));
+    for (int y = 0; y < height; ++y) {
+        raw.push_back(0);  // filter: none
+        const std::uint32_t* row = argb + static_cast<std::ptrdiff_t>(y) * (pitch / 4);
+        for (int x = 0; x < width; ++x) {
+            raw.insert(raw.end(), {static_cast<std::uint8_t>(row[x] >> 16), static_cast<std::uint8_t>(row[x] >> 8),
+                                   static_cast<std::uint8_t>(row[x])});
+        }
+    }
+    put_chunk(png, "IDAT", zlib_store(raw));
+    put_chunk(png, "IEND", {});
+    std::ofstream out(path, std::ios::binary);
+    if (!out) {
+        throw std::runtime_error("cannot write " + path.string());
+    }
+    out.write(reinterpret_cast<const char*>(png.data()), static_cast<std::streamsize>(png.size()));
+}
+
 }  // namespace crusader

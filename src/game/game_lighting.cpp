@@ -7,8 +7,7 @@
 //   translucent glows, cycled), and the lone bright entries (lamps, LEDs, screens);
 // - liquids: a flat picture that moves (a pool, a spill, a leak) glows in its own colour;
 // - the lights placed and the sprites switched with the light editor (game_light_editor.cpp);
-// - the muzzle flash of each shot (GameState::muzzle_flashes), fading in a moment;
-// - a soft light around the controlled NPC, so that the dark places stay readable.
+// - the muzzle flash of each shot (GameState::muzzle_flashes), fading in a moment.
 // Lights do not add up: where they meet, the brightest wins. They do not raise the ambient of their room.
 //
 // Rooms (the light debug mode, F7, and the room debug mode): from the floor in front of each light of the map, every
@@ -581,6 +580,73 @@ void Game::update_flashes(float seconds) {
     std::erase_if(flashes_, [](const Flash& f) { return f.left <= 0; });
 }
 
+// The fires and explosions the hardware scene draws as effects (smooth, glowing, giving light: SceneCmd::fx): the
+// explosions, flashes and puffs of smoke (0x31C..0x327, sprite_process.cpp), the jets of flame (0x438, 0x439, 0x43B,
+// 0x43C, 0x50A) and the flames an explosion leaves (0x44A).
+// @orig none: port-only hardware effects
+bool Game::is_fire_effect(std::uint16_t shape) {
+    return (shape >= 0x31C && shape <= 0x327) || shape == 0x438 || shape == 0x439 || shape == 0x43B || shape == 0x43C ||
+           shape == 0x50A || shape == kLeftFire;
+}
+
+// Port addition: the flames an explosion leaves (shape 0x44A: a barrel's script makes them with the blast and destroys
+// them about two seconds later) burn on for kFireLingerUs more: when the script destroys one, a copy that is only a
+// picture (Item::sprite_only: no collision, no events) takes its place, its frames going round, until its time is up.
+// @orig none: port-only lingering fires
+void Game::linger_fire(const Item& item) {
+    if (item.shape != kLeftFire || item.sprite_only || item.parent != 0 || item.off_map) return;
+    pending_fires_.push_back({item.x, item.y, item.z, item.frame});  // (made next update: not while destroying)
+}
+
+// @orig none: port-only lingering fires
+void Game::update_lingering_fires(std::uint32_t elapsed_us) {
+    if (!world_) return;
+    if (world_->current_map() != fires_map_) {  // another map: those items are gone
+        lingering_fires_.clear();
+        pending_fires_.clear();
+        fires_map_ = world_->current_map();
+    }
+    for (const PendingFire& p : pending_fires_) {
+        const ObjId id = world_->create(kLeftFire, p.frame);
+        if (!id) continue;
+        world_->get(id)->sprite_only = true;
+        world_->pop_to_coords(p.x, p.y, p.z);
+        lingering_fires_.push_back({id, kFireLingerUs, 0});
+    }
+    pending_fires_.clear();
+    const Shape* shape = shapes_.get(kLeftFire);
+    const std::size_t frames = shape ? shape->frames().size() : 1;
+    std::erase_if(lingering_fires_, [&](LingeringFire& f) {
+        Item* item = world_->get(f.id);
+        if (!item || item->shape != kLeftFire || !item->sprite_only) return true;  // gone some other way
+        if (f.left_us <= elapsed_us) {
+            world_->destroy(f.id);
+            return true;
+        }
+        f.left_us -= elapsed_us;
+        f.frame_us += elapsed_us;
+        if (f.frame_us >= kFireFrameUs && frames > 1) {
+            f.frame_us = 0;
+            world_->set_frame(*item, static_cast<std::uint16_t>((item->frame + 1) % frames));
+        }
+        return false;
+    });
+}
+
+// The muzzle flashes of the scene, where they are on the view now, fading.
+// @orig none: port-only hardware effects
+void Game::build_scene_flashes() {
+    scene_flashes_.clear();
+    if (!world_) return;
+    const GameState& s = world_->state;
+    for (const Flash& f : flashes_) {
+        const auto ux = static_cast<std::int16_t>(f.x), uy = static_cast<std::int16_t>(f.y);
+        const float x = static_cast<float>(((ux - uy) >> 1) - s.view_left);
+        const float y = static_cast<float>((static_cast<std::uint16_t>(ux + uy) >> 2) - static_cast<int>(f.z) - s.view_top);
+        scene_flashes_.push_back({x, y, f.left / kFlashSeconds});
+    }
+}
+
 // The lights of the scene of this frame, from its display list.
 // @orig none: port-only lighting
 void Game::build_lights(const std::vector<DrawItem>& list) {
@@ -619,11 +685,7 @@ void Game::build_lights(const std::vector<DrawItem>& list) {
             if (l->radius > 0) lighting_.lights.push_back({cx, cy - l->rise, l->radius, l->r, l->g, l->b, l->intensity});
             continue;
         }
-        if (d.item->id == s.controlled_npc) {
-            // Around the controlled NPC: from about the chest, not too strong (it lights what it is near, not a torch).
-            lighting_.lights.push_back({static_cast<float>(d.sx), static_cast<float>(d.sy) - 20, 130, 0.5f, 0.52f, 0.56f, 1.0f});
-            continue;
-        }
+        if (d.item->id == s.controlled_npc) continue;  // no light of its own (nor from what it carries)
         if (d.shape_flags & ShapeInfo::kNpc) continue;  // what a character wears or carries does not light the room
         const Glow& g = glow_of(*d.frame);
         if (is_liquid(*d.item, g)) {

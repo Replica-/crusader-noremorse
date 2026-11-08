@@ -16,7 +16,13 @@
 // --shot it quits after --shot-after seconds). --lighting turns the lit scene on for that run; --light-debug shows the
 // rooms the lights light (F7), and --light-click FX FY clicks a light there (fractions of the screen) a second before.
 // --room-debug (with the lighting) shows the room you are in; a click on a floor shows that floor's room, on a light
-// the room it lights. --light-editor opens the light editor (see game_light_editor.cpp) on the map started.
+// the room it lights. --light-editor opens the light editor (see game_light_editor.cpp) on the map started;
+// --list-sprites FILE (with it) writes the pictures of that map a second before --shot-after (tools/upscale).
+// --god: the player takes no damage. --extra-angles: the EXTRA ANGLES option on. --coords shows the player's and the pointer's world coordinates (F8 toggles them).
+// --probe-guards (a new game: --mission N) walks onto each trigger egg of the map and writes the guards they make to
+// assets/guards/map_NNN.cfg, then quits (game_guards.cpp).
+// --upscaled-sprites off|degrain|sdxl55 draws the pictures of assets/sprites/<that> in place of the game's own (the UPSCALED
+// SPRITES option).
 //
 // Controls of the original (CRUSADER.C 12CF): arrows (shift runs), keypad,
 // Ctrl / Alt moves; see engine/world/avatar_mover.hpp. Escape opens the menu
@@ -35,12 +41,14 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <exception>
 #include <fstream>
 #include <memory>
 #include <stdexcept>
+#include <ctime>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -123,12 +131,18 @@ int main(int argc, char** argv) {
     int path_dx = 0, path_dy = 0;
     bool keyboard_mouse = false;  // --keyboard-mouse: the keyboard and mouse mode, whatever CRUSADER.CFG says
     bool lighting = false;  // --lighting: the lit hardware scene, whatever CRUSADER.CFG says
+    int upscaled = -1;  // --upscaled-sprites off|degrain|sdxl55: that, whatever CRUSADER.CFG says (-1: as it says)
     bool headless = false;  // --headless: no window shown, no sound, the mouse left alone (with --shot, for tests)
     bool light_debug = false;  // --light-debug: the light debug mode on (F7)
     bool room_debug = false;  // --room-debug: the light debug mode on the rooms (yours, or the floor clicked)
     bool demo_keypad = false;  // --demo-keypad: terminal messages read, then a keypad with their codes listed
     bool light_editor = false;  // --light-editor: the light editor (implies --lighting)
     double demo_editor_fx = -1, demo_editor_fy = -1;  // --demo-light-editor FX FY: the editor test hook (light_editor)
+    std::string list_sprites;  // --list-sprites FILE: the pictures of the light editor's map (Game::write_map_sprites)
+    bool probe_guards = false;  // --probe-guards: the scan of the map's trigger guards (Game::start_guard_probe), then quit
+    bool god = false;           // --god: the player takes no damage
+    bool extra_angles = false;  // --extra-angles: the EXTRA ANGLES option on, whatever CRUSADER.CFG says
+    bool coords = false;        // --coords: the coordinates readout on from the start (F8)
     double light_click_fx = -1, light_click_fy = -1;  // --light-click FX FY: a debug click there (fractions of the screen), for tests
     bool size_given = false;
     double gamma = 1.0;
@@ -173,11 +187,20 @@ int main(int argc, char** argv) {
         } else if (std::strcmp(argv[i], "--gun") == 0) path_gun = start_gun = true;
         else if (std::strcmp(argv[i], "--keyboard-mouse") == 0) keyboard_mouse = true;
         else if (std::strcmp(argv[i], "--lighting") == 0) lighting = true;
+        else if (std::strcmp(argv[i], "--upscaled-sprites") == 0 && i + 1 < argc) {
+            const std::string mode = argv[++i];
+            upscaled = mode == "sdxl55" ? 2 : mode == "off" ? 0 : 1;
+        }
         else if (std::strcmp(argv[i], "--headless") == 0) headless = true;
         else if (std::strcmp(argv[i], "--light-debug") == 0) light_debug = true;
         else if (std::strcmp(argv[i], "--room-debug") == 0) room_debug = lighting = true;
         else if (std::strcmp(argv[i], "--demo-keypad") == 0) demo_keypad = true;
         else if (std::strcmp(argv[i], "--light-editor") == 0) light_editor = lighting = true;
+        else if (std::strcmp(argv[i], "--list-sprites") == 0 && i + 1 < argc) list_sprites = argv[++i], light_editor = lighting = true;
+        else if (std::strcmp(argv[i], "--probe-guards") == 0) probe_guards = new_game = true;
+        else if (std::strcmp(argv[i], "--god") == 0) god = true;
+        else if (std::strcmp(argv[i], "--extra-angles") == 0) extra_angles = true;
+        else if (std::strcmp(argv[i], "--coords") == 0) coords = true;
         else if (std::strcmp(argv[i], "--demo-light-editor") == 0 && i + 2 < argc) { demo_editor_fx = std::stod(argv[++i]); demo_editor_fy = std::stod(argv[++i]); }
         else if (std::strcmp(argv[i], "--light-click") == 0 && i + 2 < argc) { light_click_fx = std::stod(argv[++i]); light_click_fy = std::stod(argv[++i]); }
         else if (std::strcmp(argv[i], "--size") == 0 && i + 1 < argc) {  // with --png or --headless: the screen's size, e.g. 960x540
@@ -226,6 +249,11 @@ int main(int argc, char** argv) {
         game.set_skip_movies(skip_movies);
         if (keyboard_mouse) game.force_keyboard_mouse();
         if (lighting) game.force_lighting();
+        if (upscaled >= 0) game.force_upscaled_sprites(upscaled);
+        if (probe_guards) game.start_guard_probe();
+        if (god) game.force_god_mode();
+        if (extra_angles) game.force_extra_angles();
+        if (coords) game.show_coords(true);
         if (light_debug) game.set_light_debug(true);
         if (room_debug) game.set_room_debug();
         // No game asked for: the start-up, as when the original is launched
@@ -380,6 +408,8 @@ int main(int argc, char** argv) {
         std::uint32_t tick_mark = 0;
         std::uint64_t tick_mark_at = SDL_GetPerformanceCounter();
         bool shot_requested = false;
+        std::string screenshot_note;  // F11: "SCREENSHOT SAVED: ..." for a moment after
+        Uint32 screenshot_note_until = 0;
         bool running = true;
         while (running) {
             const std::uint64_t pass_start = SDL_GetPerformanceCounter();
@@ -388,6 +418,11 @@ int main(int argc, char** argv) {
                 if (ev.type == SDL_QUIT) running = false;
                 if (gamepad.feed(ev)) {
                     if (gamepad.quit_requested()) running = false;
+                    continue;
+                }
+                // Print Screen: a screenshot, as F11 (Windows sends only its release).
+                if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && ev.key.keysym.scancode == SDL_SCANCODE_PRINTSCREEN) {
+                    if (ev.type == SDL_KEYUP) game.request_screenshot();
                     continue;
                 }
                 // Alt+Enter: fullscreen on / off, not sent to the game.
@@ -486,6 +521,9 @@ int main(int argc, char** argv) {
                 std::snprintf(size, sizeof size, "  view %dx%d in %dx%d", screen.width, screen.height, ow, oh);
                 presenter.set_title(diagnostics(game, stats, fps) + size);
             }
+            if (const std::string coord_line = game.coords_status(); !coord_line.empty()) {  // F8
+                presenter.text(static_cast<float>(screen.width) - 8.0f, 66.0f, coord_line, 255, 235, 120, true);
+            }
             if (show_fps) {
                 const std::uint64_t t = SDL_GetPerformanceCounter();
                 work_ms = work_ms * 0.9 + 0.1 * (static_cast<double>(t - pass_start) * 1000.0 / freq);
@@ -509,11 +547,19 @@ int main(int argc, char** argv) {
                 if (const std::string path = game.path_status(); !path.empty()) presenter.text(rx, 50.0f, path, 120, 255, 255, true);
             }
             presenter.set_scene(game.scene());
+            presenter.set_scene_flashes(game.scene_flashes());
             presenter.set_lighting(game.lighting());
+            static const std::filesystem::path sprites_dir = std::filesystem::current_path() / "assets" / "sprites";
+            const int upscaled_mode = std::clamp(game.config().upscaled_sprites, 0, GameConfig::kUpscaledModes - 1);
+            presenter.set_upscaled_sprites(upscaled_mode != 0, sprites_dir / GameConfig::kUpscaledFolders[upscaled_mode]);
             presenter.set_light_debug(game.light_debug_overlay());
             if (demo_editor_fx >= 0 && SDL_GetTicks() / 1000.0 >= shot_after - 2.0) {
                 game.demo_light_editor(demo_editor_fx, demo_editor_fy);
                 demo_editor_fx = -1;
+            }
+            if (!list_sprites.empty() && SDL_GetTicks() / 1000.0 >= shot_after - 1.0) {
+                if (!game.write_map_sprites(list_sprites)) std::fprintf(stderr, "--list-sprites: nothing written to %s\n", list_sprites.c_str());
+                list_sprites.clear();
             }
             if (demo_keypad && SDL_GetTicks() / 1000.0 >= shot_after - 2.0) {
                 game.demo_keypad();
@@ -524,6 +570,11 @@ int main(int argc, char** argv) {
                 light_click_fx = -1;
             }
             presenter.set_debug_path(game.path_debug_screen());
+            {
+                float tx = 0, ty = 0;
+                const bool target = game.walk_target_screen(tx, ty);
+                presenter.set_walk_target(target, tx, ty);
+            }
             presenter.set_map(game.map_overlay().on ? &game.map_overlay() : nullptr);
             presenter.set_wheel(game.wheel_overlay().on ? &game.wheel_overlay() : nullptr);
             presenter.add_wheel_icons(game.take_wheel_icons());
@@ -549,15 +600,29 @@ int main(int argc, char** argv) {
                 const Game::LaserScreen laser = game.laser_screen();
                 presenter.set_laser(laser.on, laser.hit, laser.x0, laser.y0, laser.x1, laser.y1, laser.spread_x, laser.spread_y);
             }
+            // F11 / Print Screen: this frame saved as screenshots/crusader_YYYYMMDD_HHMMSS.png (the note comes after it).
+            if (game.take_screenshot_request()) {
+                std::error_code ignored;
+                std::filesystem::create_directories("screenshots", ignored);
+                const std::time_t now = std::time(nullptr);
+                char name[64];
+                std::strftime(name, sizeof name, "screenshots/crusader_%Y%m%d_%H%M%S.png", std::localtime(&now));
+                presenter.request_screenshot(name);
+                screenshot_note = std::string("SCREENSHOT SAVED: ") + name;
+                screenshot_note_until = SDL_GetTicks() + 2500;
+            } else if (!screenshot_note.empty() && SDL_GetTicks() < screenshot_note_until) {
+                presenter.text((static_cast<float>(screen.width) - presenter.text_width(screenshot_note)) / 2.0f, 40.0f, screenshot_note, 255, 255, 255);
+            }
             if (!shot_file.empty() && SDL_GetTicks() / 1000.0 >= shot_after && !shot_requested) {
                 presenter.request_screenshot(shot_file);
                 shot_requested = true;
             }
             presenter.present(screen, game.palette());
             if (shot_requested && presenter.screenshot_done()) running = false;
+            if (probe_guards && game.guard_probe_done()) running = false;
             if (headless) {
                 // Nothing waits for the display: about 60 passes a second, and without --shot an end after --shot-after.
-                if (shot_file.empty() && SDL_GetTicks() / 1000.0 >= shot_after) running = false;
+                if (shot_file.empty() && !probe_guards && SDL_GetTicks() / 1000.0 >= shot_after) running = false;
                 const double spent_ms = static_cast<double>(SDL_GetPerformanceCounter() - pass_start) * 1000.0 / freq;
                 if (spent_ms < 16.0) SDL_Delay(static_cast<Uint32>(16.0 - spent_ms));
             }

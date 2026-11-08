@@ -1,0 +1,8 @@
+# The shapes tools/upscale/upscale_sprites.py redraws: "<shapes, comma separated> <description>". The shapes of a line
+# are one family: the same description and seed, each shape's frames together on one canvas.
+
+# Barrels: the explosive one standing (170), lying ones and groups (337-341), the rolling ones (1414, 1419).
+170,337,338,339,340,341,1414,1419 rusty brown steel oil drum barrels with an orange hazard symbol on the lid
+
+# Yellow railings: YR<length>X6 east-west and north-south, the posts (YR1X1).
+112,136,138,139,140,141,145,146,147 yellow painted metal safety railing with round horizontal bars on posts

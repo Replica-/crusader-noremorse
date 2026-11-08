@@ -7,3 +7,6 @@ private/
 isos/*.iso
 /tools/release
 recordings/
+
+# F11 / Print Screen screenshots (the game run from the repo)
+screenshots/

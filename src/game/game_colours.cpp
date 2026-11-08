@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 
 namespace crusader {
 
@@ -128,6 +129,44 @@ void Game::compute_turn_angle() {
     while (turn <= -180.0) turn += 360.0;
     if (std::abs(turn) > turn_step_ * 11.25 + 0.5) return;
     turn_angle_ = static_cast<int>(std::lround(turn));
+}
+
+// GameConfig::extra_angles: the player standing in his combat stance (action 4), facing the pointer, is drawn at the
+// pointer's exact way out of 64 facings: between his drawn facing and the next, the picture tools/angles made
+// (assets/angles: the gun's class, the step). The step must be next to the facing he has (he turns to the nearest of 16
+// as the pointer moves); a drawn facing (a step that is a multiple of 4), or a missing picture, leaves him as he is.
+// True when `c` now draws such a picture (his gun is in it: no weapon overlay then).
+// @orig none: port-only extra angles
+bool Game::extra_angle(const DrawItem& d, SceneCmd& c) {
+    if (!config_.extra_angles || !config_.keyboard_mouse || !world_ || modal() || !free_pointer()) return false;
+    if (d.item->id != 1 || d.item->shape != 1 || world_->state.controlled_npc != 1 || world_->is_dead(1)) return false;
+    const auto record = world_->npc_record(1);
+    const std::uint16_t last = static_cast<std::uint16_t>(record[npc::kLastAnim] | record[npc::kLastAnim + 1] << 8);
+    const ActorAnimProcess* now = current_anim(*kernel_, 1);
+    if (last != 4 || (now && now->action() != 4)) return false;  // only the combat stance has them
+    const World::Point goal = pointer_goal();
+    const double dx = goal.x - d.item->x, dy = goal.y - d.item->y;
+    if (std::abs(dx) + std::abs(dy) < 24) return false;
+    constexpr double kPi = 3.14159265358979;
+    double facing = std::atan2(dx, -dy) * 180.0 / kPi / 22.5;  // 0..16, direction k at k (clockwise from -y)
+    if (facing < 0) facing += 16;
+    const int step = static_cast<int>(std::lround(facing * 4)) & 63;
+    const int dir = world_->npc_direction(1) & 0xF;
+    const int apart = ((step - dir * 4) % 64 + 64 + 32) % 64 - 32;  // -32..31
+    if (step % 4 == 0 || std::abs(apart) > 2) return false;
+    const Item* gun = world_->get(world_->active_weapon(1));
+    static constexpr const char* kSets[] = {"c0", "c1", "c2", "c3", "c4"};
+    const auto cls = gun ? WeaponOverlay::weapon_class(gun->shape) : std::nullopt;
+    const char* set = cls && *cls >= 0 && *cls < 5 ? kSets[*cls] : "cn";
+    char name[32];
+    std::snprintf(name, sizeof name, "%s_s%02d.png", set, step);
+    auto known = angle_files_.find(name);
+    if (known == angle_files_.end()) {
+        known = angle_files_.emplace(name, std::filesystem::exists(std::filesystem::current_path() / "assets" / "angles" / name)).first;
+    }
+    if (!known->second) return false;
+    c.angle_set = set, c.angle_step = step, c.anchor_x = d.sx, c.anchor_y = d.sy;
+    return true;
 }
 
 // Before the player is drawn: the frame under it, to put back, and to tell what is drawn over it later.

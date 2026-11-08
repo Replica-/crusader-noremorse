@@ -18,6 +18,7 @@ SDL_Color marker_colour(int kind) {
     case 2: return {70, 225, 255, 255};    // key item
     case 3: return {255, 175, 55, 255};    // weapon or ammunition
     case 4: return {110, 150, 255, 255};   // something to use
+    case 6: return {255, 220, 40, 255};    // guard trigger
     default: return {235, 100, 235, 255};  // trigger
     }
 }
@@ -42,7 +43,12 @@ void SdlPresenter::draw_map() {
     // The footprints that touch the panel, one batch.
     std::vector<SDL_Vertex> vertices;
     std::vector<int> indices;
-    for (const MapPoly& p : map_->polys) {
+    std::vector<const MapPoly*> polys;
+    polys.reserve(map_->polys.size() + map_->zones.size());
+    for (const MapPoly& p : map_->polys) polys.push_back(&p);
+    for (const MapPoly& p : map_->zones) polys.push_back(&p);  // (the guard triggers' areas, over the floors and walls)
+    for (const MapPoly* pp : polys) {
+        const MapPoly& p = *pp;
         float sx[4], sy[4];
         float lo_x = 1e9f, hi_x = -1e9f, lo_y = 1e9f, hi_y = -1e9f;
         for (int i = 0; i < 4; ++i) {
@@ -75,7 +81,7 @@ void SdlPresenter::draw_map() {
         }
         SDL_RenderGeometry(renderer_, nullptr, v, kSegments + 1, idx, kSegments * 3);
     };
-    for (const int pass : {5, 3, 4, 2, 1, 0}) {
+    for (const int pass : {5, 6, 3, 4, 2, 1, 0}) {
         for (const MapMarker& m : map_->markers) {
             if (m.kind != pass) continue;
             const float cx = ox + m.x * zoom, cy = oy + m.y * zoom;
@@ -100,18 +106,23 @@ void SdlPresenter::draw_map() {
     // The frame, the legend down the left (a dot and a label each) and the hints along the bottom.
     SDL_SetRenderDrawColor(renderer_, 120, 150, 180, 235);
     SDL_RenderDrawRectF(renderer_, &panel);
-    static const char* const labels[6] = {"YOU", "ENEMY", "KEY ITEM", "WEAPON / AMMO", "USE", "TRIGGER"};
-    const SDL_FRect legend_back{pn.x + 8.0f, pn.y + 8.0f, 168.0f, 8.0f * 20.0f + 12.0f};
+    static const char* const labels[7] = {"YOU", "ENEMY", "KEY ITEM", "WEAPON / AMMO", "USE", "TRIGGER", "GUARD TRIGGER"};
+    const SDL_FRect legend_back{pn.x + 8.0f, pn.y + 8.0f, 168.0f, 9.0f * 20.0f + 12.0f};
     SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 140);
     SDL_RenderFillRectF(renderer_, &legend_back);
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 7; ++i) {
         const float y = pn.y + 26.0f + 20.0f * static_cast<float>(i);
+        if (i == 6) {  // a guard trigger: its dot over a patch of its area's colour
+            const SDL_FRect patch{pn.x + 14.0f, y - 4.0f, 16.0f, 14.0f};
+            SDL_SetRenderDrawColor(renderer_, 255, 220, 40, 70);
+            SDL_RenderFillRectF(renderer_, &patch);
+        }
         disc(pn.x + 22.0f, y + 3.0f, 4.5f, marker_colour(i));
         text(pn.x + 36.0f, y, labels[i], 255, 255, 255);
     }
     // Two more entries for the doors, drawn as squares in the colours the map uses for them.
     for (int i = 0; i < 2; ++i) {
-        const float y = pn.y + 26.0f + 20.0f * static_cast<float>(6 + i);
+        const float y = pn.y + 26.0f + 20.0f * static_cast<float>(7 + i);
         const SDL_FRect swatch{pn.x + 17.5f, y - 2.0f, 9.0f, 9.0f};
         SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 220);
         const SDL_FRect rim{swatch.x - 1.5f, swatch.y - 1.5f, 12.0f, 12.0f};

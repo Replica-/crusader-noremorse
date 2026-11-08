@@ -183,6 +183,8 @@ void Game::update_demo() {
         path_stuck_ = 0;
         path_item_ = 0;
         path_best_ = 1 << 30;
+        path_trail_.clear();
+        path_route_last_ = 1 << 30;
         path_last_ = world_->location(*me);
         path_points_.clear();
     }

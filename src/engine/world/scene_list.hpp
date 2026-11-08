@@ -17,10 +17,25 @@ constexpr std::uint8_t kSceneKey = 255;
 
 struct SceneCmd {
     const ShapeFrame* frame = nullptr;  // null: a splat of blood on the floor
+    int shape = -1, frame_no = 0;       // a map item's picture: its shape and frame (the upscaled sprites); -1 otherwise
+    bool fx = false;                    // a fire or an explosion: drawn smooth and glowing (its own frames)
+    // The player in his combat stance between two of his 16 facings (GameConfig::extra_angles): the picture
+    // assets/angles/<angle_set>_s<angle_step>.png (set c0..c4 the gun class, cn none; step 0..63) with its anchor (the
+    // cell's 80, 120) at (anchor_x, anchor_y); angle_step -1 otherwise.
+    int angle_step = -1;
+    const char* angle_set = "";
+    int anchor_x = 0, anchor_y = 0;
     int x = 0, y = 0;                   // a picture: its top-left corner on the view; a splat: its centre
     bool mirrored = false, translucent = false;
     float rx = 0, ry = 0, alpha = 0;    // a splat: its radii and opacity
     float ambient_r = -1, ambient_g = 0, ambient_b = 0;  // with the lighting: its area's ambient (the light editor), <0 the map's
+};
+
+// Port addition: a muzzle flash over the hardware scene, a short glow where a shot left the gun (`strength` 1 when fired,
+// fading to 0).
+struct SceneFlash {
+    float x = 0, y = 0;
+    float strength = 1;
 };
 
 // Port addition (GameConfig::lighting): a light over the hardware scene, a soft ellipse twice as wide as high (the floor

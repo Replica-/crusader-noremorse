@@ -81,7 +81,7 @@ public:
     enum PortRow : int {
         kRowFollow, kRowDirectionalMove, kRowDirectionalAim, kRowNative, kRowZoom,
         kRowAutosave, kRowToggleRun, kRowKeyboardMouse, kRowRoll, kRowTurn, kRowShowPath, kRowPickupNear, kRowHardware,
-        kRowLighting, kRowController, kRowColours, kPortRows, kRowBack = kPortRows
+        kRowLighting, kRowUpscaled, kRowAngles, kRowController, kRowColours, kPortRows, kRowBack = kPortRows
     };
     static constexpr int kSteps = 23;
     static constexpr std::array<std::uint8_t, kSteps> kSoundSteps = {  // DS:5BB6

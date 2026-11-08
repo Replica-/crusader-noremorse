@@ -53,6 +53,9 @@ public:
     // Driver callback; `buttons` is the state after the event.
     void move(int x, int y, std::uint16_t buttons);
     void press(bool right, int x, int y, std::uint16_t buttons);
+    // Port addition: a press sent at once, never held back as the start of a double click (the fire of a held right
+    // button, Game::update).
+    void press_now(bool right, int x, int y, std::uint16_t buttons);
     void release(bool right, int x, int y, std::uint16_t buttons);
     // MouseCtl's 60 Hz tick: held-back presses ripen.
     void tick();

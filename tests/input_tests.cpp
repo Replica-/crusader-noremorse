@@ -120,6 +120,16 @@ void test_mouse_queue() {
     CHECK(e && e->type == MouseInput::kRelease && e->code == MouseInput::kLeftUp && e->x == 11);
     CHECK(!q.next());
 
+    // press_now (the fire of a held right button): sent at once, its release too, nothing held back.
+    q.press_now(false, 5, 6, 1);
+    e = q.next();
+    CHECK(e && e->type == MouseInput::kPress && e->code == MouseInput::kLeftDown && e->x == 5);
+    q.release(false, 5, 6, 0);
+    e = q.next();
+    CHECK(e && e->type == MouseInput::kRelease && e->code == MouseInput::kLeftUp);
+    ticks(20);
+    CHECK(!q.next());
+
     // A double click: the second press at once, the first click lost.
     q.press(true, 0, 0, 2);
     q.release(true, 0, 0, 0);

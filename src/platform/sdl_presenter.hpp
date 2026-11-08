@@ -15,6 +15,7 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -46,14 +47,21 @@ public:
     // The hardware scene (see engine/world/scene_list.hpp): drawn under the frame, whose pixels of colour kSceneKey are
     // then clear. Null draws the frame alone, as usual.
     void set_scene(const std::vector<SceneCmd>* scene) { scene_ = scene; }
+    // The muzzle flashes drawn over that scene as glows (null: none).
+    void set_scene_flashes(const std::vector<SceneFlash>* flashes) { scene_flashes_ = flashes; }
     // The light map that scene is multiplied by (null: drawn as it is). Without render targets it is not drawn.
     void set_lighting(const SceneLighting* lighting) { lighting_ = lighting; }
+    // The upscaled sprites (GameConfig::upscaled_sprites): a map item's picture drawn from dir/SSSS_FFF.png where there is
+    // one (larger, in the same place), the lit scene then drawn at the window's own size so that their detail shows.
+    void set_upscaled_sprites(bool on, const std::filesystem::path& dir);
     // The light debug overlay over the scene (null hides it).
     void set_light_debug(const LightDebugOverlay* overlay) { light_debug_ = overlay; }
     // The laser sight drawn over the next frames (view pixels), cleared with on = false.
     void set_laser(bool on, bool hit, float x0, float y0, float x1, float y1, float spread_x = 0, float spread_y = 0);
     // The click-to-walk debug path (view pixels, goal last), empty to hide it.
     void set_debug_path(const std::vector<std::pair<float, float>>& points) { path_ = points; }
+    // The spot a click-to-walk goes to (view pixels): a pulsing diamond on the floor while `on`.
+    void set_walk_target(bool on, float x, float y) { walk_target_ = on, walk_target_x_ = x, walk_target_y_ = y; }
     // Health bars (centre x, y, fraction left 0..1, opacity 0..1), drawn over the frame.
     struct HitBar {
         float x, y, fraction, alpha;
@@ -106,7 +114,10 @@ private:
     SDL_Texture* texture_ = nullptr;
     bool headless_ = false;
     SDL_Texture* screen_target_ = nullptr;  // headless: what is drawn (null: the window)
+    float screen_scale_ = 1;                // its pixels per view pixel
     void make_screen_target();
+    void use_screen_target();
+    float window_scale() const;
     std::array<std::uint8_t, 256> gamma_table_;
     int width_;
     int height_;
@@ -116,6 +127,9 @@ private:
     } laser_;
     void draw_laser();
     void draw_debug_path();
+    bool walk_target_ = false;
+    float walk_target_x_ = 0, walk_target_y_ = 0;
+    void draw_walk_target();
     std::vector<std::pair<float, float>> path_;
     std::vector<HitBar> hit_bars_;
     void draw_hit_bars();
@@ -133,6 +147,23 @@ private:
     int gamma_version_ = 0, scene_gamma_version_ = -1;
     void draw_scene(const Palette& palette);
     void clear_scene_textures();
+    // Fires and explosions (SceneCmd::fx): their own animation, smoothly filtered, over a glow of the same shape; muzzle
+    // flashes as glows (fx_blob_: a soft round blob, white, its alpha fading out, made when first needed).
+    SDL_Texture* fx_blob_ = nullptr;
+    const std::vector<SceneFlash>* scene_flashes_ = nullptr;
+    void draw_fx(const SceneCmd& cmd, SDL_Texture* texture, int w, int h);
+    void draw_scene_flashes();
+    bool make_fx_blob();
+    // The upscaled sprites, loaded when first drawn and kept (palette changes leave them be); null: no such file.
+    bool upscaled_ = false;
+    std::filesystem::path upscaled_dir_;
+    std::unordered_map<std::uint32_t, SDL_Texture*> upscaled_textures_;
+    SDL_Texture* upscaled_texture(int shape, int frame);
+    void clear_upscaled_textures();
+    // The extra angles' pictures (SceneCmd::angle_step): 160 x 160 cells, the player's anchor at 80, 120.
+    static constexpr int kAngleCell = 160, kAngleAnchorX = 80, kAngleAnchorY = 120;
+    std::unordered_map<std::string, SDL_Texture*> angle_textures_;
+    SDL_Texture* angle_texture(const char* set, int step);
     // The lit scene: drawn into scene_target_, the light map into light_target_ (the rooms' ambient, then soft spots of
     // light_spot_, the brightest winning)
     // then the first multiplied by twice the second (by the second alone where that blend is missing).
@@ -141,6 +172,7 @@ private:
     SDL_Texture* light_target_ = nullptr;
     SDL_Texture* light_spot_ = nullptr;
     int target_w_ = 0, target_h_ = 0;
+    float target_scale_x_ = 1, target_scale_y_ = 1;  // the targets' pixels per view pixel (more than 1: upscaled sprites)
     bool lighting_broken_ = false;  // no render targets: the scene is drawn unlit
     bool light_doubled_ = true;     // the light map is multiplied in twice (false: once, by SDL_BLENDMODE_MOD)
     bool light_brightest_ = true;   // lights meeting keep the brightest (false: added up, where the renderer cannot)

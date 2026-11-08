@@ -44,6 +44,12 @@ void MouseQueue::press(bool right, int x, int y, std::uint16_t buttons) {
     held_[b] = Held{e, 0, std::nullopt};
 }
 
+// @orig none: port-only, a press that cannot start a double click
+void MouseQueue::press_now(bool right, int x, int y, std::uint16_t buttons) {
+    held_[right ? 1 : 0].reset();
+    send(MouseInput{MouseInput::kPress, right ? MouseInput::kRightDown : MouseInput::kLeftDown, buttons, x, y});
+}
+
 // @orig 1360:045D; release branches
 void MouseQueue::release(bool right, int x, int y, std::uint16_t buttons) {
     const int b = right ? 1 : 0;

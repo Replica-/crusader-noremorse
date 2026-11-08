@@ -324,6 +324,7 @@ void apply_damage(Kernel& kernel, World& world, const AnimDat& anims, ObjId targ
     if (!item) return;
     const std::uint16_t difficulty = world.state.difficulty;
     const bool victim_is_player = target == world.state.controlled_npc || target == 1;
+    if (victim_is_player && world.state.god_mode) return;  // (port: crusader --god)
     if (!victim_is_player) {
         if (difficulty == 1) damage *= 5;
         else if (difficulty == 2) damage *= 3;

@@ -14,13 +14,15 @@ struct MapPoly {
 
 struct MapMarker {
     float x, y;
-    int kind;  // 0 you, 1 enemy, 2 key item, 3 weapon or ammunition, 4 something to use, 5 trigger
+    int kind;  // 0 you, 1 enemy, 2 key item, 3 weapon or ammunition, 4 something to use, 5 trigger, 6 guard trigger
 };
 
 struct MapOverlay {
     bool on = false;
     std::vector<MapPoly> polys;  // floors first, then walls
     std::vector<MapMarker> markers;
+    // The areas of the guard triggers still armed: walking in makes guards appear (game_map.cpp).
+    std::vector<MapPoly> zones;
     float heading_x = 0, heading_y = 0;  // the way you face on the map
     // The view: the map pixel at the middle of the panel, and screen pixels per map pixel (the wheel zooms, a drag pans).
     float center_x = 0, center_y = 0, zoom = 0.5f;
